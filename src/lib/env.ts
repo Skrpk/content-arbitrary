@@ -43,6 +43,37 @@ const intInRange = (min: number, max: number, defaultValue: number) =>
     });
 
 /**
+ * A closed set of allowed values that, like every other optional variable here,
+ * treats an empty string as "not set".
+ *
+ * Vercel supplies an environment variable added without a value as `''`, not as
+ * `undefined`, so a bare `z.enum([...]).optional()` rejects it. Matching is
+ * case-insensitive and the error repeats what was actually received, which is
+ * what makes a misconfiguration obvious from the message alone.
+ */
+const enumWithDefault = <T extends readonly [string, ...string[]]>(
+  allowed: T,
+  defaultValue: T[number],
+) =>
+  z
+    .string()
+    .optional()
+    .transform((value, ctx): T[number] => {
+      if (value === undefined || value.trim() === '') return defaultValue;
+
+      const normalised = value.trim().toLowerCase();
+      if (!allowed.includes(normalised)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `must be one of ${allowed.map((option) => `"${option}"`).join(' | ')}, received "${value}"`,
+        });
+        return z.NEVER;
+      }
+
+      return normalised;
+    });
+
+/**
  * Telegram accepts either a numeric chat id (`-1001234567890`) or a public
  * channel username (`@channelusername`). Private channels have no username, so
  * the numeric form is the only universally correct option — we accept both and
@@ -119,10 +150,7 @@ const schema = z
      * highest Telegram size ceiling). `url` hands Telegram the CDN link
      * (cheapest, but lower size ceiling and Telegram must reach the host).
      */
-    MEDIA_UPLOAD_MODE: z
-      .enum(['multipart', 'url'])
-      .optional()
-      .transform((value) => value ?? 'multipart'),
+    MEDIA_UPLOAD_MODE: enumWithDefault(['multipart', 'url'] as const, 'multipart'),
   })
   .superRefine((value, ctx) => {
     if (!value.X_USER_ID && !value.X_USERNAME) {

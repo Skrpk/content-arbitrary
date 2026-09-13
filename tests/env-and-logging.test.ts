@@ -96,6 +96,67 @@ describe('environment validation', () => {
     });
   });
 
+  it.each([
+    ['multipart', 'multipart'],
+    ['url', 'url'],
+    ['MULTIPART', 'multipart'],
+    ['  url  ', 'url'],
+  ])('parses MEDIA_UPLOAD_MODE=%s as %s', async (raw, expected) => {
+    await withEnv({ MEDIA_UPLOAD_MODE: raw }, (env) => {
+      expect(env.MEDIA_UPLOAD_MODE).toBe(expected);
+    });
+  });
+
+  it('treats an empty MEDIA_UPLOAD_MODE as unset', async () => {
+    // Vercel supplies a variable added without a value as '', not undefined.
+    // Rejecting that broke a real deployment.
+    await withEnv({ MEDIA_UPLOAD_MODE: '' }, (env) => {
+      expect(env.MEDIA_UPLOAD_MODE).toBe('multipart');
+    });
+  });
+
+  it('defaults MEDIA_UPLOAD_MODE when absent', async () => {
+    await withEnv({ MEDIA_UPLOAD_MODE: undefined }, (env) => {
+      expect(env.MEDIA_UPLOAD_MODE).toBe('multipart');
+    });
+  });
+
+  it('names the offending value when MEDIA_UPLOAD_MODE is invalid', async () => {
+    await expect(withEnv({ MEDIA_UPLOAD_MODE: 'ftp' }, () => getEnv())).rejects.toThrow(
+      /MEDIA_UPLOAD_MODE.*received "ftp"/s,
+    );
+  });
+
+  it('accepts an empty value for every optional variable', async () => {
+    // One blank variable must never take the whole deployment down.
+    await withEnv(
+      {
+        X_API_BASE_URL: '',
+        TELEGRAM_API_BASE_URL: '',
+        TELEGRAM_DISABLE_NOTIFICATION: '',
+        ADMIN_SECRET: '',
+        CAPTION_PREFIX: '',
+        CAPTION_SUFFIX: '',
+        INCLUDE_SOURCE_LINK: '',
+        INCLUDE_REPLIES: '',
+        INCLUDE_REPOSTS: '',
+        INCLUDE_QUOTES: '',
+        MAX_POSTS_PER_RUN: '',
+        X_FETCH_LIMIT: '',
+        MAX_RETRY_ATTEMPTS: '',
+        MEDIA_UPLOAD_MODE: '',
+        DRY_RUN: '',
+      },
+      (env) => {
+        expect(env.MEDIA_UPLOAD_MODE).toBe('multipart');
+        expect(env.MAX_POSTS_PER_RUN).toBe(5);
+        expect(env.X_API_BASE_URL).toBe('https://api.x.com');
+        expect(env.ADMIN_SECRET).toBeUndefined();
+        expect(env.DRY_RUN).toBe(true);
+      },
+    );
+  });
+
   it('caches the parsed configuration', async () => {
     await withEnv({}, () => {
       expect(getEnv()).toBe(getEnv());
