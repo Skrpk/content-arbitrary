@@ -353,6 +353,59 @@ describeIfDb('syncPosts end to end', () => {
     expect(await db.select().from(processedPosts)).toHaveLength(3);
   });
 
+  it('does not skip past posts it did not reach when the batch is limited', async () => {
+    // With MAX_POSTS_PER_RUN below the number of pending posts, the cursor must
+    // not jump to the newest post in the window — the posts in between were
+    // never claimed, so advancing past them would drop them permanently.
+    const payload = timeline([
+      { id: '1750000000000000003', mediaKeys: ['3_c'] },
+      { id: '1750000000000000002', mediaKeys: ['3_b'] },
+      { id: '1750000000000000001', mediaKeys: ['3_a'] },
+    ]);
+
+    const first = makeTelegramStub();
+    await withEnv({ DRY_RUN: 'false', MAX_POSTS_PER_RUN: '1' }, (env) =>
+      syncPosts({
+        db,
+        env,
+        xClient: makeXClient(payload),
+        telegramClient: first.client,
+        fetchImpl: first.fetchImpl as unknown as typeof fetch,
+        logger: createTestLogger(),
+        sleep: instantSleep,
+        skipLock: true,
+      }),
+    );
+
+    const state = await getSyncState(db, 'x:1234567890');
+    expect(state?.lastSeenPostId).toBe('1750000000000000001');
+
+    // The next two runs must still deliver the remaining posts.
+    for (let run = 0; run < 2; run += 1) {
+      const stub = makeTelegramStub();
+      await withEnv({ DRY_RUN: 'false', MAX_POSTS_PER_RUN: '1' }, (env) =>
+        syncPosts({
+          db,
+          env,
+          xClient: makeXClient(payload),
+          telegramClient: stub.client,
+          fetchImpl: stub.fetchImpl as unknown as typeof fetch,
+          logger: createTestLogger(),
+          sleep: instantSleep,
+          skipLock: true,
+        }),
+      );
+    }
+
+    const published = await db.select().from(processedPosts);
+    expect(published.map((r) => r.xPostId).sort()).toEqual([
+      '1750000000000000001',
+      '1750000000000000002',
+      '1750000000000000003',
+    ]);
+    expect(published.every((r) => r.status === 'published')).toBe(true);
+  });
+
   it('publishes nothing in DRY_RUN and leaves posts pending', async () => {
     const xClient = makeXClient(
       timeline([

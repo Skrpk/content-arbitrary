@@ -6,7 +6,7 @@ import { createLogger, type Logger } from '@/lib/logger';
 import { TelegramClient } from '@/lib/telegram/client';
 import { TELEGRAM_MIN_DELAY_BETWEEN_SENDS_MS } from '@/lib/telegram/limits';
 import { XClient } from '@/lib/x/client';
-import { getNewPosts } from '@/lib/x/get-new-posts';
+import { compareSnowflake, getNewPosts } from '@/lib/x/get-new-posts';
 import { acquireSyncLock } from '@/lib/sync/locks';
 import { processPost } from '@/lib/sync/process-post';
 import {
@@ -142,6 +142,17 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
 
     const telegramClient = options.telegramClient ?? new TelegramClient({ logger });
 
+    /**
+     * Highest post id this run reached a terminal decision on. The cursor may
+     * never move past it, because anything newer was not even claimed.
+     */
+    let lastSettledId: string | null = null;
+    const settle = (postId: string) => {
+      if (lastSettledId === null || compareSnowflake(postId, lastSettledId) > 0) {
+        lastSettledId = postId;
+      }
+    };
+
     // Oldest → newest, so the channel reads in the original order.
     for (const [index, post] of batch.entries()) {
       const postLogger = logger.child({ xPostId: post.id });
@@ -183,6 +194,7 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
             mediaCount: outcome.mediaCount,
             messages: outcome.messages,
           });
+          settle(post.id);
           summary.published += 1;
           continue;
         }
@@ -196,6 +208,7 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
 
         if (outcome.status === 'skipped') {
           await markSkipped(db, { id: claim.row.id, reason: outcome.error ?? 'skipped' });
+          settle(post.id);
           summary.newPosts -= 1;
           summary.skipped += 1;
           continue;
@@ -222,19 +235,41 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
       }
     }
 
-    // Only advance the cursor when nothing failed. Advancing past a failed post
-    // would mean `since_id` hides it from the next run forever.
-    const canAdvanceCursor = summary.failed === 0 && result.newestId !== null;
+    /**
+     * Advance the cursor only as far as this run actually got.
+     *
+     * Two ways to move it too far, both of which silently lose posts:
+     *   - past a post that failed — `since_id` would hide it from every future
+     *     run, so any failure pins the cursor where it is;
+     *   - past posts the batch never reached, when MAX_POSTS_PER_RUN caps the
+     *     run below the number of pending posts. Those were never claimed and
+     *     have no row, so only `since_id` could bring them back.
+     *
+     * `newestId` covers the whole fetched window (including posts filtered out
+     * as replies or as having no media), so it is only safe once every
+     * candidate has been settled.
+     */
+    const consumedWholeWindow = batch.length === candidates.length;
+    const nextCursor =
+      summary.failed > 0
+        ? null
+        : consumedWholeWindow
+          ? result.newestId
+          : lastSettledId;
 
     await upsertSyncState(db, {
       source,
-      ...(canAdvanceCursor && !env.DRY_RUN ? { lastSeenPostId: result.newestId } : {}),
+      ...(nextCursor !== null && !env.DRY_RUN ? { lastSeenPostId: nextCursor } : {}),
       lastSuccessfulSyncAt: new Date(),
       lastError: null,
     });
 
     summary.durationMs = Date.now() - startedAt;
-    logger.info('sync.end', { ...summary, cursorAdvanced: canAdvanceCursor && !env.DRY_RUN });
+    logger.info('sync.end', {
+      ...summary,
+      cursorAdvanced: nextCursor !== null && !env.DRY_RUN,
+      lastSeenPostId: nextCursor,
+    });
     return summary;
   } catch (error) {
     const message = describeError(error);
