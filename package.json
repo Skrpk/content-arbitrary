@@ -1,0 +1,43 @@
+{
+  "name": "content-arbitrary",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Automatically mirrors new photos and videos from an X (Twitter) account to a Telegram channel, once per hour via Vercel Cron.",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint src tests scripts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:studio": "drizzle-kit studio",
+    "sync:local": "tsx scripts/run-sync.ts",
+    "telegram:check": "tsx scripts/telegram-check.ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.2",
+    "next": "^16.3.5",
+    "postgres": "^3.4.9",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "zod": "^4.6.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "dotenv": "^16.4.7",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^9.18.0",
+    "eslint-config-next": "^16.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^5.0.0"
+  }
+}
