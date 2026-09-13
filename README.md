@@ -18,7 +18,7 @@ X account ──► /api/cron/sync ──► media download ──► Telegram B
 ## Table of contents
 
 - [What it does](#what-it-does)
-- [Before you start: two things that will cost you money or time](#before-you-start-two-things-that-will-cost-you-money-or-time)
+- [Before you start](#before-you-start)
 - [A. Local setup](#a-local-setup)
 - [B. Create an X developer app](#b-create-an-x-developer-app)
 - [C. X API permissions and scopes](#c-x-api-permissions-and-scopes)
@@ -72,25 +72,24 @@ Source: https://x.com/someaccount/status/1750000000000000003
 
 ---
 
-## Before you start: two things that will cost you money or time
+## Before you start
 
-These are easy to miss and both affect whether "hourly" actually works.
+### Plan requirements (Vercel)
 
-### 1. Hourly cron requires a paid Vercel plan
+The hourly schedule in `vercel.json` requires a **Pro or Enterprise** plan, which allows
+intervals down to once per minute and fires within the specified minute.
 
-Vercel's **Hobby plan limits cron jobs to once per day**, and a more frequent expression
-fails the deployment. The hourly schedule in `vercel.json` therefore needs a **Pro** plan.
+> **On Hobby**, cron jobs are limited to **once per day** and a more frequent expression fails
+> the deployment. Either change the schedule to a daily one (e.g. `"schedule": "0 9 * * *"` —
+> Hobby crons fire somewhere within that hour, not on the minute), or keep the hourly schedule
+> and trigger `/api/cron/sync` from an external scheduler (GitHub Actions, cron-job.org,
+> Upstash QStash) sending `Authorization: Bearer $CRON_SECRET`. Nothing else differs.
 
-On Hobby you have two options:
+Pro also allows a function `maxDuration` of up to 800s. This route asks for **300s**, which is
+the platform default on every plan and is far more than a run of five posts needs — there is no
+reason to raise it unless you increase `MAX_POSTS_PER_RUN` a great deal.
 
-- change the schedule in `vercel.json` to a daily one, e.g. `"schedule": "0 9 * * *"`
-  (note that Hobby crons fire at some point within the given hour, not exactly on the minute); or
-- keep the hourly schedule and trigger `/api/cron/sync` from an external scheduler
-  (GitHub Actions, cron-job.org, Upstash QStash) sending `Authorization: Bearer $CRON_SECRET`.
-
-Everything else in this project works identically on either plan.
-
-### 2. The X API is paid, per post read
+### The X API is paid, per post read
 
 X has moved to **pay-per-usage pricing**: you buy credits and they are drawn down per request.
 Reading posts costs around **$0.005 per post**, or about **$0.001 per post when you are the
@@ -390,8 +389,11 @@ Changing environment variables requires a redeploy to take effect.
 - Delivery is best effort. A run can be missed, or occasionally delivered twice — which is
   exactly why the sync is idempotent (see [Architecture decisions](#architecture-decisions)).
 
-The route sets `maxDuration = 300`. Your plan's function limit still applies; if you raise
-`MAX_POSTS_PER_RUN` substantially, keep an eye on run time.
+On **Pro/Enterprise** the job fires within the specified minute, so `0 * * * *` means the top
+of each hour. (Hobby spreads invocations across the hour.)
+
+The route sets `maxDuration = 300`, the platform default. Pro allows up to 800s if you ever
+need it, but a five-post run finishes in seconds.
 
 ## O. Trigger the cron endpoint manually
 
