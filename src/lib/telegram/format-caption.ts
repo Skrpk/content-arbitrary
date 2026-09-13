@@ -126,19 +126,33 @@ export function formatCaption(options: CaptionOptions): CaptionResult {
     return { caption: escapeHtml(plain), truncated: false };
   }
 
-  // The source link is the part a reader most needs, so it stays in the caption
-  // while the prose moves to the follow-up message.
+  /**
+   * Only the author's prose is shortened. The prefix, suffix and source line
+   * are operator-controlled framing — typically a call to action or an
+   * attribution that must appear under every post — so dropping them on a long
+   * post would silently defeat the reason they were configured.
+   */
+  const prefix = options.prefix?.trim() ?? '';
+  const suffix = options.suffix?.trim() ?? '';
   const sourceLine = options.includeSourceLink
     ? buildSourceLine(options.username, options.postId)
     : '';
 
-  const reserved = sourceLine === '' ? 0 : sourceLine.length + 2;
+  const separator = '\n\n';
+  const framing = [prefix, sourceLine, suffix].filter((part) => part !== '');
+  const reserved = framing.reduce(
+    (total, part) => total + part.length + separator.length,
+    0,
+  );
+
   const shortText = truncateForDisplay(
     options.text.trim(),
     Math.max(0, TELEGRAM_CAPTION_LIMIT - reserved),
   );
 
-  const captionPlain = [shortText, sourceLine].filter((part) => part !== '').join('\n\n');
+  const captionPlain = [prefix, shortText, sourceLine, suffix]
+    .filter((part) => part !== '')
+    .join(separator);
 
   return {
     caption: escapeHtml(truncateToLength(captionPlain, TELEGRAM_CAPTION_LIMIT)),

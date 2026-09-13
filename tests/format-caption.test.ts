@@ -159,6 +159,62 @@ describe('formatCaption', () => {
     expect(result.overflowMessage!.length).toBeLessThanOrEqual(TELEGRAM_MESSAGE_TEXT_LIMIT);
   });
 
+  it('keeps a call-to-action suffix on a long post', () => {
+    // The suffix is operator-configured framing, not prose: losing it on long
+    // posts would silently defeat the reason it was set.
+    const result = formatCaption({
+      ...base,
+      text: 'word '.repeat(400).trim(),
+      includeSourceLink: false,
+      suffix: 'підпишись @wilds_cam',
+    });
+
+    expect(result.truncated).toBe(true);
+    expect(result.caption).toContain('підпишись @wilds_cam');
+    expect(result.caption.length).toBeLessThanOrEqual(TELEGRAM_CAPTION_LIMIT);
+  });
+
+  it('keeps prefix, source and suffix together on a long post', () => {
+    const result = formatCaption({
+      ...base,
+      text: 'word '.repeat(400).trim(),
+      prefix: 'PREFIX',
+      suffix: 'SUFFIX',
+    });
+
+    expect(result.caption).toContain('PREFIX');
+    expect(result.caption).toContain('SUFFIX');
+    expect(result.caption).toContain('Source: https://x.com/someaccount/status/');
+    expect(result.caption.length).toBeLessThanOrEqual(TELEGRAM_CAPTION_LIMIT);
+  });
+
+  it('keeps the framing in order: prefix, text, source, suffix', () => {
+    const result = formatCaption({
+      ...base,
+      text: 'word '.repeat(400).trim(),
+      prefix: 'PREFIX',
+      suffix: 'SUFFIX',
+    });
+
+    const prefixAt = result.caption.indexOf('PREFIX');
+    const sourceAt = result.caption.indexOf('Source:');
+    const suffixAt = result.caption.indexOf('SUFFIX');
+
+    expect(prefixAt).toBeLessThan(sourceAt);
+    expect(sourceAt).toBeLessThan(suffixAt);
+  });
+
+  it('stays within the limit when the framing alone is enormous', () => {
+    const result = formatCaption({
+      ...base,
+      text: 'word '.repeat(400).trim(),
+      includeSourceLink: false,
+      suffix: 'x'.repeat(1200),
+    });
+
+    expect(result.caption.length).toBeLessThanOrEqual(TELEGRAM_CAPTION_LIMIT);
+  });
+
   it('does not produce a broken caption for emoji-heavy long text', () => {
     const result = formatCaption({ ...base, text: '🎉'.repeat(2000) });
     expect(result.caption.length).toBeLessThanOrEqual(TELEGRAM_CAPTION_LIMIT);
