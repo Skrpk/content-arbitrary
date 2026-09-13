@@ -127,6 +127,45 @@ describe('getNewPosts filtering', () => {
     expect(result.posts.map((p) => p.id)).toEqual(['5']);
   });
 
+  it('publishes the original but not the account\'s own follow-up reply', async () => {
+    // Real pattern: an account posts media, then replies to itself with a
+    // photo-credit line. The credit reply must not become its own Telegram post.
+    const { client } = makeClient({
+      data: [
+        {
+          id: '1750000000000000002',
+          text: '© Jonathan Harris, rpennesi, Gail Smith/Browning Trail Cameras',
+          author_id: '999',
+          in_reply_to_user_id: '999',
+          referenced_tweets: [{ type: 'replied_to', id: '1750000000000000001' }],
+        },
+        {
+          id: '1750000000000000001',
+          text: '',
+          author_id: '999',
+          attachments: { media_keys: ['7_1'] },
+        },
+      ],
+      includes: {
+        users: [{ id: '999', username: 'Trail_Cams' }],
+        media: [
+          {
+            media_key: '7_1',
+            type: 'video',
+            duration_ms: 46000,
+            variants: [{ bit_rate: 2176000, content_type: 'video/mp4', url: 'https://v/x.mp4' }],
+          },
+        ],
+      },
+      meta: { result_count: 2, newest_id: '1750000000000000002' },
+    });
+
+    const result = await getNewPosts(client, baseOptions);
+
+    expect(result.posts.map((p) => p.id)).toEqual(['1750000000000000001']);
+    expect(result.skipped).toContainEqual({ id: '1750000000000000002', reason: 'reply' });
+  });
+
   it('can exclude quote posts', async () => {
     const { client } = makeClient({
       data: [
