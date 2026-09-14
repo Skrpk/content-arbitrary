@@ -16,7 +16,9 @@ import {
   type MediaPayload,
   type SendContext,
 } from '@/lib/telegram/send-media';
-import { downloadMedia, type DownloadedMedia } from '@/lib/x/download-media';
+import { downloadMedia, formatBytes, type DownloadedMedia } from '@/lib/x/download-media';
+import { selectTelegramVideoVariant } from '@/lib/x/select-video-variant';
+import { maxUploadBytesFor } from '@/lib/telegram/limits';
 import type { NormalizedMedia, NormalizedPost, TelegramMethod } from '@/types';
 import { defaultSleep } from '@/lib/sync/retry';
 
@@ -133,15 +135,58 @@ export async function processPost(
 
   try {
     for (const item of media) {
+      /**
+       * X encodes each video at several bitrates. Rather than always taking the
+       * largest and failing when it is over the limit, pick the best rendition
+       * that actually fits — no transcoding required.
+       */
+      let asset = item;
+
+      if (item.kind === 'video' && (item.mp4Variants?.length ?? 0) > 1) {
+        const budget = Math.min(
+          env.MAX_VIDEO_SIZE_MB * 1024 * 1024,
+          maxUploadBytesFor('video', env.MEDIA_UPLOAD_MODE),
+        );
+
+        const selection = await selectTelegramVideoVariant(item, budget, {
+          fetchImpl: options.fetchImpl,
+          logger,
+        });
+
+        if (!selection.fits) {
+          throw new MediaUnsupportedError(selection.reason, 'media_too_large');
+        }
+
+        if (selection.url !== item.url) {
+          logger.info('video.variant_downgraded', {
+            mediaKey: item.mediaKey,
+            fromBitRate: item.bitRate,
+            toBitRate: selection.bitRate,
+            sizeBytes: selection.sizeBytes,
+            budget: formatBytes(budget),
+            reason: selection.selectionReason,
+          });
+        }
+
+        asset = {
+          ...item,
+          url: selection.url,
+          bitRate: selection.bitRate,
+          contentType: selection.contentType,
+        };
+      }
+
       if (env.MEDIA_UPLOAD_MODE === 'url') {
-        payloads.push({ mode: 'url', media: item });
+        payloads.push({ mode: 'url', media: asset });
         continue;
       }
 
-      const downloaded: DownloadedMedia = await downloadMedia(item, {
+      const downloaded: DownloadedMedia = await downloadMedia(asset, {
         logger,
         uploadMode: env.MEDIA_UPLOAD_MODE,
         fetchImpl: options.fetchImpl,
+        maxBytes:
+          asset.kind === 'video' ? env.MAX_VIDEO_SIZE_MB * 1024 * 1024 : undefined,
       });
       payloads.push({ mode: 'multipart', downloaded });
     }

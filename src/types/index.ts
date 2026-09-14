@@ -1,3 +1,10 @@
+/** One progressive MP4 rendition of a video, as published by X. */
+export interface Mp4Variant {
+  url: string;
+  bitRate?: number;
+  contentType: string;
+}
+
 /** Media item ready to be handed to Telegram. */
 export interface NormalizedMedia {
   /** X `media_key`, used to de-duplicate assets within a post. */
@@ -14,6 +21,12 @@ export interface NormalizedMedia {
   contentType?: string;
   /** animated_gif is delivered by X as a silent MP4; we send it as a video. */
   wasAnimatedGif?: boolean;
+  /**
+   * Video only. Every progressive MP4 rendition X offers, highest bitrate
+   * first, so a smaller one can be substituted when the best exceeds the
+   * Telegram upload limit.
+   */
+  mp4Variants?: Mp4Variant[];
 }
 
 /** An X post reduced to only what the publisher needs. */

@@ -71,10 +71,14 @@ export async function downloadMedia(
     uploadMode: 'multipart' | 'url';
     fetchImpl?: typeof fetch;
     signal?: AbortSignal;
+    /** Caps the transfer below Telegram's own limit; never above it. */
+    maxBytes?: number;
   },
 ): Promise<DownloadedMedia> {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const maxBytes = maxUploadBytesFor(media.kind, options.uploadMode);
+  const telegramMax = maxUploadBytesFor(media.kind, options.uploadMode);
+  const maxBytes =
+    options.maxBytes === undefined ? telegramMax : Math.min(options.maxBytes, telegramMax);
   const url = media.kind === 'photo' ? toOriginalPhotoUrl(media.url) : media.url;
 
   options.logger.info('media.download_start', {

@@ -277,6 +277,194 @@ describe('processPost publishing', () => {
   });
 });
 
+describe('processPost video variant selection', () => {
+  const MB = 1024 * 1024;
+
+  /** Video with three renditions; `sizes` maps each url to its byte size. */
+  const multiVariantVideo = (): NormalizedMedia => ({
+    mediaKey: '7_1',
+    kind: 'video',
+    url: 'https://video.twimg.com/high.mp4',
+    width: 1280,
+    height: 720,
+    durationSeconds: 46,
+    contentType: 'video/mp4',
+    mp4Variants: [
+      { url: 'https://video.twimg.com/high.mp4', bitRate: 2176000, contentType: 'video/mp4' },
+      { url: 'https://video.twimg.com/mid.mp4', bitRate: 832000, contentType: 'video/mp4' },
+      { url: 'https://video.twimg.com/low.mp4', bitRate: 256000, contentType: 'video/mp4' },
+    ],
+  });
+
+  /** Telegram stub plus a CDN that reports per-url sizes on HEAD and GET. */
+  function variantFetch(sizes: Record<string, number>) {
+    const uploaded: string[] = [];
+
+    const fetchImpl = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+
+      if (url.includes('api.telegram.example')) {
+        return telegramOk({ message_id: 100, chat: { id: -1001234567890 } });
+      }
+
+      const size = sizes[url];
+      if (size === undefined) return new Response('not found', { status: 404 });
+
+      if (init?.method === 'HEAD') {
+        return new Response(null, { status: 200, headers: { 'content-length': String(size) } });
+      }
+
+      uploaded.push(url);
+      // Body is a token 64 bytes; content-length advertises the real size only
+      // when it is within what the caller allows, mirroring a real CDN.
+      return new Response(new Uint8Array(64), {
+        status: 200,
+        headers: { 'content-type': 'video/mp4', 'content-length': String(Math.min(size, 64)) },
+      });
+    });
+
+    return { fetchImpl: fetchImpl as unknown as typeof fetch, uploaded };
+  }
+
+  it('keeps the highest rendition when it fits the budget', async () => {
+    const { fetchImpl, uploaded } = variantFetch({
+      'https://video.twimg.com/high.mp4': 8 * MB,
+      'https://video.twimg.com/mid.mp4': 3 * MB,
+      'https://video.twimg.com/low.mp4': 1 * MB,
+    });
+
+    const outcome = await withEnv({ DRY_RUN: 'false', MAX_VIDEO_SIZE_MB: '10' }, (env) =>
+      processPost(makePost([multiVariantVideo()]), {
+        client: makeClient(fetchImpl),
+        logger: createTestLogger(),
+        env,
+        fetchImpl,
+        sleep: instantSleep,
+      }),
+    );
+
+    expect(outcome.status).toBe('published');
+    expect(uploaded).toEqual(['https://video.twimg.com/high.mp4']);
+  });
+
+  it('publishes a smaller rendition instead of skipping an oversized video', async () => {
+    const { fetchImpl, uploaded } = variantFetch({
+      'https://video.twimg.com/high.mp4': 24 * MB,
+      'https://video.twimg.com/mid.mp4': 7 * MB,
+      'https://video.twimg.com/low.mp4': 2 * MB,
+    });
+
+    const logger = createTestLogger();
+    const outcome = await withEnv({ DRY_RUN: 'false', MAX_VIDEO_SIZE_MB: '10' }, (env) =>
+      processPost(makePost([multiVariantVideo()]), {
+        client: makeClient(fetchImpl),
+        logger,
+        env,
+        fetchImpl,
+        sleep: instantSleep,
+      }),
+    );
+
+    // Previously this post was skipped as "too large"; now it goes out.
+    expect(outcome.status).toBe('published');
+    expect(uploaded).toEqual(['https://video.twimg.com/mid.mp4']);
+
+    const downgrade = logger.entries.find((e) => e.event === 'video.variant_downgraded');
+    expect(downgrade?.data).toMatchObject({ toBitRate: 832000 });
+  });
+
+  it('never downloads a rendition that is over budget', async () => {
+    const { fetchImpl, uploaded } = variantFetch({
+      'https://video.twimg.com/high.mp4': 24 * MB,
+      'https://video.twimg.com/mid.mp4': 7 * MB,
+      'https://video.twimg.com/low.mp4': 2 * MB,
+    });
+
+    await withEnv({ DRY_RUN: 'false', MAX_VIDEO_SIZE_MB: '10' }, (env) =>
+      processPost(makePost([multiVariantVideo()]), {
+        client: makeClient(fetchImpl),
+        logger: createTestLogger(),
+        env,
+        fetchImpl,
+        sleep: instantSleep,
+      }),
+    );
+
+    expect(uploaded).not.toContain('https://video.twimg.com/high.mp4');
+  });
+
+  it('honours a tighter MAX_VIDEO_SIZE_MB than Telegram would allow', async () => {
+    const { fetchImpl, uploaded } = variantFetch({
+      'https://video.twimg.com/high.mp4': 24 * MB,
+      'https://video.twimg.com/mid.mp4': 7 * MB,
+      'https://video.twimg.com/low.mp4': 2 * MB,
+    });
+
+    await withEnv({ DRY_RUN: 'false', MAX_VIDEO_SIZE_MB: '5' }, (env) =>
+      processPost(makePost([multiVariantVideo()]), {
+        client: makeClient(fetchImpl),
+        logger: createTestLogger(),
+        env,
+        fetchImpl,
+        sleep: instantSleep,
+      }),
+    );
+
+    expect(uploaded).toEqual(['https://video.twimg.com/low.mp4']);
+  });
+
+  it('skips with a precise reason when no rendition fits', async () => {
+    const { fetchImpl, uploaded } = variantFetch({
+      'https://video.twimg.com/high.mp4': 40 * MB,
+      'https://video.twimg.com/mid.mp4': 25 * MB,
+      'https://video.twimg.com/low.mp4': 14 * MB,
+    });
+
+    const outcome = await withEnv({ DRY_RUN: 'false', MAX_VIDEO_SIZE_MB: '10' }, (env) =>
+      processPost(makePost([multiVariantVideo()]), {
+        client: makeClient(fetchImpl),
+        logger: createTestLogger(),
+        env,
+        fetchImpl,
+        sleep: instantSleep,
+      }),
+    );
+
+    expect(outcome.status).toBe('skipped');
+    expect(outcome.permanent).toBe(true);
+    expect(outcome.error).toMatch(/all 3 MP4 variant\(s\).*smallest is 14\.0 MB/);
+    expect(uploaded).toHaveLength(0);
+  });
+
+  it('leaves a single-variant video on the original path', async () => {
+    const single: NormalizedMedia = {
+      ...multiVariantVideo(),
+      mp4Variants: [
+        { url: 'https://video.twimg.com/high.mp4', bitRate: 2176000, contentType: 'video/mp4' },
+      ],
+    };
+
+    const { fetchImpl, uploaded } = variantFetch({ 'https://video.twimg.com/high.mp4': 3 * MB });
+
+    const outcome = await withEnv({ DRY_RUN: 'false', MAX_VIDEO_SIZE_MB: '10' }, (env) =>
+      processPost(makePost([single]), {
+        client: makeClient(fetchImpl),
+        logger: createTestLogger(),
+        env,
+        fetchImpl,
+        sleep: instantSleep,
+      }),
+    );
+
+    expect(outcome.status).toBe('published');
+    expect(uploaded).toEqual(['https://video.twimg.com/high.mp4']);
+    // One variant means no probing is worthwhile.
+    expect((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls.some(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'HEAD',
+    )).toBe(false);
+  });
+});
+
 describe('processPost failure handling', () => {
   it('skips a photo whose dimensions Telegram would reject, without uploading', async () => {
     const { fetchImpl, telegramCalls } = makeFetch();

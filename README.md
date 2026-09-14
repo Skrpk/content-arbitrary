@@ -492,7 +492,8 @@ Known situations and how they are handled:
 | Situation | Behaviour |
 | --- | --- |
 | Video has only an HLS (`.m3u8`) variant | `skipped`, reason `no progressive MP4 variant`. Telegram cannot ingest a playlist. |
-| Video larger than 50 MB | `skipped`, with the measured size in the reason. Telegram bots cannot upload more. |
+| Best MP4 rendition is over the budget | The next-best rendition that fits is sent instead (see below). |
+| Every MP4 rendition is over the budget | `skipped`, naming the smallest size found. |
 | Photo larger than 10 MB | `skipped` with the size. |
 | Photo where width + height > 10000, or aspect ratio > 20 | `skipped` **before** uploading — X gives us the dimensions, so no bandwidth is wasted. |
 | Post has more than 10 media items | First 10 are published as an album (Telegram's limit); a warning is logged. |
@@ -504,8 +505,29 @@ retry would duplicate whatever did get through. So every asset is downloaded and
 *before* the first Bot API call: a post either appears complete or does not appear at all, with
 the reason recorded.
 
-For video, the highest-bitrate `video/mp4` variant is always chosen, and `supports_streaming`
-plus width/height/duration are passed so Telegram renders a seekable player.
+### Choosing a video rendition
+
+X encodes every video at several bitrates (commonly three: roughly 320p, 480p and 720p/1080p)
+and lists them all in `media.variants`. Rather than always taking the largest and giving up
+when it is over the limit, the publisher picks **the highest-bitrate MP4 that actually fits**:
+
+1. keep only `video/mp4` variants — HLS playlists cannot be uploaded to Telegram;
+2. sort by bitrate, highest first;
+3. ask the CDN for each candidate's size (`HEAD` → `Content-Length`, falling back to a
+   one-byte range request reading `Content-Range`, and to a bitrate × duration estimate if the
+   CDN reports neither);
+4. send the first one within `min(MAX_VIDEO_SIZE_MB, Telegram's 50 MB)`;
+5. only if none fit is the post `skipped`, with the smallest size in the reason.
+
+Probing runs highest-first and stops at the first fit, so the common case costs a single `HEAD`
+request, and an oversized rendition is never downloaded. A video with a single variant skips
+probing entirely.
+
+This is why the project needs no transcoding: X has already produced the smaller encodes, so
+FFmpeg would only duplicate work that a size-aware choice does for free.
+
+`supports_streaming` plus width/height/duration are always passed so Telegram renders a
+seekable player.
 
 ---
 
@@ -534,6 +556,7 @@ plus width/height/duration are passed so Telegram renders a seekable player.
 | `X_FETCH_LIMIT` | `20` | Posts requested from X per run (API allows 5–100). Must be ≥ `MAX_POSTS_PER_RUN`. |
 | `MAX_RETRY_ATTEMPTS` | `5` | Attempts per transient failure, including the first. |
 | `MEDIA_UPLOAD_MODE` | `multipart` | `multipart` (higher limits) or `url` (cheaper). |
+| `MAX_VIDEO_SIZE_MB` | `50` | Largest video to send (1–50). A video above this budget is sent at the best lower X rendition that fits. |
 | `DRY_RUN` | `true` | Do everything except publish. |
 
 Booleans accept `true/false`, `1/0`, `yes/no`, `on/off`.

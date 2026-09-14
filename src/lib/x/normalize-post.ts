@@ -1,4 +1,4 @@
-import type { NormalizedMedia, NormalizedPost } from '@/types';
+import type { Mp4Variant, NormalizedMedia, NormalizedPost } from '@/types';
 import type { XMedia, XPost, XUrlEntity } from '@/lib/x/schemas';
 
 /**
@@ -55,6 +55,29 @@ export function cleanPostText(text: string, urlEntities: XUrlEntity[] = []): str
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+/**
+ * Every progressive MP4 rendition, highest bitrate first.
+ *
+ * X encodes each video at several bitrates. Keeping the whole list lets the
+ * publisher fall back to a smaller rendition instead of giving up when the
+ * best one is above Telegram's upload limit.
+ */
+export function listMp4Variants(media: XMedia): Mp4Variant[] {
+  return (media.variants ?? [])
+    .filter(
+      (variant) =>
+        variant.url !== undefined &&
+        variant.content_type !== undefined &&
+        variant.content_type.toLowerCase() === 'video/mp4',
+    )
+    .map((variant) => ({
+      url: variant.url!,
+      bitRate: variant.bit_rate,
+      contentType: variant.content_type!,
+    }))
+    .sort((a, b) => (b.bitRate ?? 0) - (a.bitRate ?? 0));
 }
 
 /**
@@ -136,6 +159,7 @@ export function extractMedia(post: XPost, mediaByKey: Map<string, XMedia>): {
         mediaKey: key,
         kind: 'video',
         url: variant.url,
+        mp4Variants: listMp4Variants(item),
         width: item.width,
         height: item.height,
         durationSeconds: item.duration_ms ? Math.round(item.duration_ms / 1000) : undefined,

@@ -151,6 +151,16 @@ const schema = z
      * (cheapest, but lower size ceiling and Telegram must reach the host).
      */
     MEDIA_UPLOAD_MODE: enumWithDefault(['multipart', 'url'] as const, 'multipart'),
+
+    /**
+     * Upper bound on the video we will send, in megabytes.
+     *
+     * Defaults to Telegram's own ceiling. Lower it to make the publisher prefer
+     * a smaller X rendition — useful to keep channel downloads light, since X
+     * already provides several bitrates and picking a smaller one costs nothing.
+     * The effective cap is always the lower of this and Telegram's limit.
+     */
+    MAX_VIDEO_SIZE_MB: intInRange(1, 50, 50),
   })
   .superRefine((value, ctx) => {
     if (!value.X_USER_ID && !value.X_USERNAME) {
@@ -213,5 +223,6 @@ export function redactedEnvSummary(env: Env = getEnv()) {
     maxPostsPerRun: env.MAX_POSTS_PER_RUN,
     maxRetryAttempts: env.MAX_RETRY_ATTEMPTS,
     mediaUploadMode: env.MEDIA_UPLOAD_MODE,
+    maxVideoSizeMb: env.MAX_VIDEO_SIZE_MB,
   } as const;
 }
