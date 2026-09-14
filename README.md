@@ -492,8 +492,8 @@ Known situations and how they are handled:
 | Situation | Behaviour |
 | --- | --- |
 | Video has only an HLS (`.m3u8`) variant | `skipped`, reason `no progressive MP4 variant`. Telegram cannot ingest a playlist. |
-| Best MP4 rendition is over the budget | The next-best rendition that fits is sent instead (see below). |
-| Every MP4 rendition is over the budget | `skipped`, naming the smallest size found. |
+| Best MP4 rendition is over the preferred budget | The best rendition that meets the budget is sent; if none does, the original is sent anyway. |
+| Every MP4 rendition is over the hard ceiling | `skipped`, naming the smallest size found. |
 | Photo larger than 10 MB | `skipped` with the size. |
 | Photo where width + height > 10000, or aspect ratio > 20 | `skipped` **before** uploading — X gives us the dimensions, so no bandwidth is wasted. |
 | Post has more than 10 media items | First 10 are published as an album (Telegram's limit); a warning is logged. |
@@ -516,8 +516,14 @@ when it is over the limit, the publisher picks **the highest-bitrate MP4 that ac
 3. ask the CDN for each candidate's size (`HEAD` → `Content-Length`, falling back to a
    one-byte range request reading `Content-Range`, and to a bitrate × duration estimate if the
    CDN reports neither);
-4. send the first one within `min(MAX_VIDEO_SIZE_MB, Telegram's 50 MB)`;
-5. only if none fit is the post `skipped`, with the smallest size in the reason.
+4. send the best rendition at or under `PREFERRED_VIDEO_SIZE_MB`, if one exists;
+5. if none qualifies, send the best rendition within the hard ceiling
+   `min(MAX_VIDEO_SIZE_MB, Telegram's 50 MB)` — a large original beats a dropped post;
+6. only if nothing fits the hard ceiling is the post `skipped`, with the smallest size named.
+
+Setting `PREFERRED_VIDEO_SIZE_MB=10` therefore means "send a version under 10 MB when X offers
+one, otherwise post the original anyway". Leaving it unset always sends the best quality that
+fits.
 
 Probing runs highest-first and stops at the first fit, so the common case costs a single `HEAD`
 request, and an oversized rendition is never downloaded. A video with a single variant skips
@@ -556,7 +562,8 @@ seekable player.
 | `X_FETCH_LIMIT` | `20` | Posts requested from X per run (API allows 5–100). Must be ≥ `MAX_POSTS_PER_RUN`. |
 | `MAX_RETRY_ATTEMPTS` | `5` | Attempts per transient failure, including the first. |
 | `MEDIA_UPLOAD_MODE` | `multipart` | `multipart` (higher limits) or `url` (cheaper). |
-| `MAX_VIDEO_SIZE_MB` | `50` | Largest video to send (1–50). A video above this budget is sent at the best lower X rendition that fits. |
+| `MAX_VIDEO_SIZE_MB` | `50` | Hard ceiling for video (1–50). Nothing larger is sent at all. |
+| `PREFERRED_VIDEO_SIZE_MB` | unset | Preferred video size (1–50). A rendition at or under it wins; if none qualifies the original is sent anyway. |
 | `DRY_RUN` | `true` | Do everything except publish. |
 
 Booleans accept `true/false`, `1/0`, `yes/no`, `on/off`.

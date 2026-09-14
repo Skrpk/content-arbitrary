@@ -161,6 +161,28 @@ const schema = z
      * The effective cap is always the lower of this and Telegram's limit.
      */
     MAX_VIDEO_SIZE_MB: intInRange(1, 50, 50),
+
+    /**
+     * Preferred video size in megabytes. When X offers a rendition at or under
+     * this, that one is sent; when it does not, the original is sent anyway (up
+     * to MAX_VIDEO_SIZE_MB) rather than dropping the post. Leave empty for
+     * "always the best quality that fits".
+     */
+    PREFERRED_VIDEO_SIZE_MB: z
+      .string()
+      .optional()
+      .transform((value, ctx) => {
+        if (value === undefined || value.trim() === '') return undefined;
+        const parsed = Number(value);
+        if (!Number.isInteger(parsed) || parsed < 1 || parsed > 50) {
+          ctx.addIssue({
+            code: 'custom',
+            message: `must be an integer between 1 and 50, received "${value}"`,
+          });
+          return z.NEVER;
+        }
+        return parsed;
+      }),
   })
   .superRefine((value, ctx) => {
     if (!value.X_USER_ID && !value.X_USERNAME) {
@@ -224,5 +246,6 @@ export function redactedEnvSummary(env: Env = getEnv()) {
     maxRetryAttempts: env.MAX_RETRY_ATTEMPTS,
     mediaUploadMode: env.MEDIA_UPLOAD_MODE,
     maxVideoSizeMb: env.MAX_VIDEO_SIZE_MB,
+    preferredVideoSizeMb: env.PREFERRED_VIDEO_SIZE_MB ?? null,
   } as const;
 }

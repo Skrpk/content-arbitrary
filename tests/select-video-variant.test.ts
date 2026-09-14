@@ -107,7 +107,7 @@ describe('selectTelegramVideoVariant', () => {
       'https://video.twimg.com/low.mp4': 1 * MB,
     });
 
-    const result = await selectTelegramVideoVariant(video(), 10 * MB, { fetchImpl, logger });
+    const result = await selectTelegramVideoVariant(video(), { maxBytes: 10 * MB }, { fetchImpl, logger });
 
     expect(result.fits).toBe(true);
     if (!result.fits) return;
@@ -123,7 +123,7 @@ describe('selectTelegramVideoVariant', () => {
       'https://video.twimg.com/low.mp4': 1 * MB,
     });
 
-    await selectTelegramVideoVariant(video(), 10 * MB, { fetchImpl, logger });
+    await selectTelegramVideoVariant(video(), { maxBytes: 10 * MB }, { fetchImpl, logger });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
@@ -134,13 +134,13 @@ describe('selectTelegramVideoVariant', () => {
       'https://video.twimg.com/low.mp4': 2 * MB,
     });
 
-    const result = await selectTelegramVideoVariant(video(), 10 * MB, { fetchImpl, logger });
+    const result = await selectTelegramVideoVariant(video(), { maxBytes: 10 * MB }, { fetchImpl, logger });
 
     expect(result.fits).toBe(true);
     if (!result.fits) return;
     expect(result.url).toBe('https://video.twimg.com/mid.mp4');
     expect(result.bitRate).toBe(832000);
-    expect(result.selectionReason).toMatch(/downgraded to MP4 #2 of 3/);
+    expect(result.selectionReason).toMatch(/MP4 #2 of 3 by bitrate/);
   });
 
   it('walks all the way down to the smallest rendition', async () => {
@@ -150,7 +150,7 @@ describe('selectTelegramVideoVariant', () => {
       'https://video.twimg.com/low.mp4': 4 * MB,
     });
 
-    const result = await selectTelegramVideoVariant(video(), 10 * MB, { fetchImpl, logger });
+    const result = await selectTelegramVideoVariant(video(), { maxBytes: 10 * MB }, { fetchImpl, logger });
 
     expect(result.fits).toBe(true);
     if (!result.fits) return;
@@ -164,13 +164,130 @@ describe('selectTelegramVideoVariant', () => {
       'https://video.twimg.com/low.mp4': 14 * MB,
     });
 
-    const result = await selectTelegramVideoVariant(video(), 10 * MB, { fetchImpl, logger });
+    const result = await selectTelegramVideoVariant(video(), { maxBytes: 10 * MB }, { fetchImpl, logger });
 
     expect(result.fits).toBe(false);
     if (result.fits) return;
     expect(result.reason).toMatch(/all 3 MP4 variant\(s\).*exceed 10\.0 MB/);
     expect(result.reason).toMatch(/smallest is 14\.0 MB/);
     expect(result.candidates).toHaveLength(3);
+  });
+
+  // --- preferred budget with fallback to the original ----------------------
+
+  it('takes a rendition that meets the preferred budget', async () => {
+    const fetchImpl = sizeServer({
+      'https://video.twimg.com/high.mp4': 24 * MB,
+      'https://video.twimg.com/mid.mp4': 7 * MB,
+      'https://video.twimg.com/low.mp4': 2 * MB,
+    });
+
+    const result = await selectTelegramVideoVariant(
+      video(),
+      { preferredMaxBytes: 10 * MB, maxBytes: 50 * MB },
+      { fetchImpl, logger },
+    );
+
+    expect(result.fits).toBe(true);
+    if (!result.fits) return;
+    expect(result.url).toBe('https://video.twimg.com/mid.mp4');
+    expect(result.selectionReason).toMatch(/meets the preferred 10\.0 MB budget/);
+  });
+
+  it('keeps the original when nothing meets the preferred budget', async () => {
+    // Every rendition is over 10 MB, but the original is within Telegram's 50 MB.
+    const fetchImpl = sizeServer({
+      'https://video.twimg.com/high.mp4': 34 * MB,
+      'https://video.twimg.com/mid.mp4': 22 * MB,
+      'https://video.twimg.com/low.mp4': 14 * MB,
+    });
+
+    const result = await selectTelegramVideoVariant(
+      video(),
+      { preferredMaxBytes: 10 * MB, maxBytes: 50 * MB },
+      { fetchImpl, logger },
+    );
+
+    expect(result.fits).toBe(true);
+    if (!result.fits) return;
+    expect(result.url).toBe('https://video.twimg.com/high.mp4');
+    expect(result.sizeBytes).toBe(34 * MB);
+    expect(result.selectionReason).toMatch(/no rendition under the preferred 10\.0 MB/);
+    expect(result.selectionReason).toMatch(/keeping the original/);
+  });
+
+  it('falls back to the best that fits when even the original is over the hard limit', async () => {
+    const fetchImpl = sizeServer({
+      'https://video.twimg.com/high.mp4': 60 * MB,
+      'https://video.twimg.com/mid.mp4': 22 * MB,
+      'https://video.twimg.com/low.mp4': 14 * MB,
+    });
+
+    const result = await selectTelegramVideoVariant(
+      video(),
+      { preferredMaxBytes: 10 * MB, maxBytes: 50 * MB },
+      { fetchImpl, logger },
+    );
+
+    expect(result.fits).toBe(true);
+    if (!result.fits) return;
+    expect(result.url).toBe('https://video.twimg.com/mid.mp4');
+  });
+
+  it('still rejects when nothing fits even the hard limit', async () => {
+    const fetchImpl = sizeServer({
+      'https://video.twimg.com/high.mp4': 90 * MB,
+      'https://video.twimg.com/mid.mp4': 70 * MB,
+      'https://video.twimg.com/low.mp4': 55 * MB,
+    });
+
+    const result = await selectTelegramVideoVariant(
+      video(),
+      { preferredMaxBytes: 10 * MB, maxBytes: 50 * MB },
+      { fetchImpl, logger },
+    );
+
+    expect(result.fits).toBe(false);
+    if (result.fits) return;
+    expect(result.reason).toMatch(/smallest is 55\.0 MB/);
+  });
+
+  it('prefers the highest-quality rendition that is under the preferred budget', async () => {
+    // Two renditions are under 10 MB; the better one must win.
+    const fetchImpl = sizeServer({
+      'https://video.twimg.com/high.mp4': 24 * MB,
+      'https://video.twimg.com/mid.mp4': 9 * MB,
+      'https://video.twimg.com/low.mp4': 2 * MB,
+    });
+
+    const result = await selectTelegramVideoVariant(
+      video(),
+      { preferredMaxBytes: 10 * MB, maxBytes: 50 * MB },
+      { fetchImpl, logger },
+    );
+
+    expect(result.fits).toBe(true);
+    if (!result.fits) return;
+    expect(result.url).toBe('https://video.twimg.com/mid.mp4');
+  });
+
+  it('clamps a preferred budget above the hard limit', async () => {
+    const fetchImpl = sizeServer({
+      'https://video.twimg.com/high.mp4': 30 * MB,
+      'https://video.twimg.com/mid.mp4': 7 * MB,
+      'https://video.twimg.com/low.mp4': 2 * MB,
+    });
+
+    // preferred 80 MB > hard 10 MB: the hard limit governs.
+    const result = await selectTelegramVideoVariant(
+      video(),
+      { preferredMaxBytes: 80 * MB, maxBytes: 10 * MB },
+      { fetchImpl, logger },
+    );
+
+    expect(result.fits).toBe(true);
+    if (!result.fits) return;
+    expect(result.url).toBe('https://video.twimg.com/mid.mp4');
   });
 
   // --- edge cases ----------------------------------------------------------
@@ -181,7 +298,7 @@ describe('selectTelegramVideoVariant', () => {
     });
     const fetchImpl = sizeServer({ 'https://v/only.mp4': 4 * MB });
 
-    const result = await selectTelegramVideoVariant(only, 10 * MB, { fetchImpl, logger });
+    const result = await selectTelegramVideoVariant(only, { maxBytes: 10 * MB }, { fetchImpl, logger });
     expect(result.fits).toBe(true);
   });
 
@@ -191,12 +308,12 @@ describe('selectTelegramVideoVariant', () => {
     });
     const fetchImpl = sizeServer({ 'https://v/only.mp4': 30 * MB });
 
-    const result = await selectTelegramVideoVariant(only, 10 * MB, { fetchImpl, logger });
+    const result = await selectTelegramVideoVariant(only, { maxBytes: 10 * MB }, { fetchImpl, logger });
     expect(result.fits).toBe(false);
   });
 
   it('reports no MP4 variants at all', async () => {
-    const result = await selectTelegramVideoVariant(video({ mp4Variants: [] }), 10 * MB, {
+    const result = await selectTelegramVideoVariant(video({ mp4Variants: [] }), { maxBytes: 10 * MB }, {
       fetchImpl: sizeServer({}),
       logger,
     });
@@ -214,7 +331,7 @@ describe('selectTelegramVideoVariant', () => {
     });
 
     // 2176000 b/s × 46 s ≈ 12.5 MB → too big; 832000 × 46 ≈ 4.8 MB → fits.
-    const result = await selectTelegramVideoVariant(video(), 10 * MB, { fetchImpl, logger });
+    const result = await selectTelegramVideoVariant(video(), { maxBytes: 10 * MB }, { fetchImpl, logger });
 
     expect(result.fits).toBe(true);
     if (!result.fits) return;
@@ -229,7 +346,7 @@ describe('selectTelegramVideoVariant', () => {
     });
     const fetchImpl = sizeServer({ 'https://v/x.mp4': null });
 
-    const result = await selectTelegramVideoVariant(unknown, 10 * MB, { fetchImpl, logger });
+    const result = await selectTelegramVideoVariant(unknown, { maxBytes: 10 * MB }, { fetchImpl, logger });
 
     expect(result.fits).toBe(true);
     if (!result.fits) return;
@@ -250,7 +367,7 @@ describe('selectTelegramVideoVariant', () => {
       'https://video.twimg.com/low.mp4': 1 * MB,
     });
 
-    const result = await selectTelegramVideoVariant(shuffled, 10 * MB, { fetchImpl, logger });
+    const result = await selectTelegramVideoVariant(shuffled, { maxBytes: 10 * MB }, { fetchImpl, logger });
     expect(result.fits).toBe(true);
     if (!result.fits) return;
     expect(result.url).toBe('https://video.twimg.com/high.mp4');

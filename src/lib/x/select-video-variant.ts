@@ -12,8 +12,17 @@ import type { Mp4Variant, NormalizedMedia } from '@/types';
  * transcoding, which would need FFmpeg and CPU time we do not have on a
  * serverless function.
  *
- * Variants are probed from highest bitrate down and the first that fits wins,
- * so the common case (the best rendition already fits) costs one HEAD request.
+ * Selection has two tiers:
+ *   - a *preferred* budget, met by the best rendition at or under it — used to
+ *     keep channel downloads light when X offers a suitable smaller encode;
+ *   - a *hard* ceiling, which nothing may exceed (Telegram's own upload limit,
+ *     or a lower operator cap).
+ *
+ * When no rendition meets the preferred budget, the best one within the hard
+ * ceiling is sent rather than nothing: a large original beats a skipped post.
+ *
+ * Variants are probed from highest bitrate down, so the common case (the best
+ * rendition already meets the preferred budget) costs one HEAD request.
  */
 
 export interface ProbedVariant {
@@ -21,6 +30,16 @@ export interface ProbedVariant {
   sizeBytes?: number;
   /** How sizeBytes was obtained, for logging. */
   sizeSource: 'content-length' | 'content-range' | 'estimated' | 'unknown';
+}
+
+export interface VideoBudget {
+  /**
+   * Preferred ceiling. The best rendition at or under it wins outright.
+   * Omit for "always the best quality that fits".
+   */
+  preferredMaxBytes?: number;
+  /** Absolute ceiling. Nothing above this can be sent at all. */
+  maxBytes: number;
 }
 
 export interface VideoVariantSelection {
@@ -99,10 +118,16 @@ export function estimateSizeBytes(bitRate?: number, durationSeconds?: number): n
 
 export async function selectTelegramVideoVariant(
   media: NormalizedMedia,
-  maxBytes: number,
+  budget: VideoBudget,
   options?: { fetchImpl?: typeof fetch; logger?: Logger; signal?: AbortSignal },
 ): Promise<VideoVariantResult> {
   const fetchImpl = options?.fetchImpl ?? fetch;
+  const maxBytes = budget.maxBytes;
+  // A preferred budget above the hard ceiling is meaningless; clamp it.
+  const preferred =
+    budget.preferredMaxBytes === undefined
+      ? undefined
+      : Math.min(budget.preferredMaxBytes, maxBytes);
 
   const variants = [...(media.mp4Variants ?? [])].sort(
     (a, b) => (b.bitRate ?? 0) - (a.bitRate ?? 0),
@@ -117,6 +142,13 @@ export async function selectTelegramVideoVariant(
   }
 
   const candidates: ProbedVariant[] = [];
+
+  /**
+   * Best rendition within the hard ceiling. Because we walk from the highest
+   * bitrate down, the first one that fits is the best one, so this is only ever
+   * set once — it is the fallback if nothing meets the preferred budget.
+   */
+  let fallback: (VideoVariantSelection & { index: number }) | undefined;
 
   for (const [index, variant] of variants.entries()) {
     const probed = await probeVariantSize(variant.url, fetchImpl, options?.signal);
@@ -139,39 +171,70 @@ export async function selectTelegramVideoVariant(
       bitRate: variant.bitRate,
       sizeBytes,
       sizeSource,
-      fits: sizeBytes === undefined ? 'unknown' : sizeBytes <= maxBytes,
+      withinPreferred: sizeBytes !== undefined && preferred !== undefined
+        ? sizeBytes <= preferred
+        : 'unknown',
+      withinMax: sizeBytes === undefined ? 'unknown' : sizeBytes <= maxBytes,
     });
 
-    // Size genuinely unknown: try it rather than discard a possibly fine video.
-    // The download guard still aborts mid-stream if it turns out to be too big.
+    const base = {
+      url: variant.url,
+      bitRate: variant.bitRate,
+      contentType: variant.contentType,
+      sizeBytes,
+      index,
+    };
+
+    /**
+     * Size genuinely unknowable: keep it as a fallback rather than discard a
+     * possibly fine video, but keep looking for a smaller rendition whose size
+     * we can actually confirm against the preferred budget. The download guard
+     * still aborts mid-stream if it turns out to be too large.
+     */
     if (sizeBytes === undefined) {
-      return {
-        fits: true,
-        url: variant.url,
-        bitRate: variant.bitRate,
-        contentType: variant.contentType,
+      fallback ??= {
+        ...base,
         selectionReason:
-          index === 0
-            ? 'highest-bitrate MP4; size unknown, accepted optimistically'
-            : `MP4 #${index + 1} by bitrate; size unknown, accepted optimistically`,
+          `${describePosition(index, variants.length)}; size unknown, accepted optimistically`,
       };
+      continue;
     }
 
-    if (sizeBytes <= maxBytes) {
+    if (sizeBytes > maxBytes) continue;
+
+    fallback ??= {
+      ...base,
+      selectionReason:
+        `${describePosition(index, variants.length)} fits the ${formatBytes(maxBytes)} limit ` +
+        `(${formatBytes(sizeBytes)})`,
+    };
+
+    // Preferred budget met: this is the best such rendition, so stop here.
+    if (preferred === undefined || sizeBytes <= preferred) {
       return {
         fits: true,
-        url: variant.url,
-        bitRate: variant.bitRate,
-        contentType: variant.contentType,
-        sizeBytes,
+        ...base,
         selectionReason:
-          index === 0
-            ? `highest-bitrate MP4 fits (${formatBytes(sizeBytes)} <= ${formatBytes(maxBytes)})`
-            : `downgraded to MP4 #${index + 1} of ${variants.length} by bitrate ` +
-              `(${formatBytes(sizeBytes)} <= ${formatBytes(maxBytes)}); ` +
-              'larger renditions exceeded the limit',
+          preferred === undefined
+            ? `${describePosition(index, variants.length)} fits (${formatBytes(sizeBytes)} <= ${formatBytes(maxBytes)})`
+            : `${describePosition(index, variants.length)} meets the preferred ` +
+              `${formatBytes(preferred)} budget (${formatBytes(sizeBytes)})`,
       };
     }
+  }
+
+  if (fallback) {
+    const { index, ...selection } = fallback;
+    void index;
+    return {
+      fits: true,
+      ...selection,
+      selectionReason:
+        preferred === undefined
+          ? selection.selectionReason
+          : `no rendition under the preferred ${formatBytes(preferred)}; ` +
+            `keeping the original — ${selection.selectionReason}`,
+    };
   }
 
   const smallest = candidates.reduce<number | undefined>(
@@ -190,6 +253,10 @@ export async function selectTelegramVideoVariant(
       (smallest !== undefined ? `; smallest is ${formatBytes(smallest)}` : ''),
     candidates,
   };
+}
+
+function describePosition(index: number, total: number): string {
+  return index === 0 ? 'highest-bitrate MP4' : `MP4 #${index + 1} of ${total} by bitrate`;
 }
 
 export type { Mp4Variant };

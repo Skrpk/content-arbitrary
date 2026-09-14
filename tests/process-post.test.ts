@@ -413,6 +413,53 @@ describe('processPost video variant selection', () => {
     expect(uploaded).toEqual(['https://video.twimg.com/low.mp4']);
   });
 
+  it('posts the original when no rendition meets the preferred budget', async () => {
+    // Everything is over 10 MB, but the original is within Telegram's limit:
+    // a large original beats a skipped post.
+    const { fetchImpl, uploaded } = variantFetch({
+      'https://video.twimg.com/high.mp4': 34 * MB,
+      'https://video.twimg.com/mid.mp4': 22 * MB,
+      'https://video.twimg.com/low.mp4': 14 * MB,
+    });
+
+    const outcome = await withEnv(
+      { DRY_RUN: 'false', PREFERRED_VIDEO_SIZE_MB: '10', MAX_VIDEO_SIZE_MB: '50' },
+      (env) =>
+        processPost(makePost([multiVariantVideo()]), {
+          client: makeClient(fetchImpl),
+          logger: createTestLogger(),
+          env,
+          fetchImpl,
+          sleep: instantSleep,
+        }),
+    );
+
+    expect(outcome.status).toBe('published');
+    expect(uploaded).toEqual(['https://video.twimg.com/high.mp4']);
+  });
+
+  it('prefers a rendition under the preferred budget when one exists', async () => {
+    const { fetchImpl, uploaded } = variantFetch({
+      'https://video.twimg.com/high.mp4': 34 * MB,
+      'https://video.twimg.com/mid.mp4': 8 * MB,
+      'https://video.twimg.com/low.mp4': 2 * MB,
+    });
+
+    await withEnv(
+      { DRY_RUN: 'false', PREFERRED_VIDEO_SIZE_MB: '10', MAX_VIDEO_SIZE_MB: '50' },
+      (env) =>
+        processPost(makePost([multiVariantVideo()]), {
+          client: makeClient(fetchImpl),
+          logger: createTestLogger(),
+          env,
+          fetchImpl,
+          sleep: instantSleep,
+        }),
+    );
+
+    expect(uploaded).toEqual(['https://video.twimg.com/mid.mp4']);
+  });
+
   it('skips with a precise reason when no rendition fits', async () => {
     const { fetchImpl, uploaded } = variantFetch({
       'https://video.twimg.com/high.mp4': 40 * MB,

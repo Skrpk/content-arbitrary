@@ -143,15 +143,22 @@ export async function processPost(
       let asset = item;
 
       if (item.kind === 'video' && (item.mp4Variants?.length ?? 0) > 1) {
-        const budget = Math.min(
+        const maxBytes = Math.min(
           env.MAX_VIDEO_SIZE_MB * 1024 * 1024,
           maxUploadBytesFor('video', env.MEDIA_UPLOAD_MODE),
         );
 
-        const selection = await selectTelegramVideoVariant(item, budget, {
-          fetchImpl: options.fetchImpl,
-          logger,
-        });
+        const selection = await selectTelegramVideoVariant(
+          item,
+          {
+            maxBytes,
+            preferredMaxBytes:
+              env.PREFERRED_VIDEO_SIZE_MB === undefined
+                ? undefined
+                : env.PREFERRED_VIDEO_SIZE_MB * 1024 * 1024,
+          },
+          { fetchImpl: options.fetchImpl, logger },
+        );
 
         if (!selection.fits) {
           throw new MediaUnsupportedError(selection.reason, 'media_too_large');
@@ -163,7 +170,7 @@ export async function processPost(
             fromBitRate: item.bitRate,
             toBitRate: selection.bitRate,
             sizeBytes: selection.sizeBytes,
-            budget: formatBytes(budget),
+            budget: formatBytes(maxBytes),
             reason: selection.selectionReason,
           });
         }
