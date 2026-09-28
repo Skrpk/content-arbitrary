@@ -123,6 +123,29 @@ const schema = z
       .transform((value) => (value && value.trim() !== '' ? value.trim() : 'https://api.telegram.org')),
     TELEGRAM_DISABLE_NOTIFICATION: booleanish(false),
 
+    /**
+     * Numeric Telegram user id of the reviewer. Posts are sent to this user's
+     * private chat with the bot for approval before reaching the channel.
+     */
+    TELEGRAM_ADMIN_CHAT_ID: z
+      .string()
+      .regex(/^-?\d+$/, 'TELEGRAM_ADMIN_CHAT_ID must be a numeric Telegram user id')
+      .optional()
+      .or(z.literal('').transform(() => undefined)),
+
+    /** Hold every post for review instead of publishing straight to the channel. */
+    REQUIRE_APPROVAL: booleanish(false),
+
+    /**
+     * Shared secret Telegram echoes back in the X-Telegram-Bot-Api-Secret-Token
+     * header, proving a webhook call really came from Telegram.
+     */
+    TELEGRAM_WEBHOOK_SECRET: z
+      .string()
+      .min(16, 'TELEGRAM_WEBHOOK_SECRET must be at least 16 characters')
+      .optional()
+      .or(z.literal('').transform(() => undefined)),
+
     CRON_SECRET: z.string().min(16, 'CRON_SECRET must be at least 16 characters'),
     ADMIN_SECRET: z.string().min(16).optional().or(z.literal('').transform(() => undefined)),
 
@@ -192,6 +215,22 @@ const schema = z
         message: 'Either X_USER_ID or X_USERNAME must be set',
       });
     }
+    if (value.REQUIRE_APPROVAL && !value.TELEGRAM_ADMIN_CHAT_ID) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['TELEGRAM_ADMIN_CHAT_ID'],
+        message: 'TELEGRAM_ADMIN_CHAT_ID is required when REQUIRE_APPROVAL is enabled',
+      });
+    }
+    if (value.REQUIRE_APPROVAL && !value.TELEGRAM_WEBHOOK_SECRET) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['TELEGRAM_WEBHOOK_SECRET'],
+        message:
+          'TELEGRAM_WEBHOOK_SECRET is required when REQUIRE_APPROVAL is enabled — ' +
+          'without it the approval webhook cannot verify that a request came from Telegram',
+      });
+    }
     if (value.MAX_POSTS_PER_RUN > value.X_FETCH_LIMIT) {
       ctx.addIssue({
         code: 'custom',
@@ -247,5 +286,8 @@ export function redactedEnvSummary(env: Env = getEnv()) {
     mediaUploadMode: env.MEDIA_UPLOAD_MODE,
     maxVideoSizeMb: env.MAX_VIDEO_SIZE_MB,
     preferredVideoSizeMb: env.PREFERRED_VIDEO_SIZE_MB ?? null,
+    requireApproval: env.REQUIRE_APPROVAL,
+    hasAdminChatId: Boolean(env.TELEGRAM_ADMIN_CHAT_ID),
+    hasWebhookSecret: Boolean(env.TELEGRAM_WEBHOOK_SECRET),
   } as const;
 }

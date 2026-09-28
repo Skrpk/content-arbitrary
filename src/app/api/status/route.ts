@@ -57,6 +57,8 @@ export async function GET(request: Request): Promise<Response> {
           errorMessage: post.errorMessage,
           processedAt: post.processedAt,
           createdAt: post.createdAt,
+          adminMessageId: post.adminMessageId,
+          reviewedAt: post.reviewedAt,
         })),
       },
       { headers: { 'cache-control': 'no-store' } },

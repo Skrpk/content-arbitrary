@@ -5,8 +5,12 @@ import postgres from 'postgres';
 import * as schema from '@/db/schema';
 import { processedPosts, syncState, telegramMessages } from '@/db/schema';
 import {
+  claimForDecision,
   claimPost,
   findTerminalPostIds,
+  markAwaitingApproval,
+  markRejected,
+  releaseToApproval,
   getStatusCounts,
   getSyncState,
   markFailed,
@@ -300,6 +304,138 @@ describeIfDb('published records', () => {
     expect(counts.published).toBe(1);
     expect(counts.skipped).toBe(1);
     expect(counts.failed).toBe(0);
+  });
+});
+
+describeIfDb('approval workflow', () => {
+  const payload = {
+    method: 'sendMediaGroup' as const,
+    caption: 'hello',
+    items: [
+      { kind: 'photo' as const, fileId: 'FILE_A' },
+      { kind: 'photo' as const, fileId: 'FILE_B' },
+    ],
+  };
+
+  async function parkForReview() {
+    const claim = await claimPost(db, basePost);
+    await markAwaitingApproval(db, {
+      id: claim.row!.id,
+      payload,
+      adminChatId: '555001',
+      adminMessageId: 4242,
+    });
+    return claim.row!.id;
+  }
+
+  it('stores the file_ids needed to publish later', async () => {
+    const id = await parkForReview();
+
+    const row = (await db.select().from(processedPosts).where(eq(processedPosts.id, id)))[0];
+    expect(row?.status).toBe('awaiting_approval');
+    expect(row?.approvalPayload?.items.map((item) => item.fileId)).toEqual(['FILE_A', 'FILE_B']);
+    expect(row?.adminMessageId).toBe(4242);
+  });
+
+  it('lets exactly one of ten concurrent taps win', async () => {
+    // An impatient double-tap must not publish the album twice.
+    const id = await parkForReview();
+
+    const results = await Promise.all(Array.from({ length: 10 }, () => claimForDecision(db, id)));
+
+    expect(results.filter((r) => r.claimed)).toHaveLength(1);
+    expect(results.filter((r) => !r.claimed)).toHaveLength(9);
+  });
+
+  it('reports the current status to the taps that lost', async () => {
+    const id = await parkForReview();
+
+    await claimForDecision(db, id);
+    const second = await claimForDecision(db, id);
+
+    expect(second.claimed).toBe(false);
+    expect(second.currentStatus).toBe('processing');
+  });
+
+  it('cannot be claimed once published', async () => {
+    const id = await parkForReview();
+    await claimForDecision(db, id);
+    await markPublished(db, {
+      id,
+      telegramChatId: '-100',
+      primaryMessageId: 900,
+      telegramMethod: 'sendMediaGroup',
+      mediaCount: 2,
+      messages: [{ messageId: 900, mediaIndex: 0, kind: 'media' }],
+    });
+
+    const again = await claimForDecision(db, id);
+    expect(again.claimed).toBe(false);
+    expect(again.currentStatus).toBe('published');
+  });
+
+  it('drops the payload once published, since it can never be needed again', async () => {
+    const id = await parkForReview();
+    await claimForDecision(db, id);
+    await markPublished(db, {
+      id,
+      telegramChatId: '-100',
+      primaryMessageId: 900,
+      telegramMethod: 'sendMediaGroup',
+      mediaCount: 2,
+      messages: [],
+    });
+
+    const row = (await db.select().from(processedPosts).where(eq(processedPosts.id, id)))[0];
+    expect(row?.approvalPayload).toBeNull();
+  });
+
+  it('records a rejection and never publishes it', async () => {
+    const id = await parkForReview();
+    await claimForDecision(db, id);
+    await markRejected(db, id);
+
+    const row = (await db.select().from(processedPosts).where(eq(processedPosts.id, id)))[0];
+    expect(row?.status).toBe('rejected');
+    expect(row?.reviewedAt).toBeInstanceOf(Date);
+    expect(row?.approvalPayload).toBeNull();
+  });
+
+  it('never re-syncs a rejected post', async () => {
+    const id = await parkForReview();
+    await claimForDecision(db, id);
+    await markRejected(db, id);
+
+    const again = await claimPost(db, basePost);
+    expect(again.claimed).toBe(false);
+    expect(again.reason).toBe('rejected');
+
+    const terminal = await findTerminalPostIds(db, [basePost.xPostId]);
+    expect(terminal.has(basePost.xPostId)).toBe(true);
+    void id;
+  });
+
+  it('never re-syncs a post that is still awaiting review', async () => {
+    await parkForReview();
+
+    const again = await claimPost(db, basePost);
+    expect(again.claimed).toBe(false);
+    expect(again.reason).toBe('awaiting-approval');
+  });
+
+  it('returns a post to the queue when publishing fails', async () => {
+    const id = await parkForReview();
+    await claimForDecision(db, id);
+    await releaseToApproval(db, { id, errorMessage: 'Telegram 503' });
+
+    const row = (await db.select().from(processedPosts).where(eq(processedPosts.id, id)))[0];
+    expect(row?.status).toBe('awaiting_approval');
+    expect(row?.errorMessage).toBe('Telegram 503');
+    // The payload must survive, or pressing Approve again could not work.
+    expect(row?.approvalPayload?.items).toHaveLength(2);
+
+    const retry = await claimForDecision(db, id);
+    expect(retry.claimed).toBe(true);
   });
 });
 

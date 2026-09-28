@@ -18,14 +18,32 @@ export interface SendContext {
   client: TelegramClient;
   chatId: string;
   disableNotification: boolean;
+  /** Inline keyboard attached to the message, e.g. the approval buttons. */
+  replyMarkup?: InlineKeyboardMarkup;
+}
+
+export interface InlineKeyboardMarkup {
+  inline_keyboard: { text: string; callback_data: string }[][];
 }
 
 export type MediaPayload =
   | { mode: 'multipart'; downloaded: DownloadedMedia }
+  /**
+   * An asset Telegram already stores. Re-sending by file_id costs no upload and
+   * no download, which is how an approved post reaches the channel without
+   * touching X again.
+   */
+  | { mode: 'file_id'; media: NormalizedMedia; fileId: string }
   | { mode: 'url'; media: NormalizedMedia };
 
 function payloadMedia(payload: MediaPayload): NormalizedMedia {
   return payload.mode === 'multipart' ? payload.downloaded.media : payload.media;
+}
+
+/** What goes in the method's `photo`/`video` field for a non-upload payload. */
+function remoteReference(payload: MediaPayload): string {
+  if (payload.mode === 'file_id') return payload.fileId;
+  return payloadMedia(payload).url;
 }
 
 function toBlob(downloaded: DownloadedMedia): Blob {
@@ -40,14 +58,15 @@ export async function sendPhoto(
   payload: MediaPayload,
   caption: string,
 ): Promise<TelegramMessage> {
-  if (payload.mode === 'url') {
+  if (payload.mode !== 'multipart') {
     return context.client.call(
       'sendPhoto',
       {
         chat_id: context.chatId,
-        photo: payloadMedia(payload).url,
+        photo: remoteReference(payload),
         ...(caption ? { caption, parse_mode: TELEGRAM_PARSE_MODE } : {}),
         disable_notification: context.disableNotification,
+        ...(context.replyMarkup ? { reply_markup: context.replyMarkup } : {}),
       },
       telegramMessageSchema,
     );
@@ -61,6 +80,7 @@ export async function sendPhoto(
     form.set('parse_mode', TELEGRAM_PARSE_MODE);
   }
   form.set('disable_notification', String(context.disableNotification));
+  if (context.replyMarkup) form.set('reply_markup', JSON.stringify(context.replyMarkup));
 
   return context.client.call('sendPhoto', form, telegramMessageSchema);
 }
@@ -79,15 +99,16 @@ export async function sendVideo(
   if (media.height) metadata.height = media.height;
   if (media.durationSeconds) metadata.duration = media.durationSeconds;
 
-  if (payload.mode === 'url') {
+  if (payload.mode !== 'multipart') {
     return context.client.call(
       'sendVideo',
       {
         chat_id: context.chatId,
-        video: media.url,
+        video: remoteReference(payload),
         ...(caption ? { caption, parse_mode: TELEGRAM_PARSE_MODE } : {}),
         ...metadata,
         disable_notification: context.disableNotification,
+        ...(context.replyMarkup ? { reply_markup: context.replyMarkup } : {}),
       },
       telegramMessageSchema,
     );
@@ -102,6 +123,7 @@ export async function sendVideo(
   }
   for (const [key, value] of Object.entries(metadata)) form.set(key, String(value));
   form.set('disable_notification', String(context.disableNotification));
+  if (context.replyMarkup) form.set('reply_markup', JSON.stringify(context.replyMarkup));
 
   return context.client.call('sendVideo', form, telegramMessageSchema);
 }
@@ -135,7 +157,7 @@ export async function sendMediaGroup(
       form.set(attachName, toBlob(payload.downloaded), payload.downloaded.filename);
       descriptor.media = `attach://${attachName}`;
     } else {
-      descriptor.media = media.url;
+      descriptor.media = remoteReference(payload);
     }
 
     if (media.kind === 'video') {
@@ -189,6 +211,7 @@ export async function sendText(
       // The media already shows the preview; a second link card would be noise.
       link_preview_options: { is_disabled: true },
       disable_notification: context.disableNotification,
+      ...(context.replyMarkup ? { reply_markup: context.replyMarkup } : {}),
       ...(options?.replyToMessageId
         ? { reply_parameters: { message_id: options.replyToMessageId, allow_sending_without_reply: true } }
         : {}),

@@ -135,6 +135,9 @@ Useful commands:
 | `npm run db:studio` | Drizzle Studio, to browse the tables |
 | `npm run sync:local` | Run one sync cycle from the CLI |
 | `npm run telegram:check` | Four-step Telegram configuration check |
+| `npm run webhook:set -- <url>` | Register the approval webhook |
+| `npm run webhook:info` | Show the registered webhook and last delivery error |
+| `npm run webhook:delete` | Remove the webhook |
 
 ---
 
@@ -537,6 +540,76 @@ seekable player.
 
 ---
 
+## Approval before publishing
+
+With `REQUIRE_APPROVAL=true` nothing reaches the channel unattended. Each new post is
+delivered to your private chat with the bot, carrying **✅ Approve** and **🚫 Reject** buttons;
+the channel only sees it once you press Approve.
+
+```
+X ──► cron ──► your private chat  ──[Approve]──►  channel
+                      │
+                      └──[Reject]──►  recorded, never published
+```
+
+### How it works
+
+Inline buttons arrive over a **webhook**, which a cron-only app cannot otherwise receive, so
+this adds `POST /api/telegram/webhook`. Two independent checks guard it:
+
+1. the `X-Telegram-Bot-Api-Secret-Token` header must match `TELEGRAM_WEBHOOK_SECRET`, proving
+   the call came from Telegram;
+2. the pressing user must be `TELEGRAM_ADMIN_CHAT_ID` — forwarding the message to someone else
+   does not hand them the publish button.
+
+The review send is not wasted work. Telegram returns a `file_id` for every asset it stored, and
+re-sending by `file_id` needs no upload and no download. Approving therefore costs a single
+cheap API call and never touches the X CDN again — which also means approving hours later still
+works, long after the X media URLs have rotated.
+
+A double tap is safe: the decision is taken by one conditional `UPDATE`, so ten simultaneous
+presses produce exactly one publish. If publishing fails, the post returns to the queue with
+the reason attached and Approve can simply be pressed again.
+
+Albums cannot carry an inline keyboard, so for `sendMediaGroup` the buttons arrive on a short
+reply underneath the album.
+
+### Setting it up
+
+1. **Send `/start` to your bot** in a private chat. Telegram forbids a bot from messaging a user
+   who has never started it, so without this the review message cannot be delivered.
+2. **Find your numeric user id** — do this *before* registering the webhook, since `getUpdates`
+   stops working once a webhook is active:
+   ```bash
+   curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getUpdates" | jq '.result[].message.from.id'
+   ```
+3. **Generate the webhook secret** (hex, not base64 — Telegram allows only `A-Z a-z 0-9 _ -`):
+   ```bash
+   openssl rand -hex 32
+   ```
+4. **Set the three variables** in Vercel and redeploy:
+   `REQUIRE_APPROVAL=true`, `TELEGRAM_ADMIN_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`.
+   Enabling approval without the other two fails validation at startup rather than silently
+   publishing unreviewed.
+5. **Register the webhook once per deployment URL:**
+   ```bash
+   npm run webhook:set -- https://your-project.vercel.app
+   ```
+   Check it any time with `npm run webhook:info`, remove it with `npm run webhook:delete`.
+
+Without step 5 the buttons appear but nothing happens when pressed — Telegram has nowhere to
+deliver the callback.
+
+### New states
+
+| Status | Meaning |
+| --- | --- |
+| `awaiting_approval` | Sent to you, waiting for a button press. Not in the channel. |
+| `rejected` | You declined it. Never published, never retried, never re-synced. |
+
+`/api/cron/sync` reports an `awaitingApproval` count alongside `published`, and `/api/status`
+shows both statuses in its counts and recent posts.
+
 ## Configuration reference
 
 | Variable | Default | Description |
@@ -551,6 +624,9 @@ seekable player.
 | `TELEGRAM_API_BASE_URL` | `https://api.telegram.org` | Override for a local Bot API server. |
 | `TELEGRAM_DISABLE_NOTIFICATION` | `false` | Post silently. |
 | `CRON_SECRET` | — | **Required, ≥ 16 chars.** Protects `/api/cron/sync`. |
+| `REQUIRE_APPROVAL` | `false` | Hold every post for review instead of publishing directly. |
+| `TELEGRAM_ADMIN_CHAT_ID` | — | Your numeric Telegram user id. Required when `REQUIRE_APPROVAL` is on. |
+| `TELEGRAM_WEBHOOK_SECRET` | — | ≥ 16 chars, `A-Z a-z 0-9 _ -` only. Required when `REQUIRE_APPROVAL` is on. |
 | `ADMIN_SECRET` | falls back to `CRON_SECRET` | Protects `/api/status`. |
 | `CAPTION_PREFIX` | empty | Text prepended, separated by a blank line. |
 | `CAPTION_SUFFIX` | empty | Text appended, separated by a blank line. |

@@ -1,6 +1,12 @@
 import { and, desc, eq, inArray, lt, or, sql as rawSql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
-import { processedPosts, syncState, telegramMessages, type PostStatus } from '@/db/schema';
+import {
+  processedPosts,
+  syncState,
+  telegramMessages,
+  type ApprovalPayload,
+  type PostStatus,
+} from '@/db/schema';
 
 /**
  * All database access for the sync pipeline lives here, so the idempotency
@@ -17,7 +23,13 @@ export const PROCESSING_LEASE_MS = 10 * 60 * 1000;
 export interface ClaimResult {
   claimed: boolean;
   row?: typeof processedPosts.$inferSelect;
-  reason?: 'already-published' | 'in-flight' | 'retries-exhausted' | 'permanently-failed';
+  reason?:
+    | 'already-published'
+    | 'in-flight'
+    | 'retries-exhausted'
+    | 'permanently-failed'
+    | 'awaiting-approval'
+    | 'rejected';
 }
 
 /**
@@ -92,6 +104,8 @@ export async function claimPost(
   const current = existing[0];
   if (!current) return { claimed: false, reason: 'in-flight' };
   if (current.status === 'published') return { claimed: false, row: current, reason: 'already-published' };
+  if (current.status === 'awaiting_approval') return { claimed: false, row: current, reason: 'awaiting-approval' };
+  if (current.status === 'rejected') return { claimed: false, row: current, reason: 'rejected' };
   if (current.status === 'skipped') return { claimed: false, row: current, reason: 'permanently-failed' };
   if (current.status === 'failed') return { claimed: false, row: current, reason: 'retries-exhausted' };
   return { claimed: false, row: current, reason: 'in-flight' };
@@ -118,6 +132,7 @@ export async function markPublished(
         telegramMethod: input.telegramMethod,
         mediaCount: input.mediaCount,
         errorMessage: null,
+        approvalPayload: null,
         processedAt: new Date(),
         updatedAt: new Date(),
         lockedAt: null,
@@ -136,6 +151,95 @@ export async function markPublished(
       );
     }
   });
+}
+
+/** Park a post in the reviewer's queue, keeping everything needed to publish it. */
+export async function markAwaitingApproval(
+  db: Database,
+  input: {
+    id: number;
+    payload: ApprovalPayload;
+    adminChatId: string;
+    adminMessageId: number;
+  },
+): Promise<void> {
+  await db
+    .update(processedPosts)
+    .set({
+      status: 'awaiting_approval',
+      approvalPayload: input.payload,
+      adminChatId: input.adminChatId,
+      adminMessageId: input.adminMessageId,
+      telegramMethod: input.payload.method,
+      mediaCount: input.payload.items.length,
+      errorMessage: null,
+      lockedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(processedPosts.id, input.id));
+}
+
+/**
+ * Take exclusive ownership of a post awaiting review.
+ *
+ * The status change is the guard: a single conditional UPDATE means that two
+ * taps on Approve — or an Approve and a Reject racing each other — produce
+ * exactly one winner, and the loser gets no row back. Without this, an
+ * impatient double-tap would publish the album twice.
+ */
+export async function claimForDecision(
+  db: Database,
+  postId: number,
+): Promise<{ claimed: boolean; row?: typeof processedPosts.$inferSelect; currentStatus?: PostStatus }> {
+  const rows = await db
+    .update(processedPosts)
+    .set({ status: 'processing', lockedAt: new Date(), updatedAt: new Date() })
+    .where(
+      and(eq(processedPosts.id, postId), eq(processedPosts.status, 'awaiting_approval')),
+    )
+    .returning();
+
+  const row = rows[0];
+  if (row) return { claimed: true, row };
+
+  const existing = await db
+    .select()
+    .from(processedPosts)
+    .where(eq(processedPosts.id, postId))
+    .limit(1);
+
+  return { claimed: false, currentStatus: existing[0]?.status };
+}
+
+/** Put a post back in the queue when publishing failed after a decision. */
+export async function releaseToApproval(
+  db: Database,
+  input: { id: number; errorMessage: string },
+): Promise<void> {
+  await db
+    .update(processedPosts)
+    .set({
+      status: 'awaiting_approval',
+      errorMessage: input.errorMessage.slice(0, 2000),
+      lockedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(processedPosts.id, input.id));
+}
+
+export async function markRejected(db: Database, postId: number): Promise<void> {
+  await db
+    .update(processedPosts)
+    .set({
+      status: 'rejected',
+      // The payload only exists to publish with; drop it once we never will.
+      approvalPayload: null,
+      reviewedAt: new Date(),
+      processedAt: new Date(),
+      lockedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(processedPosts.id, postId));
 }
 
 export async function markFailed(
@@ -201,7 +305,7 @@ export async function findTerminalPostIds(db: Database, xPostIds: string[]): Pro
     .where(
       and(
         inArray(processedPosts.xPostId, xPostIds),
-        inArray(processedPosts.status, ['published', 'skipped']),
+        inArray(processedPosts.status, ['published', 'skipped', 'rejected']),
       ),
     );
 
@@ -254,6 +358,8 @@ export async function getRecentPosts(db: Database, limit = 10) {
       retryCount: processedPosts.retryCount,
       processedAt: processedPosts.processedAt,
       createdAt: processedPosts.createdAt,
+      adminMessageId: processedPosts.adminMessageId,
+      reviewedAt: processedPosts.reviewedAt,
     })
     .from(processedPosts)
     .orderBy(desc(processedPosts.createdAt))
@@ -272,6 +378,8 @@ export async function getStatusCounts(db: Database) {
     published: 0,
     failed: 0,
     skipped: 0,
+    awaiting_approval: 0,
+    rejected: 0,
   };
   for (const row of rows) counts[row.status] = row.count;
   return counts;

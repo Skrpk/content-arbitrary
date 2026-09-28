@@ -47,6 +47,8 @@ export interface SyncSummary {
   checked: number;
   newPosts: number;
   published: number;
+  /** Sent to the reviewer, not yet in the channel. */
+  awaitingApproval: number;
   failed: number;
   skipped: number;
   dryRun: boolean;

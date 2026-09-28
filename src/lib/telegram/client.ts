@@ -13,11 +13,47 @@ import { withRetry } from '@/lib/sync/retry';
  *   - honouring `parameters.retry_after` on 429 instead of hammering the API.
  */
 
+/** PhotoSize entries are ordered smallest → largest; we want the last. */
+const photoSizeSchema = z.object({
+  file_id: z.string(),
+  width: z.number().optional(),
+  height: z.number().optional(),
+  file_size: z.number().optional(),
+});
+
+const videoSchema = z.object({
+  file_id: z.string(),
+  width: z.number().optional(),
+  height: z.number().optional(),
+  duration: z.number().optional(),
+  file_size: z.number().optional(),
+});
+
 export const telegramMessageSchema = z.object({
   message_id: z.number(),
   chat: z.object({ id: z.number(), title: z.string().optional(), username: z.string().optional() }),
   date: z.number().optional(),
+  /**
+   * Present on messages that carry media. Telegram stores the uploaded file and
+   * hands back a `file_id`, which can be re-sent to any other chat without
+   * uploading the bytes again — this is what makes approval cheap.
+   */
+  photo: z.array(photoSizeSchema).optional(),
+  video: videoSchema.optional(),
 });
+
+/** The largest rendition Telegram kept, which is the one to re-send. */
+export function largestPhotoFileId(message: TelegramMessage): string | undefined {
+  if (!message.photo || message.photo.length === 0) return undefined;
+  return message.photo.reduce((largest, size) =>
+    (size.file_size ?? 0) >= (largest.file_size ?? 0) ? size : largest,
+  ).file_id;
+}
+
+/** file_id of whatever media a sent message carries, photo or video. */
+export function mediaFileIdOf(message: TelegramMessage): string | undefined {
+  return message.video?.file_id ?? largestPhotoFileId(message);
+}
 
 export type TelegramMessage = z.infer<typeof telegramMessageSchema>;
 
@@ -225,5 +261,72 @@ export class TelegramClient {
 
   getChatMember(chatId: string, userId: number) {
     return this.call('getChatMember', { chat_id: chatId, user_id: userId }, chatMemberSchema);
+  }
+
+  /**
+   * Dismisses the spinner on the pressed button. Telegram requires this for
+   * every callback query; without it the client shows a loading state for
+   * about a minute.
+   */
+  answerCallbackQuery(callbackQueryId: string, text?: string) {
+    return this.call(
+      'answerCallbackQuery',
+      { callback_query_id: callbackQueryId, ...(text ? { text } : {}) },
+      z.boolean(),
+    );
+  }
+
+  /** Strips the buttons off a reviewed message so it cannot be actioned twice. */
+  editMessageReplyMarkup(chatId: string, messageId: number) {
+    return this.call(
+      'editMessageReplyMarkup',
+      { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } },
+      z.union([telegramMessageSchema, z.boolean()]),
+    );
+  }
+
+  editMessageCaption(chatId: string, messageId: number, caption: string, parseMode: string) {
+    return this.call(
+      'editMessageCaption',
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        caption,
+        parse_mode: parseMode,
+        reply_markup: { inline_keyboard: [] },
+      },
+      z.union([telegramMessageSchema, z.boolean()]),
+    );
+  }
+
+  setWebhook(url: string, secretToken: string) {
+    return this.call(
+      'setWebhook',
+      {
+        url,
+        secret_token: secretToken,
+        // We only care about button presses; anything else is noise.
+        allowed_updates: ['callback_query'],
+        drop_pending_updates: true,
+      },
+      z.boolean(),
+    );
+  }
+
+  deleteWebhook() {
+    return this.call('deleteWebhook', { drop_pending_updates: true }, z.boolean());
+  }
+
+  getWebhookInfo() {
+    return this.call(
+      'getWebhookInfo',
+      {},
+      z.object({
+        url: z.string(),
+        pending_update_count: z.number().optional(),
+        last_error_message: z.string().optional(),
+        last_error_date: z.number().optional(),
+      }),
+    );
   }
 }

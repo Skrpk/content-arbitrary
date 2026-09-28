@@ -20,10 +20,12 @@ import { downloadMedia, formatBytes, type DownloadedMedia } from '@/lib/x/downlo
 import { selectTelegramVideoVariant } from '@/lib/x/select-video-variant';
 import { maxUploadBytesFor } from '@/lib/telegram/limits';
 import type { NormalizedMedia, NormalizedPost, TelegramMethod } from '@/types';
+import { sendForApproval } from '@/lib/sync/approval';
+import type { ApprovalPayload } from '@/db/schema';
 import { defaultSleep } from '@/lib/sync/retry';
 
 export interface ProcessOutcome {
-  status: 'published' | 'failed' | 'skipped' | 'dry-run';
+  status: 'published' | 'failed' | 'skipped' | 'dry-run' | 'awaiting-approval';
   method: TelegramMethod;
   mediaCount: number;
   caption: string;
@@ -31,6 +33,8 @@ export interface ProcessOutcome {
   primaryMessageId: number | null;
   error?: string;
   permanent?: boolean;
+  /** Set when the post went to the reviewer instead of the channel. */
+  approval?: { payload: ApprovalPayload; adminChatId: string; adminMessageId: number };
 }
 
 /** Which Bot API method fits this set of media. */
@@ -57,6 +61,8 @@ export async function processPost(
     env?: Env;
     fetchImpl?: typeof fetch;
     sleep?: (ms: number) => Promise<void>;
+    /** Database id of the row, needed to address the approval buttons. */
+    postId?: number;
   },
 ): Promise<ProcessOutcome> {
   const env = options.env ?? getEnv();
@@ -119,7 +125,7 @@ export async function processPost(
   }
 
   if (env.DRY_RUN) {
-    logDryRun(logger, post, media, method, caption, overflowMessage);
+    logDryRun(logger, post, media, method, caption, overflowMessage, env.REQUIRE_APPROVAL);
     return {
       status: 'dry-run',
       method,
@@ -216,7 +222,75 @@ export async function processPost(
     };
   }
 
-  // --- Phase 2: publish. ----------------------------------------------------
+  // --- Phase 2: review, or publish straight to the channel. ------------------
+
+  /**
+   * With REQUIRE_APPROVAL the post goes to the reviewer's private chat instead
+   * of the channel. Telegram hands back a file_id for each asset, which is
+   * stored so that approval can re-send without downloading from X again.
+   */
+  if (env.REQUIRE_APPROVAL) {
+    const reviewContext: SendContext = {
+      client: options.client,
+      chatId: env.TELEGRAM_ADMIN_CHAT_ID!,
+      disableNotification: false,
+    };
+
+    logger.info('approval.review_send_start', {
+      xPostId: post.id,
+      method,
+      mediaCount: payloads.length,
+    });
+
+    try {
+      const review = await sendForApproval(
+        reviewContext,
+        {
+          postId: options.postId!,
+          xPostUrl: post.url,
+          method: method as 'sendPhoto' | 'sendVideo' | 'sendMediaGroup',
+          caption,
+          overflowMessage,
+          payloads,
+        },
+        { logger, sleep },
+      );
+
+      logger.info('approval.awaiting_decision', {
+        xPostId: post.id,
+        adminMessageId: review.adminMessageId,
+        capturedFileIds: review.payload.items.length,
+      });
+
+      return {
+        status: 'awaiting-approval',
+        method,
+        mediaCount: media.length,
+        caption,
+        messages: [],
+        primaryMessageId: null,
+        approval: review,
+      };
+    } catch (error) {
+      const permanent = isPermanentTelegramError(error);
+      logger.error('approval.review_send_failed', {
+        xPostId: post.id,
+        permanent,
+        error: describeError(error),
+      });
+      return {
+        status: permanent ? 'skipped' : 'failed',
+        method,
+        mediaCount: media.length,
+        caption,
+        messages: [],
+        primaryMessageId: null,
+        error: describeError(error),
+        permanent,
+      };
+    }
+  }
+
   const context: SendContext = {
     client: options.client,
     chatId: env.TELEGRAM_CHAT_ID,
@@ -332,6 +406,7 @@ function logDryRun(
   method: TelegramMethod,
   caption: string,
   overflowMessage?: string,
+  requireApproval = false,
 ) {
   const photos = media.filter((item) => item.kind === 'photo').length;
   const videos = media.filter((item) => item.kind === 'video').length;
@@ -351,6 +426,7 @@ function logDryRun(
     caption,
     captionLength: caption.length,
     hasOverflowMessage: Boolean(overflowMessage),
+    destination: requireApproval ? 'admin review' : 'channel',
     wouldPublish: true,
   });
 
@@ -362,6 +438,7 @@ function logDryRun(
       `X Post: ${post.id}`,
       `Media: ${description}`,
       `Telegram method: ${method}`,
+      `Destination: ${requireApproval ? 'admin review' : 'channel'}`,
       `Caption: ${JSON.stringify(caption)}`,
       `Would publish: true`,
     ].join('\n'),

@@ -2,6 +2,7 @@ import {
   bigint,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   serial,
@@ -16,6 +17,10 @@ export const postStatusEnum = pgEnum('post_status', [
   'published',
   'failed',
   'skipped',
+  /** Sent to the admin for review; waiting for the Approve button. */
+  'awaiting_approval',
+  /** The admin declined it. Never published, never retried. */
+  'rejected',
 ]);
 
 export type PostStatus = (typeof postStatusEnum.enumValues)[number];
@@ -51,6 +56,21 @@ export const processedPosts = pgTable(
 
     errorMessage: text('error_message'),
     retryCount: integer('retry_count').notNull().default(0),
+
+    /**
+     * Everything needed to publish the post to the channel once the admin
+     * approves, captured when it was sent for review.
+     *
+     * Crucially this holds the Telegram `file_id` of each uploaded asset, so
+     * approval re-sends what Telegram already stores instead of downloading
+     * from X again — which is both faster and immune to X media URLs expiring
+     * between review and approval.
+     */
+    approvalPayload: jsonb('approval_payload').$type<ApprovalPayload>(),
+    /** Message in the admin's private chat carrying the Approve button. */
+    adminChatId: text('admin_chat_id'),
+    adminMessageId: bigint('admin_message_id', { mode: 'number' }),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
 
     /**
      * Set when a row moves to `processing`. A row stuck in `processing` past
@@ -111,6 +131,22 @@ export const syncState = pgTable(
   },
   (table) => [uniqueIndex('sync_state_source_key').on(table.source)],
 );
+
+/** One asset already uploaded to Telegram, addressable by file_id. */
+export interface ApprovalMediaItem {
+  kind: 'photo' | 'video';
+  fileId: string;
+  width?: number;
+  height?: number;
+  durationSeconds?: number;
+}
+
+export interface ApprovalPayload {
+  method: 'sendPhoto' | 'sendVideo' | 'sendMediaGroup';
+  caption: string;
+  overflowMessage?: string;
+  items: ApprovalMediaItem[];
+}
 
 export type ProcessedPost = typeof processedPosts.$inferSelect;
 export type NewProcessedPost = typeof processedPosts.$inferInsert;

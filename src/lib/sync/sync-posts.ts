@@ -13,6 +13,7 @@ import {
   claimPost,
   findTerminalPostIds,
   getSyncState,
+  markAwaitingApproval,
   markFailed,
   markPublished,
   markSkipped,
@@ -56,6 +57,7 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
     checked: 0,
     newPosts: 0,
     published: 0,
+    awaitingApproval: 0,
     failed: 0,
     skipped: 0,
     dryRun: env.DRY_RUN,
@@ -183,6 +185,7 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
           env,
           sleep,
           fetchImpl: options.fetchImpl,
+          postId: claim.row.id,
         });
 
         if (outcome.status === 'published') {
@@ -196,6 +199,23 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
           });
           settle(post.id);
           summary.published += 1;
+          continue;
+        }
+
+        /**
+         * Sent to the reviewer. The post is settled as far as this run is
+         * concerned — the cursor may move past it — but it is not published
+         * until the Approve button reaches the webhook.
+         */
+        if (outcome.status === 'awaiting-approval' && outcome.approval) {
+          await markAwaitingApproval(db, {
+            id: claim.row.id,
+            payload: outcome.approval.payload,
+            adminChatId: outcome.approval.adminChatId,
+            adminMessageId: outcome.approval.adminMessageId,
+          });
+          settle(post.id);
+          summary.awaitingApproval += 1;
           continue;
         }
 

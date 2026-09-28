@@ -32,6 +32,7 @@ export async function GET(request: Request): Promise<Response> {
         checked: summary.checked,
         newPosts: summary.newPosts,
         published: summary.published,
+        awaitingApproval: summary.awaitingApproval,
         failed: summary.failed,
         skipped: summary.skipped,
         dryRun: summary.dryRun,
@@ -52,7 +53,15 @@ export async function GET(request: Request): Promise<Response> {
     const message = describeError(error);
     logger.error('cron.fatal', { error: message });
     return Response.json(
-      { checked: 0, newPosts: 0, published: 0, failed: 0, skipped: 0, error: message },
+      {
+        checked: 0,
+        newPosts: 0,
+        published: 0,
+        awaitingApproval: 0,
+        failed: 0,
+        skipped: 0,
+        error: message,
+      },
       { status: 500, headers: { 'cache-control': 'no-store' } },
     );
   }
