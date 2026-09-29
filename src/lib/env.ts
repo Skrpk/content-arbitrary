@@ -97,6 +97,12 @@ const schema = z
         'DATABASE_URL must be a postgres:// or postgresql:// connection string',
       ),
 
+    /**
+     * @deprecated Sources now live in the `sources` table and are managed from
+     * Telegram. These two are kept only so that a deployment predating that
+     * keeps working: on the first run with an empty source list they are
+     * imported once, after which they are ignored.
+     */
     X_USER_ID: z
       .string()
       .regex(/^\d{1,19}$/, 'X_USER_ID must be a numeric X user id')
@@ -208,13 +214,6 @@ const schema = z
       }),
   })
   .superRefine((value, ctx) => {
-    if (!value.X_USER_ID && !value.X_USERNAME) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['X_USER_ID'],
-        message: 'Either X_USER_ID or X_USERNAME must be set',
-      });
-    }
     if (value.REQUIRE_APPROVAL && !value.TELEGRAM_ADMIN_CHAT_ID) {
       ctx.addIssue({
         code: 'custom',
@@ -271,7 +270,8 @@ export function resetEnvCache(): void {
  */
 export function redactedEnvSummary(env: Env = getEnv()) {
   return {
-    xAccount: env.X_USERNAME ?? env.X_USER_ID ?? null,
+    /** @deprecated Sources come from the database; see the `sources` list. */
+    legacyXAccount: env.X_USERNAME ?? env.X_USER_ID ?? null,
     telegramChatId: env.TELEGRAM_CHAT_ID,
     hasXBearerToken: Boolean(env.X_BEARER_TOKEN),
     hasTelegramBotToken: Boolean(env.TELEGRAM_BOT_TOKEN),

@@ -4,32 +4,32 @@ import { getEnv, type Env } from '@/lib/env';
 import { describeError } from '@/lib/errors';
 import { createLogger, type Logger } from '@/lib/logger';
 import { TelegramClient } from '@/lib/telegram/client';
-import { TELEGRAM_MIN_DELAY_BETWEEN_SENDS_MS } from '@/lib/telegram/limits';
 import { XClient } from '@/lib/x/client';
-import { compareSnowflake, getNewPosts } from '@/lib/x/get-new-posts';
-import { acquireSyncLock } from '@/lib/sync/locks';
-import { processPost } from '@/lib/sync/process-post';
 import {
-  claimPost,
-  findTerminalPostIds,
-  getSyncState,
-  markAwaitingApproval,
-  markFailed,
-  markPublished,
-  markSkipped,
-  upsertSyncState,
-} from '@/lib/sync/repository';
+  addSource,
+  countSources,
+  listEnabledSources,
+  syncStateKey,
+} from '@/lib/sources/repository';
+import { acquireSyncLock } from '@/lib/sync/locks';
+import { getSyncState } from '@/lib/sync/repository';
 import { defaultSleep } from '@/lib/sync/retry';
+import { syncXSource } from '@/lib/sync/sync-x-source';
 import type { SyncSummary } from '@/types';
 
 /**
- * One complete synchronisation cycle.
+ * One complete synchronisation cycle across every enabled source.
  *
  * Safety model, in layers:
  *   1. A Postgres advisory lock means only one invocation runs at a time.
  *   2. An atomic claim on the UNIQUE `x_post_id` means that even if the lock
  *      were bypassed, a post can only ever be claimed by one runner.
- *   3. Each post is processed in isolation, so one bad post cannot abort the batch.
+ *   3. Each post is processed in isolation, so one bad post cannot abort a
+ *      source; each source is isolated too, so one unreachable account cannot
+ *      abort the run.
+ *
+ * `MAX_POSTS_PER_RUN` applies per source, which is what makes sources
+ * independent: adding a busy account cannot starve a quiet one.
  */
 
 export interface SyncOptions {
@@ -60,6 +60,7 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
     awaitingApproval: 0,
     failed: 0,
     skipped: 0,
+    sources: [],
     dryRun: env.DRY_RUN,
     durationMs: 0,
     runId,
@@ -71,6 +72,7 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
     includeReplies: env.INCLUDE_REPLIES,
     includeReposts: env.INCLUDE_REPOSTS,
     mediaUploadMode: env.MEDIA_UPLOAD_MODE,
+    requireApproval: env.REQUIRE_APPROVAL,
   });
 
   const lock = options.skipLock
@@ -89,207 +91,56 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
 
   try {
     const xClient = options.xClient ?? new XClient({ logger });
-
-    // Resolve the account once, then keep using the numeric id.
-    const { userId, username } = await resolveAccount(xClient, env, logger);
-    const source = `x:${userId}`;
-
-    const state = await getSyncState(db, source);
-    await upsertSyncState(db, { source, lastSyncAt: new Date() });
-
-    const result = await getNewPosts(xClient, {
-      userId,
-      fallbackUsername: username,
-      sinceId: state?.lastSeenPostId ?? null,
-      fetchLimit: env.X_FETCH_LIMIT,
-      includeReplies: env.INCLUDE_REPLIES,
-      includeReposts: env.INCLUDE_REPOSTS,
-      includeQuotes: env.INCLUDE_QUOTES,
-      logger,
-    });
-
-    summary.checked = result.checked;
-
-    logger.info('sync.fetched', {
-      checked: result.checked,
-      mediaPosts: result.posts.length,
-      sinceId: state?.lastSeenPostId ?? null,
-      newestId: result.newestId,
-    });
-
-    for (const entry of result.skipped) {
-      logger.info('sync.post_skipped', { xPostId: entry.id, reason: entry.reason });
-      summary.skipped += 1;
-    }
-
-    // Drop anything already settled before we spend a claim on it.
-    const terminal = await findTerminalPostIds(db, result.posts.map((post) => post.id));
-    const candidates = result.posts.filter((post) => {
-      if (!terminal.has(post.id)) return true;
-      logger.info('sync.post_skipped', { xPostId: post.id, reason: 'already processed' });
-      summary.skipped += 1;
-      return false;
-    });
-
-    const batch = candidates.slice(0, env.MAX_POSTS_PER_RUN);
-    if (candidates.length > batch.length) {
-      logger.info('sync.batch_limited', {
-        available: candidates.length,
-        processing: batch.length,
-        maxPostsPerRun: env.MAX_POSTS_PER_RUN,
-      });
-    }
-
-    summary.newPosts = batch.length;
-
     const telegramClient = options.telegramClient ?? new TelegramClient({ logger });
 
-    /**
-     * Highest post id this run reached a terminal decision on. The cursor may
-     * never move past it, because anything newer was not even claimed.
-     */
-    let lastSettledId: string | null = null;
-    const settle = (postId: string) => {
-      if (lastSettledId === null || compareSnowflake(postId, lastSettledId) > 0) {
-        lastSettledId = postId;
-      }
-    };
+    await bootstrapLegacySource({ db, env, xClient, logger });
 
-    // Oldest → newest, so the channel reads in the original order.
-    for (const [index, post] of batch.entries()) {
-      const postLogger = logger.child({ xPostId: post.id });
+    const enabled = await listEnabledSources(db, 'x');
 
-      const claim = await claimPost(db, {
-        xPostId: post.id,
-        xPostUrl: post.url,
-        xAuthorUsername: post.authorUsername,
-        xCreatedAt: post.createdAt,
-        maxRetryAttempts: env.MAX_RETRY_ATTEMPTS,
-      });
-
-      if (!claim.claimed || !claim.row) {
-        // Lost the race, or the row is in a state we must not touch.
-        postLogger.info('sync.post_skipped', { reason: claim.reason ?? 'not claimable' });
-        summary.newPosts -= 1;
-        summary.skipped += 1;
-        continue;
-      }
-
-      // Space out sends so a burst of new posts does not trip flood control.
-      if (index > 0 && !env.DRY_RUN) await sleep(TELEGRAM_MIN_DELAY_BETWEEN_SENDS_MS);
-
-      try {
-        const outcome = await processPost(post, {
-          client: telegramClient,
-          logger: postLogger,
-          env,
-          sleep,
-          fetchImpl: options.fetchImpl,
-          postId: claim.row.id,
-        });
-
-        if (outcome.status === 'published') {
-          await markPublished(db, {
-            id: claim.row.id,
-            telegramChatId: env.TELEGRAM_CHAT_ID,
-            primaryMessageId: outcome.primaryMessageId,
-            telegramMethod: outcome.method,
-            mediaCount: outcome.mediaCount,
-            messages: outcome.messages,
-          });
-          settle(post.id);
-          summary.published += 1;
-          continue;
-        }
-
-        /**
-         * Sent to the reviewer. The post is settled as far as this run is
-         * concerned — the cursor may move past it — but it is not published
-         * until the Approve button reaches the webhook.
-         */
-        if (outcome.status === 'awaiting-approval' && outcome.approval) {
-          await markAwaitingApproval(db, {
-            id: claim.row.id,
-            payload: outcome.approval.payload,
-            adminChatId: outcome.approval.adminChatId,
-            adminMessageId: outcome.approval.adminMessageId,
-          });
-          settle(post.id);
-          summary.awaitingApproval += 1;
-          continue;
-        }
-
-        if (outcome.status === 'dry-run') {
-          // Leave the row `pending` so the first real run publishes it.
-          await markPending(db, claim.row.id, outcome.method, outcome.mediaCount);
-          summary.published += 1;
-          continue;
-        }
-
-        if (outcome.status === 'skipped') {
-          await markSkipped(db, { id: claim.row.id, reason: outcome.error ?? 'skipped' });
-          settle(post.id);
-          summary.newPosts -= 1;
-          summary.skipped += 1;
-          continue;
-        }
-
-        await markFailed(db, {
-          id: claim.row.id,
-          errorMessage: outcome.error ?? 'unknown error',
-          permanent: Boolean(outcome.permanent),
-          maxRetryAttempts: env.MAX_RETRY_ATTEMPTS,
-        });
-        summary.failed += 1;
-      } catch (error) {
-        // A single post must never abort the batch: record it and continue so
-        // that later posts still get published.
-        postLogger.error('sync.post_error', { error: describeError(error) });
-        await markFailed(db, {
-          id: claim.row.id,
-          errorMessage: describeError(error),
-          permanent: false,
-          maxRetryAttempts: env.MAX_RETRY_ATTEMPTS,
-        }).catch(() => {});
-        summary.failed += 1;
-      }
+    if (enabled.length === 0) {
+      logger.warn('sync.no_sources', {});
+      summary.durationMs = Date.now() - startedAt;
+      logger.info('sync.end', { ...summary });
+      return summary;
     }
 
-    /**
-     * Advance the cursor only as far as this run actually got.
-     *
-     * Two ways to move it too far, both of which silently lose posts:
-     *   - past a post that failed — `since_id` would hide it from every future
-     *     run, so any failure pins the cursor where it is;
-     *   - past posts the batch never reached, when MAX_POSTS_PER_RUN caps the
-     *     run below the number of pending posts. Those were never claimed and
-     *     have no row, so only `since_id` could bring them back.
-     *
-     * `newestId` covers the whole fetched window (including posts filtered out
-     * as replies or as having no media), so it is only safe once every
-     * candidate has been settled.
-     */
-    const consumedWholeWindow = batch.length === candidates.length;
-    const nextCursor =
-      summary.failed > 0
-        ? null
-        : consumedWholeWindow
-          ? result.newestId
-          : lastSettledId;
-
-    await upsertSyncState(db, {
-      source,
-      ...(nextCursor !== null && !env.DRY_RUN ? { lastSeenPostId: nextCursor } : {}),
-      lastSuccessfulSyncAt: new Date(),
-      lastError: null,
+    logger.info('sync.sources_loaded', {
+      count: enabled.length,
+      usernames: enabled.map((source) => source.username),
     });
+
+    for (const source of enabled) {
+      // syncXSource never throws; a failure is reported in its summary so the
+      // remaining sources still get their turn.
+      const sourceSummary = await syncXSource(source, {
+        db,
+        env,
+        logger,
+        xClient,
+        telegramClient,
+        sleep,
+        fetchImpl: options.fetchImpl,
+      });
+
+      summary.sources.push(sourceSummary);
+      summary.checked += sourceSummary.checked;
+      summary.newPosts += sourceSummary.newPosts;
+      summary.published += sourceSummary.published;
+      summary.awaitingApproval += sourceSummary.awaitingApproval;
+      summary.failed += sourceSummary.failed;
+      summary.skipped += sourceSummary.skipped;
+    }
+
+    const failedSources = summary.sources.filter((source) => source.error);
+    if (failedSources.length > 0) {
+      // Reported, not thrown: the run did useful work for the other sources.
+      summary.error =
+        `${failedSources.length} of ${summary.sources.length} source(s) failed: ` +
+        failedSources.map((source) => `@${source.username} (${source.error})`).join('; ');
+    }
 
     summary.durationMs = Date.now() - startedAt;
-    logger.info('sync.end', {
-      ...summary,
-      cursorAdvanced: nextCursor !== null && !env.DRY_RUN,
-      lastSeenPostId: nextCursor,
-    });
+    logger.info('sync.end', { ...summary });
     return summary;
   } catch (error) {
     const message = describeError(error);
@@ -297,12 +148,6 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
     summary.durationMs = Date.now() - startedAt;
 
     logger.error('sync.failed', { error: message });
-
-    await upsertSyncState(db, {
-      source: `x:${env.X_USER_ID ?? env.X_USERNAME ?? 'unknown'}`,
-      lastError: message,
-    }).catch(() => {});
-
     logger.info('sync.end', { ...summary });
     return summary;
   } finally {
@@ -310,43 +155,58 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
   }
 }
 
-async function markPending(
-  db: Database,
-  id: number,
-  method: string,
-  mediaCount: number,
-): Promise<void> {
-  const { processedPosts } = await import('@/db/schema');
-  const { eq } = await import('drizzle-orm');
-
-  await db
-    .update(processedPosts)
-    .set({
-      status: 'pending',
-      telegramMethod: method,
-      mediaCount,
-      lockedAt: null,
-      updatedAt: new Date(),
-    })
-    .where(eq(processedPosts.id, id));
-}
-
 /**
- * Prefer the configured numeric id; fall back to one handle lookup.
+ * One-time import of the legacy single-account configuration.
  *
- * Setting X_USER_ID saves an API call (and its cost) on every single run, which
- * is why the README recommends it.
+ * Before sources lived in the database, the account came from X_USER_ID /
+ * X_USERNAME. An existing deployment must keep working after this upgrade
+ * without the operator having to do anything, so the legacy pair is copied in
+ * the first time a run finds no sources at all.
+ *
+ * It must never run twice, or an account the admin deliberately removed would
+ * reappear. The guard is the account's own `sync_state` row: it is written on
+ * the very first sync and is deliberately left behind by `deleteSource`, so its
+ * presence proves this account has been imported before.
  */
-async function resolveAccount(
-  xClient: XClient,
-  env: Env,
-  logger: Logger,
-): Promise<{ userId: string; username: string }> {
-  if (env.X_USER_ID) {
-    return { userId: env.X_USER_ID, username: (env.X_USERNAME ?? '').replace(/^@/, '') || env.X_USER_ID };
-  }
+async function bootstrapLegacySource(context: {
+  db: Database;
+  env: Env;
+  xClient: XClient;
+  logger: Logger;
+}): Promise<void> {
+  const { db, env, xClient, logger } = context;
 
-  const user = await xClient.getUserByUsername(env.X_USERNAME!);
-  logger.info('x.resolved_user', { userId: user.id, username: user.username });
-  return { userId: user.id, username: user.username };
+  if (!env.X_USER_ID && !env.X_USERNAME) return;
+  if ((await countSources(db)) > 0) return;
+
+  try {
+    let externalId = env.X_USER_ID;
+    let username = (env.X_USERNAME ?? '').replace(/^@/, '');
+
+    if (!externalId) {
+      const user = await xClient.getUserByUsername(username);
+      externalId = user.id;
+      username = user.username;
+    }
+
+    const previous = await getSyncState(db, syncStateKey({ platform: 'x', externalId }));
+    if (previous) {
+      logger.info('sources.bootstrap_skipped', {
+        externalId,
+        reason: 'source was imported before and has since been removed',
+      });
+      return;
+    }
+
+    const result = await addSource(db, { platform: 'x', externalId, username: username || externalId });
+
+    logger.info('sources.bootstrap_imported', {
+      externalId,
+      username: result.source.username,
+      created: result.created,
+    });
+  } catch (error) {
+    // A failed import must not stop a run that may still have other work.
+    logger.error('sources.bootstrap_failed', { error: describeError(error) });
+  }
 }

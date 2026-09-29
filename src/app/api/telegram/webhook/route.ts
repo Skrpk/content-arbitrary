@@ -8,6 +8,9 @@ import { TelegramClient } from '@/lib/telegram/client';
 import { TELEGRAM_PARSE_MODE, escapeHtml } from '@/lib/telegram/format-caption';
 import type { SendContext } from '@/lib/telegram/send-media';
 import { parseCallbackData, publishApprovedPayload } from '@/lib/sync/approval';
+import { dispatchCommand, isAuthorizedAdmin, parseCommand } from '@/lib/telegram/commands';
+import { XClient } from '@/lib/x/client';
+import type { Logger } from '@/lib/logger';
 import {
   claimForDecision,
   markPublished,
@@ -44,9 +47,17 @@ const callbackQuerySchema = z.object({
     .optional(),
 });
 
+const messageSchema = z.object({
+  message_id: z.number(),
+  from: z.object({ id: z.number(), username: z.string().optional() }).optional(),
+  chat: z.object({ id: z.number(), type: z.string().optional() }),
+  text: z.string().optional(),
+});
+
 const updateSchema = z.object({
   update_id: z.number().optional(),
   callback_query: callbackQuerySchema.optional(),
+  message: messageSchema.optional(),
 });
 
 function secretMatches(presented: string | null, expected: string): boolean {
@@ -93,13 +104,19 @@ export async function POST(request: Request): Promise<Response> {
     return ok();
   }
 
+  const client = new TelegramClient({ logger });
+
+  // Slash commands manage the source list. Same admin check as the buttons.
+  if (update.message) {
+    await handleCommandMessage(update.message, { env, client, logger });
+    return ok();
+  }
+
   const query = update.callback_query;
   if (!query) return ok();
 
-  const client = new TelegramClient({ logger });
-
   // Anyone can be forwarded the message; only the reviewer may act on it.
-  if (String(query.from.id) !== env.TELEGRAM_ADMIN_CHAT_ID) {
+  if (!isAuthorizedAdmin(query.from.id, env.TELEGRAM_ADMIN_CHAT_ID)) {
     logger.warn('webhook.unauthorized_user', { fromId: query.from.id });
     await client
       .answerCallbackQuery(query.id, 'You are not authorised to review posts.')
@@ -143,9 +160,9 @@ export async function POST(request: Request): Promise<Response> {
   const stripButtons = async (note: string) => {
     if (!adminChatId || !adminMessageId) return;
     await client
-      .editMessageCaption(adminChatId, adminMessageId, note, TELEGRAM_PARSE_MODE)
-      // An album's buttons live on a plain text message, which has no caption
-      // to edit; removing the keyboard is enough there.
+      .editMessageText(adminChatId, adminMessageId, note, TELEGRAM_PARSE_MODE)
+      // Whatever the message turns out to be, at minimum take the buttons away
+      // so a settled post cannot be actioned again from the chat.
       .catch(() => client.editMessageReplyMarkup(adminChatId, adminMessageId).catch(() => {}));
   };
 
@@ -207,4 +224,64 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   return ok();
+}
+
+/**
+ * Run a slash command sent to the bot.
+ *
+ * Only the configured reviewer may manage sources; anyone else is ignored
+ * silently rather than told what the bot is, so a stranger who finds it learns
+ * nothing about the setup.
+ */
+async function handleCommandMessage(
+  message: { chat: { id: number }; from?: { id: number }; text?: string },
+  context: { env: ReturnType<typeof getEnv>; client: TelegramClient; logger: Logger },
+): Promise<void> {
+  const { env, client, logger } = context;
+
+  const parsed = parseCommand(message.text);
+  if (!parsed) return;
+
+  if (!isAuthorizedAdmin(message.from?.id, env.TELEGRAM_ADMIN_CHAT_ID)) {
+    logger.warn('webhook.unauthorized_command', {
+      fromId: message.from?.id,
+      command: parsed.command,
+    });
+    return;
+  }
+
+  const chatId = String(message.chat.id);
+
+  try {
+    const reply = await dispatchCommand(
+      { db: getDb(), xClient: new XClient({ logger }), logger },
+      parsed,
+    );
+    if (!reply) return;
+
+    await client.call(
+      'sendMessage',
+      {
+        chat_id: chatId,
+        text: reply,
+        parse_mode: TELEGRAM_PARSE_MODE,
+        link_preview_options: { is_disabled: true },
+      },
+      z.object({ message_id: z.number() }),
+    );
+  } catch (error) {
+    // A failing command must never take the webhook down, or Telegram will
+    // retry it and run the same command again.
+    logger.error('webhook.command_failed', {
+      command: parsed.command,
+      error: describeError(error),
+    });
+    await client
+      .call(
+        'sendMessage',
+        { chat_id: chatId, text: '⚠️ Something went wrong running that command.' },
+        z.object({ message_id: z.number() }),
+      )
+      .catch(() => {});
+  }
 }

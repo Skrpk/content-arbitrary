@@ -1,0 +1,279 @@
+import type { Source } from '@/db/schema';
+import type { Database } from '@/lib/db';
+import type { Env } from '@/lib/env';
+import { describeError } from '@/lib/errors';
+import type { Logger } from '@/lib/logger';
+import type { TelegramClient } from '@/lib/telegram/client';
+import { TELEGRAM_MIN_DELAY_BETWEEN_SENDS_MS } from '@/lib/telegram/limits';
+import { syncStateKey, updateSourceUsername } from '@/lib/sources/repository';
+import { processPost } from '@/lib/sync/process-post';
+import {
+  claimPost,
+  findTerminalPostIds,
+  getSyncState,
+  markAwaitingApproval,
+  markFailed,
+  markPending,
+  markPublished,
+  markSkipped,
+  upsertSyncState,
+} from '@/lib/sync/repository';
+import type { XClient } from '@/lib/x/client';
+import { compareSnowflake, getNewPosts } from '@/lib/x/get-new-posts';
+import type { SourceSyncSummary } from '@/types';
+
+/**
+ * One synchronisation pass over a single X account.
+ *
+ * Each source keeps its own `sync_state` cursor, keyed `x:<userId>`, so adding
+ * or removing accounts never disturbs the others' positions. This function
+ * never throws: a source that fails reports the reason in its summary so the
+ * orchestrator can carry on with the next one.
+ */
+
+export interface SourceSyncContext {
+  db: Database;
+  env: Env;
+  logger: Logger;
+  xClient: XClient;
+  telegramClient: TelegramClient;
+  sleep: (ms: number) => Promise<void>;
+  fetchImpl?: typeof fetch;
+}
+
+export async function syncXSource(
+  source: Source,
+  context: SourceSyncContext,
+): Promise<SourceSyncSummary> {
+  const { db, env, xClient, telegramClient, sleep } = context;
+  const stateKey = syncStateKey(source);
+  const logger = context.logger.child({ source: stateKey, username: source.username });
+
+  const summary: SourceSyncSummary = {
+    sourceId: source.id,
+    platform: source.platform,
+    externalId: source.externalId,
+    username: source.username,
+    checked: 0,
+    newPosts: 0,
+    published: 0,
+    awaitingApproval: 0,
+    failed: 0,
+    skipped: 0,
+  };
+
+  try {
+    const state = await getSyncState(db, stateKey);
+    await upsertSyncState(db, { source: stateKey, lastSyncAt: new Date() });
+
+    const result = await getNewPosts(xClient, {
+      userId: source.externalId,
+      fallbackUsername: source.username,
+      sinceId: state?.lastSeenPostId ?? null,
+      fetchLimit: env.X_FETCH_LIMIT,
+      includeReplies: env.INCLUDE_REPLIES,
+      includeReposts: env.INCLUDE_REPOSTS,
+      includeQuotes: env.INCLUDE_QUOTES,
+      logger,
+    });
+
+    summary.checked = result.checked;
+
+    logger.info('sync.fetched', {
+      checked: result.checked,
+      mediaPosts: result.posts.length,
+      sinceId: state?.lastSeenPostId ?? null,
+      newestId: result.newestId,
+    });
+
+    // X is the authority on the handle; refresh our cached copy after a rename.
+    const observed = result.posts[0]?.authorUsername;
+    if (observed && observed.toLowerCase() !== source.username.toLowerCase()) {
+      logger.info('source.username_changed', { from: source.username, to: observed });
+      await updateSourceUsername(db, { id: source.id, username: observed });
+      summary.username = observed;
+    }
+
+    for (const entry of result.skipped) {
+      logger.info('sync.post_skipped', { xPostId: entry.id, reason: entry.reason });
+      summary.skipped += 1;
+    }
+
+    // Drop anything already settled before we spend a claim on it.
+    const terminal = await findTerminalPostIds(db, result.posts.map((post) => post.id));
+    const candidates = result.posts.filter((post) => {
+      if (!terminal.has(post.id)) return true;
+      logger.info('sync.post_skipped', { xPostId: post.id, reason: 'already processed' });
+      summary.skipped += 1;
+      return false;
+    });
+
+    const batch = candidates.slice(0, env.MAX_POSTS_PER_RUN);
+    if (candidates.length > batch.length) {
+      logger.info('sync.batch_limited', {
+        available: candidates.length,
+        processing: batch.length,
+        maxPostsPerRun: env.MAX_POSTS_PER_RUN,
+      });
+    }
+
+    summary.newPosts = batch.length;
+
+    /**
+     * Highest post id this run reached a terminal decision on. The cursor may
+     * never move past it, because anything newer was not even claimed.
+     */
+    let lastSettledId: string | null = null;
+    const settle = (postId: string) => {
+      if (lastSettledId === null || compareSnowflake(postId, lastSettledId) > 0) {
+        lastSettledId = postId;
+      }
+    };
+
+    // Oldest → newest, so the channel reads in the original order.
+    for (const [index, post] of batch.entries()) {
+      const postLogger = logger.child({ xPostId: post.id });
+
+      const claim = await claimPost(db, {
+        xPostId: post.id,
+        xPostUrl: post.url,
+        xAuthorUsername: post.authorUsername,
+        xCreatedAt: post.createdAt,
+        maxRetryAttempts: env.MAX_RETRY_ATTEMPTS,
+      });
+
+      if (!claim.claimed || !claim.row) {
+        // Lost the race, or the row is in a state we must not touch.
+        postLogger.info('sync.post_skipped', { reason: claim.reason ?? 'not claimable' });
+        summary.newPosts -= 1;
+        summary.skipped += 1;
+        continue;
+      }
+
+      // Space out sends so a burst of new posts does not trip flood control.
+      if (index > 0 && !env.DRY_RUN) await sleep(TELEGRAM_MIN_DELAY_BETWEEN_SENDS_MS);
+
+      try {
+        const outcome = await processPost(post, {
+          client: telegramClient,
+          logger: postLogger,
+          env,
+          sleep,
+          fetchImpl: context.fetchImpl,
+          postId: claim.row.id,
+        });
+
+        if (outcome.status === 'published') {
+          await markPublished(db, {
+            id: claim.row.id,
+            telegramChatId: env.TELEGRAM_CHAT_ID,
+            primaryMessageId: outcome.primaryMessageId,
+            telegramMethod: outcome.method,
+            mediaCount: outcome.mediaCount,
+            messages: outcome.messages,
+          });
+          settle(post.id);
+          summary.published += 1;
+          continue;
+        }
+
+        /**
+         * Sent to the reviewer. The post is settled as far as this run is
+         * concerned — the cursor may move past it — but it is not published
+         * until the Approve button reaches the webhook.
+         */
+        if (outcome.status === 'awaiting-approval' && outcome.approval) {
+          await markAwaitingApproval(db, {
+            id: claim.row.id,
+            payload: outcome.approval.payload,
+            adminChatId: outcome.approval.adminChatId,
+            adminMessageId: outcome.approval.adminMessageId,
+          });
+          settle(post.id);
+          summary.awaitingApproval += 1;
+          continue;
+        }
+
+        if (outcome.status === 'dry-run') {
+          // Leave the row `pending` so the first real run publishes it.
+          await markPending(db, {
+            id: claim.row.id,
+            telegramMethod: outcome.method,
+            mediaCount: outcome.mediaCount,
+          });
+          summary.published += 1;
+          continue;
+        }
+
+        if (outcome.status === 'skipped') {
+          await markSkipped(db, { id: claim.row.id, reason: outcome.error ?? 'skipped' });
+          settle(post.id);
+          summary.newPosts -= 1;
+          summary.skipped += 1;
+          continue;
+        }
+
+        await markFailed(db, {
+          id: claim.row.id,
+          errorMessage: outcome.error ?? 'unknown error',
+          permanent: Boolean(outcome.permanent),
+          maxRetryAttempts: env.MAX_RETRY_ATTEMPTS,
+        });
+        summary.failed += 1;
+      } catch (error) {
+        // A single post must never abort the batch: record it and continue so
+        // that later posts still get published.
+        postLogger.error('sync.post_error', { error: describeError(error) });
+        await markFailed(db, {
+          id: claim.row.id,
+          errorMessage: describeError(error),
+          permanent: false,
+          maxRetryAttempts: env.MAX_RETRY_ATTEMPTS,
+        }).catch(() => {});
+        summary.failed += 1;
+      }
+    }
+
+    /**
+     * Advance the cursor only as far as this run actually got.
+     *
+     * Two ways to move it too far, both of which silently lose posts:
+     *   - past a post that failed — `since_id` would hide it from every future
+     *     run, so any failure pins the cursor where it is;
+     *   - past posts the batch never reached, when MAX_POSTS_PER_RUN caps the
+     *     run below the number of pending posts. Those were never claimed and
+     *     have no row, so only `since_id` could bring them back.
+     *
+     * `newestId` covers the whole fetched window (including posts filtered out
+     * as replies or as having no media), so it is only safe once every
+     * candidate has been settled.
+     */
+    const consumedWholeWindow = batch.length === candidates.length;
+    const nextCursor =
+      summary.failed > 0 ? null : consumedWholeWindow ? result.newestId : lastSettledId;
+
+    await upsertSyncState(db, {
+      source: stateKey,
+      ...(nextCursor !== null && !env.DRY_RUN ? { lastSeenPostId: nextCursor } : {}),
+      lastSuccessfulSyncAt: new Date(),
+      lastError: null,
+    });
+
+    logger.info('sync.source_end', {
+      ...summary,
+      cursorAdvanced: nextCursor !== null && !env.DRY_RUN,
+      lastSeenPostId: nextCursor,
+    });
+
+    return summary;
+  } catch (error) {
+    // Never rethrow: one unreachable account must not stop the others.
+    const message = describeError(error);
+    summary.error = message;
+
+    logger.error('sync.source_failed', { error: message });
+    await upsertSyncState(db, { source: stateKey, lastError: message }).catch(() => {});
+
+    return summary;
+  }
+}

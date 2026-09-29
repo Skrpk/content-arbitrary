@@ -285,6 +285,21 @@ export class TelegramClient {
     );
   }
 
+  editMessageText(chatId: string, messageId: number, text: string, parseMode: string) {
+    return this.call(
+      'editMessageText',
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        text,
+        parse_mode: parseMode,
+        link_preview_options: { is_disabled: true },
+        reply_markup: { inline_keyboard: [] },
+      },
+      z.union([telegramMessageSchema, z.boolean()]),
+    );
+  }
+
   editMessageCaption(chatId: string, messageId: number, caption: string, parseMode: string) {
     return this.call(
       'editMessageCaption',
@@ -305,8 +320,8 @@ export class TelegramClient {
       {
         url,
         secret_token: secretToken,
-        // We only care about button presses; anything else is noise.
-        allowed_updates: ['callback_query'],
+        // Button presses, plus the slash commands that manage the source list.
+        allowed_updates: ['callback_query', 'message'],
         drop_pending_updates: true,
       },
       z.boolean(),

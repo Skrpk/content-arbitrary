@@ -279,6 +279,23 @@ export async function markFailed(
   return nextStatus;
 }
 
+/** Dry-run outcome: remember what we learned, but leave it unpublished. */
+export async function markPending(
+  db: Database,
+  input: { id: number; telegramMethod: string; mediaCount: number },
+): Promise<void> {
+  await db
+    .update(processedPosts)
+    .set({
+      status: 'pending',
+      telegramMethod: input.telegramMethod,
+      mediaCount: input.mediaCount,
+      lockedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(processedPosts.id, input.id));
+}
+
 export async function markSkipped(
   db: Database,
   input: { id: number; reason: string },

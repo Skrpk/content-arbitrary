@@ -43,6 +43,21 @@ export interface NormalizedPost {
   isQuote: boolean;
 }
 
+/** Outcome of one source's pass, so a failure can be attributed. */
+export interface SourceSyncSummary {
+  sourceId: number;
+  platform: string;
+  externalId: string;
+  username: string;
+  checked: number;
+  newPosts: number;
+  published: number;
+  awaitingApproval: number;
+  failed: number;
+  skipped: number;
+  error?: string;
+}
+
 export interface SyncSummary {
   checked: number;
   newPosts: number;
@@ -51,6 +66,8 @@ export interface SyncSummary {
   awaitingApproval: number;
   failed: number;
   skipped: number;
+  /** Per-source breakdown of the totals above. */
+  sources: SourceSyncSummary[];
   dryRun: boolean;
   durationMs: number;
   runId: string;

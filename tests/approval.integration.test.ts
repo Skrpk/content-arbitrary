@@ -3,7 +3,7 @@ import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { eq } from 'drizzle-orm';
 import postgres from 'postgres';
 import * as schema from '@/db/schema';
-import { processedPosts, syncState, telegramMessages } from '@/db/schema';
+import { processedPosts, sources, syncState, telegramMessages } from '@/db/schema';
 import { syncPosts } from '@/lib/sync/sync-posts';
 import { XClient } from '@/lib/x/client';
 import { TelegramClient } from '@/lib/telegram/client';
@@ -142,6 +142,9 @@ beforeEach(async () => {
   await db.delete(telegramMessages);
   await db.delete(processedPosts);
   await db.delete(syncState);
+  // Sources are global state too; a row left by another file would be synced
+  // instead of the one this file expects.
+  await db.delete(sources);
 });
 
 async function runSync(stack: ReturnType<typeof makeStack>, mediaKeys = ['3_1', '3_2']) {
@@ -261,15 +264,19 @@ describeIfDb('approval journey', () => {
     expect(await db.select().from(processedPosts)).toHaveLength(1);
   });
 
-  it('attaches the buttons to the photo itself for a single-media post', async () => {
+  it('previews a single-media post as media plus a control message', async () => {
     const stack = makeStack();
     await runSync(stack, ['3_1']);
 
-    expect(stack.sends.map((send) => send.method)).toEqual(['sendPhoto']);
+    // The media carries the exact channel caption; the buttons and the source
+    // line live on the message underneath.
+    expect(stack.sends.map((send) => send.method)).toEqual(['sendPhoto', 'sendMessage']);
 
     const row = (await db.select().from(processedPosts))[0];
-    expect(row?.adminMessageId).toBe(30);
+    expect(row?.adminMessageId).toBe(12);
     expect(row?.approvalPayload?.method).toBe('sendPhoto');
+    // Only the media file_id is stored — the control message is not publishable.
+    expect(row?.approvalPayload?.items).toHaveLength(1);
   });
 
   it('publishes straight to the channel when approval is off', async () => {

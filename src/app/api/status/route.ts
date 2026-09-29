@@ -4,6 +4,7 @@ import { getEnv, redactedEnvSummary } from '@/lib/env';
 import { describeError } from '@/lib/errors';
 import { logger } from '@/lib/logger';
 import { getRecentPosts, getStatusCounts, getSyncState } from '@/lib/sync/repository';
+import { listSources, syncStateKey } from '@/lib/sources/repository';
 
 /**
  * GET /api/status — operational visibility.
@@ -26,25 +27,34 @@ export async function GET(request: Request): Promise<Response> {
   try {
     const env = getEnv();
     const db = getDb();
-    const source = `x:${env.X_USER_ID ?? env.X_USERNAME ?? 'unknown'}`;
-
-    const [state, counts, recent] = await Promise.all([
-      getSyncState(db, source),
+    const [allSources, counts, recent] = await Promise.all([
+      listSources(db),
       getStatusCounts(db),
       getRecentPosts(db, 10),
     ]);
+
+    // Each source keeps its own cursor, so report them side by side.
+    const sourceStates = await Promise.all(
+      allSources.map(async (source) => {
+        const state = await getSyncState(db, syncStateKey(source));
+        return {
+          username: source.username,
+          platform: source.platform,
+          externalId: source.externalId,
+          enabled: source.enabled,
+          lastSyncAt: state?.lastSyncAt ?? null,
+          lastSuccessfulSyncAt: state?.lastSuccessfulSyncAt ?? null,
+          lastSeenPostId: state?.lastSeenPostId ?? null,
+          lastError: state?.lastError ?? null,
+        };
+      }),
+    );
 
     return Response.json(
       {
         ok: true,
         config: redactedEnvSummary(env),
-        sync: {
-          source,
-          lastSyncAt: state?.lastSyncAt ?? null,
-          lastSuccessfulSyncAt: state?.lastSuccessfulSyncAt ?? null,
-          lastSeenPostId: state?.lastSeenPostId ?? null,
-          lastError: state?.lastError ?? null,
-        },
+        sources: sourceStates,
         counts,
         recentPosts: recent.map((post) => ({
           xPostId: post.xPostId,

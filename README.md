@@ -243,6 +243,7 @@ This creates three tables:
 
 | Table | Purpose |
 | --- | --- |
+| `sources` | Accounts being watched. `(platform, external_id)` is **UNIQUE**, so the same account cannot be added twice. |
 | `processed_posts` | One row per X post ever seen. `x_post_id` is **UNIQUE** — the guarantee against double-posting. |
 | `telegram_messages` | Every Telegram message id produced, including each item of an album. |
 | `sync_state` | The `since_id` cursor and last-run health per source. |
@@ -540,6 +541,50 @@ seekable player.
 
 ---
 
+## Managing sources
+
+Accounts to watch live in the database and are managed from the bot's private chat — no
+environment change and no redeploy:
+
+| Command | What it does |
+| --- | --- |
+| `/sources` | List every source and whether it is active |
+| `/addsource @karpathy` | Start watching an account |
+| `/removesource @karpathy` | Stop watching and forget it |
+| `/pausesource @karpathy` | Keep it on the list but skip it on sync |
+| `/resumesource @karpathy` | Watch it again |
+
+`/addsource` accepts whatever is easiest to paste — `karpathy`, `@karpathy`,
+`x.com/karpathy`, a full profile URL, or even a link to one of the account's posts.
+
+Only `TELEGRAM_ADMIN_CHAT_ID` may run these; anyone else is ignored without a reply.
+The commands arrive over the same webhook as the Approve buttons, so
+`npm run webhook:set` must have been run once (see below).
+
+### How sources are identified
+
+The numeric X user id is the identity, not the handle. Handles get renamed and reused, so
+matching on one would eventually follow the wrong account; the id never changes. A rename is
+noticed on the next sync and the cached handle is updated in passing.
+
+Each source keeps its own cursor (`sync_state`, keyed `x:<userId>`), so accounts never
+interfere with one another: adding a busy account cannot starve a quiet one, and one
+unreachable account does not stop the rest of the run — its error is reported per source while
+the others carry on. `MAX_POSTS_PER_RUN` applies **per source** for the same reason.
+
+Removing a source deliberately leaves its cursor behind, so re-adding the same account later
+resumes where it stopped instead of re-reading — and re-paying for — the whole window.
+
+### Upgrading from the single-account version
+
+Nothing to do. On the first run with an empty source list, `X_USER_ID` / `X_USERNAME` are
+imported into the `sources` table and everything continues as before. The import happens once:
+the account's own `sync_state` row proves it has been imported, so a source you deliberately
+remove does not reappear on the next run.
+
+After that the two variables are ignored. Leave them in place or delete them; new
+installations should leave them blank and use `/addsource`.
+
 ## Approval before publishing
 
 With `REQUIRE_APPROVAL=true` nothing reaches the channel unattended. Each new post is
@@ -615,8 +660,8 @@ shows both statuses in its counts and recent posts.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `DATABASE_URL` | — | **Required.** PostgreSQL connection string (use the pooled endpoint). |
-| `X_USER_ID` | — | Numeric X user id. Strongly recommended: saves a billed API call per run. |
-| `X_USERNAME` | — | X handle. Required if `X_USER_ID` is unset; also used for source links. |
+| `X_USER_ID` | — | **Deprecated.** Legacy single-source config, imported once then ignored. |
+| `X_USERNAME` | — | **Deprecated.** Legacy single-source config, imported once then ignored. |
 | `X_BEARER_TOKEN` | — | **Required.** App-only Bearer token. |
 | `X_API_BASE_URL` | `https://api.x.com` | Override only if proxying. |
 | `TELEGRAM_BOT_TOKEN` | — | **Required.** From BotFather. |

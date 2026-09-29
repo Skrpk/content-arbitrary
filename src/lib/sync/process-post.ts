@@ -248,6 +248,7 @@ export async function processPost(
         {
           postId: options.postId!,
           xPostUrl: post.url,
+          sourceUsername: post.authorUsername,
           method: method as 'sendPhoto' | 'sendVideo' | 'sendMediaGroup',
           caption,
           overflowMessage,

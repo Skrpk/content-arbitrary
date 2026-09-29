@@ -1,5 +1,6 @@
 import {
   bigint,
+  boolean,
   index,
   integer,
   jsonb,
@@ -10,6 +11,49 @@ import {
   timestamp,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
+
+/**
+ * Platforms a source can come from.
+ *
+ * Only X today. The column is deliberately not named `x_...` anywhere, so that
+ * adding YouTube, Reddit or RSS later is one enum value plus a fetcher, not a
+ * schema reshape.
+ */
+export const sourcePlatformEnum = pgEnum('source_platform', ['x']);
+
+export type SourcePlatform = (typeof sourcePlatformEnum.enumValues)[number];
+
+/**
+ * Accounts the bot watches, managed at runtime from Telegram rather than from
+ * environment variables.
+ *
+ * `external_id` is the canonical identity — an X user id never changes, while a
+ * handle can be renamed or taken over by someone else. `username` is therefore
+ * cached display data, refreshed when we happen to learn a new one, and is
+ * never used to decide whether two rows are the same source.
+ *
+ * Sources are global to this installation. When ownership arrives, it is an
+ * added column (or a join table) rather than a change to anything here.
+ */
+export const sources = pgTable(
+  'sources',
+  {
+    id: serial('id').primaryKey(),
+    platform: sourcePlatformEnum('platform').notNull().default('x'),
+    externalId: text('external_id').notNull(),
+    username: text('username').notNull(),
+    enabled: boolean('enabled').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('sources_platform_external_id_key').on(table.platform, table.externalId),
+    index('sources_enabled_idx').on(table.enabled),
+  ],
+);
+
+export type Source = typeof sources.$inferSelect;
+export type NewSource = typeof sources.$inferInsert;
 
 export const postStatusEnum = pgEnum('post_status', [
   'pending',

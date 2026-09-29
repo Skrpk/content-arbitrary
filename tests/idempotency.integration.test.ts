@@ -3,7 +3,7 @@ import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { eq } from 'drizzle-orm';
 import postgres from 'postgres';
 import * as schema from '@/db/schema';
-import { processedPosts, syncState, telegramMessages } from '@/db/schema';
+import { processedPosts, sources, syncState, telegramMessages } from '@/db/schema';
 import {
   claimForDecision,
   claimPost,
@@ -64,6 +64,9 @@ beforeEach(async () => {
   await db.delete(telegramMessages);
   await db.delete(processedPosts);
   await db.delete(syncState);
+  // Sources are global state too; a row left by another file would be synced
+  // instead of the one this file expects.
+  await db.delete(sources);
 });
 
 describeIfDb('duplicate protection', () => {

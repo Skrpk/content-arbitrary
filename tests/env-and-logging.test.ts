@@ -51,10 +51,13 @@ describe('environment validation', () => {
     await expect(withEnv({ CRON_SECRET: 'short' }, () => getEnv())).rejects.toThrow(/CRON_SECRET/);
   });
 
-  it('requires either X_USER_ID or X_USERNAME', async () => {
-    await expect(
-      withEnv({ X_USER_ID: undefined, X_USERNAME: undefined }, () => getEnv()),
-    ).rejects.toThrow(/X_USER_ID or X_USERNAME/);
+  it('no longer requires X_USER_ID or X_USERNAME', async () => {
+    // Sources live in the database now; the legacy pair is only a one-time
+    // import path, so a deployment that never had it must still validate.
+    await withEnv({ X_USER_ID: undefined, X_USERNAME: undefined }, (env) => {
+      expect(env.X_USER_ID).toBeUndefined();
+      expect(env.X_USERNAME).toBeUndefined();
+    });
   });
 
   it('accepts X_USERNAME alone', async () => {

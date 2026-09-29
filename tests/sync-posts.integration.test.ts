@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from '@/db/schema';
-import { processedPosts, syncState, telegramMessages } from '@/db/schema';
+import { processedPosts, sources, syncState, telegramMessages } from '@/db/schema';
 import { syncPosts } from '@/lib/sync/sync-posts';
 import { XClient } from '@/lib/x/client';
 import { TelegramClient } from '@/lib/telegram/client';
@@ -36,6 +36,9 @@ beforeEach(async () => {
   await db.delete(telegramMessages);
   await db.delete(processedPosts);
   await db.delete(syncState);
+  // Sources are global state too; a row left by another file would be synced
+  // instead of the one this file expects.
+  await db.delete(sources);
 });
 
 const photoMedia = (key: string) => ({

@@ -93,6 +93,8 @@ function collectMediaItems(
 export interface ReviewRequest {
   postId: number;
   xPostUrl: string;
+  /** Handle the post came from, shown in the preview. */
+  sourceUsername: string;
   method: Exclude<TelegramMethod, 'sendMessage' | 'none'>;
   caption: string;
   overflowMessage?: string;
@@ -121,7 +123,15 @@ export async function sendForApproval(
   const sleep = options?.sleep ?? defaultSleep;
   const keyboard = buildApprovalKeyboard(request.postId);
 
-  let buttonMessageId: number;
+  /**
+   * The media is sent exactly as it would appear in the channel — same caption,
+   * no extra markup — so the preview shows the real thing. Review metadata and
+   * the buttons go on a separate message underneath.
+   *
+   * Keeping them apart matters twice over: an album cannot carry an inline
+   * keyboard at all, and anything added to the caption here would be stored and
+   * published verbatim on approval.
+   */
   let mediaMessages: TelegramMessage[];
 
   if (request.method === 'sendMediaGroup') {
@@ -130,25 +140,25 @@ export async function sendForApproval(
       request.payloads,
       request.caption,
     );
-
-    await sleep(TELEGRAM_MIN_DELAY_BETWEEN_SENDS_MS);
-
-    const control = await sendText(
-      { ...context, replyMarkup: keyboard },
-      formatMessageText(`Review album (${request.payloads.length} items)\n${request.xPostUrl}`),
-      { replyToMessageId: mediaMessages[0]?.message_id },
-    );
-    buttonMessageId = control.message_id;
   } else {
     const single = request.payloads[0]!;
     const sent =
       request.method === 'sendVideo'
-        ? await sendVideo({ ...context, replyMarkup: keyboard }, single, request.caption)
-        : await sendPhoto({ ...context, replyMarkup: keyboard }, single, request.caption);
-
+        ? await sendVideo({ ...context, replyMarkup: undefined }, single, request.caption)
+        : await sendPhoto({ ...context, replyMarkup: undefined }, single, request.caption);
     mediaMessages = [sent];
-    buttonMessageId = sent.message_id;
   }
+
+  await sleep(TELEGRAM_MIN_DELAY_BETWEEN_SENDS_MS);
+
+  const control = await sendText(
+    { ...context, replyMarkup: keyboard },
+    formatMessageText(
+      `Source: @${request.sourceUsername.replace(/^@/, '')}\n${request.xPostUrl}`,
+    ),
+    { replyToMessageId: mediaMessages[0]?.message_id },
+  );
+  const buttonMessageId = control.message_id;
 
   const items = collectMediaItems(mediaMessages, request.payloads);
 

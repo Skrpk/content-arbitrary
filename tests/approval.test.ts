@@ -174,6 +174,7 @@ describe('sendForApproval', () => {
       {
         postId: 42,
         xPostUrl: 'https://x.com/a/status/1',
+        sourceUsername: 'karpathy',
         method: 'sendPhoto',
         caption: 'hello',
         payloads: [urlPayload(photo)],
@@ -181,14 +182,18 @@ describe('sendForApproval', () => {
       { logger: createTestLogger(), sleep: instantSleep },
     );
 
-    expect(calls.map((c) => c.method)).toEqual(['sendPhoto']);
-    expect(result.adminMessageId).toBe(30);
+    // Media first (exactly as the channel will see it), then the control
+    // message that carries the source line and the buttons.
+    expect(calls.map((c) => c.method)).toEqual(['sendPhoto', 'sendMessage']);
+    expect(calls[0]!.body.reply_markup).toBeUndefined();
+    expect(result.adminMessageId).toBe(40);
     expect(result.payload.items).toEqual([
       { kind: 'photo', fileId: 'LARGE', width: 1200, height: 800, durationSeconds: undefined },
     ]);
 
-    const markup = calls[0]!.body.reply_markup as { inline_keyboard: unknown[][] };
+    const markup = calls[1]!.body.reply_markup as { inline_keyboard: unknown[][] };
     expect(markup.inline_keyboard[0]).toHaveLength(2);
+    expect(calls[1]!.body.text).toContain('Source: @karpathy');
   });
 
   it('captures a video file_id', async () => {
@@ -199,6 +204,7 @@ describe('sendForApproval', () => {
       {
         postId: 1,
         xPostUrl: 'https://x.com/a/status/1',
+        sourceUsername: 'karpathy',
         method: 'sendVideo',
         caption: '',
         payloads: [urlPayload(video)],
@@ -218,6 +224,7 @@ describe('sendForApproval', () => {
       {
         postId: 42,
         xPostUrl: 'https://x.com/a/status/1',
+        sourceUsername: 'karpathy',
         method: 'sendMediaGroup',
         caption: 'album',
         payloads: [urlPayload(photo), urlPayload({ ...photo, mediaKey: '3_2' })],
@@ -231,6 +238,7 @@ describe('sendForApproval', () => {
 
     // Buttons live on the text message, which is what a decision must edit.
     expect(result.adminMessageId).toBe(40);
+    expect(calls[1]!.body.text).toContain('Source: @karpathy');
     expect(result.payload.items.map((i) => i.fileId)).toEqual(['FILE_A', 'FILE_B']);
   });
 
@@ -242,6 +250,7 @@ describe('sendForApproval', () => {
       {
         postId: 1,
         xPostUrl: 'https://x.com/a/status/1',
+        sourceUsername: 'karpathy',
         method: 'sendPhoto',
         caption: '',
         payloads: [urlPayload(photo)],
@@ -260,6 +269,7 @@ describe('sendForApproval', () => {
       {
         postId: 1,
         xPostUrl: 'https://x.com/a/status/1',
+        sourceUsername: 'karpathy',
         method: 'sendPhoto',
         caption: 'short caption',
         overflowMessage: 'the full text',
