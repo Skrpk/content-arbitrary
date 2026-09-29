@@ -8,7 +8,7 @@ import { addSource, listSources, setSourceEnabled } from '@/lib/sources/reposito
 import { getSyncState, upsertSyncState } from '@/lib/sync/repository';
 import { XClient } from '@/lib/x/client';
 import { TelegramClient } from '@/lib/telegram/client';
-import { createTestLogger, instantSleep, withEnv } from './helpers';
+import { createTestLogger, instantSleep, withEnv, ensureTestWorkspace } from './helpers';
 
 /**
  * The single-source → many-sources step: each account gets its own cursor, and
@@ -151,6 +151,7 @@ beforeEach(async () => {
   await db.delete(processedPosts);
   await db.delete(syncState);
   await db.delete(sources);
+  await ensureTestWorkspace(db);
 });
 
 const baseEnv = {
@@ -352,6 +353,7 @@ describeIfDb('legacy env bootstrap', () => {
 
     await run(makeXStack({ '1234567890': [] }), makeTelegramStack(), env);
     await db.delete(sources);
+  await ensureTestWorkspace(db);
 
     // The cursor row left behind is what proves this account was imported once.
     await run(makeXStack({ '1234567890': [] }), makeTelegramStack(), env);

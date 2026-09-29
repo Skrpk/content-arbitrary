@@ -13,6 +13,32 @@ import {
 } from 'drizzle-orm/pg-core';
 
 /**
+ * One installation's tenant: a destination channel and the admin who reviews
+ * for it.
+ *
+ * There is exactly one row today, seeded from the environment, and the runtime
+ * still reads the channel and admin id from env. It exists now so that the
+ * scoping columns below can be added while the tables are small — adding them
+ * after a second tenant exists would mean rewriting live data and changing the
+ * duplicate-protection constraint under traffic.
+ */
+export const workspaces = pgTable('workspaces', {
+  id: serial('id').primaryKey(),
+  name: text('name').notNull().default('default'),
+  /** Mirrors TELEGRAM_CHAT_ID; env remains authoritative until tenants land. */
+  telegramChatId: text('telegram_chat_id'),
+  /** Mirrors TELEGRAM_ADMIN_CHAT_ID. */
+  telegramAdminChatId: text('telegram_admin_chat_id'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type Workspace = typeof workspaces.$inferSelect;
+
+/** The single tenant that exists before multi-tenancy. */
+export const DEFAULT_WORKSPACE_ID = 1;
+
+/**
  * Platforms a source can come from.
  *
  * Only X today. The column is deliberately not named `x_...` anywhere, so that
@@ -39,6 +65,10 @@ export const sources = pgTable(
   'sources',
   {
     id: serial('id').primaryKey(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .default(DEFAULT_WORKSPACE_ID)
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
     platform: sourcePlatformEnum('platform').notNull().default('x'),
     externalId: text('external_id').notNull(),
     username: text('username').notNull(),
@@ -47,7 +77,12 @@ export const sources = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex('sources_platform_external_id_key').on(table.platform, table.externalId),
+    // Scoped per workspace: two tenants may legitimately watch the same account.
+    uniqueIndex('sources_workspace_platform_external_id_key').on(
+      table.workspaceId,
+      table.platform,
+      table.externalId,
+    ),
     index('sources_enabled_idx').on(table.enabled),
   ],
 );
@@ -80,6 +115,16 @@ export const processedPosts = pgTable(
   'processed_posts',
   {
     id: serial('id').primaryKey(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .default(DEFAULT_WORKSPACE_ID)
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    /**
+     * Which source this post came from. Nullable because rows created before
+     * sources existed cannot be attributed, and because losing the source must
+     * not lose the record that the post was already published.
+     */
+    sourceId: integer('source_id').references(() => sources.id, { onDelete: 'set null' }),
     /** X post ("tweet") snowflake id, stored as text to avoid 64-bit issues. */
     xPostId: text('x_post_id').notNull(),
     xPostUrl: text('x_post_url').notNull(),
@@ -128,8 +173,14 @@ export const processedPosts = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex('processed_posts_x_post_id_key').on(table.xPostId),
+    /**
+     * Duplicate protection, scoped to the tenant. Two workspaces publishing the
+     * same X post to their own channels are not duplicates of each other, so
+     * the guarantee is per workspace rather than global.
+     */
+    uniqueIndex('processed_posts_workspace_x_post_id_key').on(table.workspaceId, table.xPostId),
     index('processed_posts_status_idx').on(table.status),
+    index('processed_posts_source_idx').on(table.sourceId),
     index('processed_posts_processed_at_idx').on(table.processedAt),
   ],
 );

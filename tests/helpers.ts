@@ -1,4 +1,6 @@
 import { resetEnvCache, type Env, getEnv } from '@/lib/env';
+import type { Database } from '@/lib/db';
+import { DEFAULT_WORKSPACE_ID, workspaces } from '@/db/schema';
 import { createLogger, type Logger } from '@/lib/logger';
 
 /** Run `fn` with temporary environment overrides, then restore. */
@@ -61,6 +63,20 @@ export function telegramError(
     JSON.stringify({ ok: false, error_code: errorCode, description, ...(parameters ? { parameters } : {}) }),
     { status: errorCode, headers: { 'content-type': 'application/json' } },
   );
+}
+
+/**
+ * Make sure the default workspace exists.
+ *
+ * Posts and sources carry a foreign key to it, so any test that writes them
+ * directly needs the row. It is never deleted between tests — doing so would
+ * cascade away everything else.
+ */
+export async function ensureTestWorkspace(db: Database): Promise<void> {
+  await db
+    .insert(workspaces)
+    .values({ id: DEFAULT_WORKSPACE_ID, name: 'default' })
+    .onConflictDoNothing();
 }
 
 /** No-op sleep so retry tests run instantly. */

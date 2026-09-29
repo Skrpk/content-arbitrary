@@ -243,8 +243,9 @@ This creates three tables:
 
 | Table | Purpose |
 | --- | --- |
-| `sources` | Accounts being watched. `(platform, external_id)` is **UNIQUE**, so the same account cannot be added twice. |
-| `processed_posts` | One row per X post ever seen. `x_post_id` is **UNIQUE** — the guarantee against double-posting. |
+| `workspaces` | The tenant a channel and its sources belong to. One row today, seeded from the environment. |
+| `sources` | Accounts being watched. `(workspace_id, platform, external_id)` is **UNIQUE**, so the same account cannot be added twice. |
+| `processed_posts` | One row per X post ever seen. `(workspace_id, x_post_id)` is **UNIQUE** — the guarantee against double-posting. |
 | `telegram_messages` | Every Telegram message id produced, including each item of an album. |
 | `sync_state` | The `since_id` cursor and last-run health per source. |
 
@@ -721,6 +722,16 @@ the run deadlocks — there is a regression test for exactly this.)
 appear, and one missed character makes Telegram reject the entire message with
 `can't parse entities`. HTML needs three (`&`, `<`, `>`), which is far safer on arbitrary
 author-written text.
+
+**Workspace scoping, ahead of multi-tenancy.** `sources` and `processed_posts` carry a
+`workspace_id`, and duplicate protection is `UNIQUE (workspace_id, x_post_id)` rather than
+global. Only one workspace exists and the runtime still reads the channel and reviewer from the
+environment — but the columns are in place now because they are cheap to add to small tables
+and expensive later: once a second tenant exists, the same X post legitimately belongs to two
+channels, and swapping a global unique index under live traffic means dropping duplicate
+protection while it rebuilds. `processed_posts.source_id` records which account a post came
+from, and survives that source being deleted, so removing a source cannot cause its published
+posts to be offered for review again.
 
 **Idempotency in three layers.** Vercel documents that cron delivery can duplicate an
 invocation and that a long run may overlap the next one, so duplicate protection cannot rely

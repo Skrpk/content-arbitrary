@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, lt, or, sql as rawSql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import {
+  DEFAULT_WORKSPACE_ID,
   processedPosts,
   syncState,
   telegramMessages,
@@ -55,13 +56,19 @@ export async function claimPost(
     xAuthorUsername: string | null;
     xCreatedAt: Date | null;
     maxRetryAttempts: number;
+    /** Which source produced it; null for rows that predate source tracking. */
+    sourceId?: number | null;
+    workspaceId?: number;
   },
 ): Promise<ClaimResult> {
   const staleBefore = new Date(Date.now() - PROCESSING_LEASE_MS);
+  const workspaceId = input.workspaceId ?? DEFAULT_WORKSPACE_ID;
 
   const rows = await db
     .insert(processedPosts)
     .values({
+      workspaceId,
+      sourceId: input.sourceId ?? null,
       xPostId: input.xPostId,
       xPostUrl: input.xPostUrl,
       xAuthorUsername: input.xAuthorUsername,
@@ -70,9 +77,12 @@ export async function claimPost(
       lockedAt: new Date(),
     })
     .onConflictDoUpdate({
-      target: processedPosts.xPostId,
+      // Scoped to the workspace, matching the UNIQUE index: the same post may
+      // legitimately exist once per tenant.
+      target: [processedPosts.workspaceId, processedPosts.xPostId],
       set: {
         status: 'processing',
+        sourceId: input.sourceId ?? null,
         lockedAt: new Date(),
         updatedAt: new Date(),
       },
@@ -98,7 +108,12 @@ export async function claimPost(
   const existing = await db
     .select()
     .from(processedPosts)
-    .where(eq(processedPosts.xPostId, input.xPostId))
+    .where(
+      and(
+        eq(processedPosts.workspaceId, workspaceId),
+        eq(processedPosts.xPostId, input.xPostId),
+      ),
+    )
     .limit(1);
 
   const current = existing[0];
@@ -313,7 +328,11 @@ export async function markSkipped(
 }
 
 /** Post ids we have already reached a terminal decision on. */
-export async function findTerminalPostIds(db: Database, xPostIds: string[]): Promise<Set<string>> {
+export async function findTerminalPostIds(
+  db: Database,
+  xPostIds: string[],
+  workspaceId: number = DEFAULT_WORKSPACE_ID,
+): Promise<Set<string>> {
   if (xPostIds.length === 0) return new Set();
 
   const rows = await db
@@ -321,6 +340,7 @@ export async function findTerminalPostIds(db: Database, xPostIds: string[]): Pro
     .from(processedPosts)
     .where(
       and(
+        eq(processedPosts.workspaceId, workspaceId),
         inArray(processedPosts.xPostId, xPostIds),
         inArray(processedPosts.status, ['published', 'skipped', 'rejected']),
       ),

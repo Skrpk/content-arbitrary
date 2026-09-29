@@ -100,7 +100,11 @@ export async function syncXSource(
     }
 
     // Drop anything already settled before we spend a claim on it.
-    const terminal = await findTerminalPostIds(db, result.posts.map((post) => post.id));
+    const terminal = await findTerminalPostIds(
+      db,
+      result.posts.map((post) => post.id),
+      source.workspaceId,
+    );
     const candidates = result.posts.filter((post) => {
       if (!terminal.has(post.id)) return true;
       logger.info('sync.post_skipped', { xPostId: post.id, reason: 'already processed' });
@@ -140,6 +144,8 @@ export async function syncXSource(
         xAuthorUsername: post.authorUsername,
         xCreatedAt: post.createdAt,
         maxRetryAttempts: env.MAX_RETRY_ATTEMPTS,
+        sourceId: source.id,
+        workspaceId: source.workspaceId,
       });
 
       if (!claim.claimed || !claim.row) {

@@ -3,7 +3,7 @@ import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { eq } from 'drizzle-orm';
 import postgres from 'postgres';
 import * as schema from '@/db/schema';
-import { processedPosts, sources, syncState, telegramMessages } from '@/db/schema';
+import { processedPosts, sources, syncState, telegramMessages, workspaces } from '@/db/schema';
 import {
   claimForDecision,
   claimPost,
@@ -19,6 +19,7 @@ import {
   upsertSyncState,
 } from '@/lib/sync/repository';
 import { acquireSyncLock, advisoryLockKey } from '@/lib/sync/locks';
+import { ensureTestWorkspace } from './helpers';
 
 /**
  * These tests run against a real PostgreSQL instance, because the guarantees
@@ -67,6 +68,7 @@ beforeEach(async () => {
   // Sources are global state too; a row left by another file would be synced
   // instead of the one this file expects.
   await db.delete(sources);
+  await ensureTestWorkspace(db);
 });
 
 describeIfDb('duplicate protection', () => {
@@ -96,7 +98,7 @@ describeIfDb('duplicate protection', () => {
     expect(again.reason).toBe('already-published');
   });
 
-  it('enforces uniqueness of x_post_id at the database level', async () => {
+  it('enforces uniqueness of x_post_id per workspace at the database level', async () => {
     await db.insert(processedPosts).values({
       xPostId: basePost.xPostId,
       xPostUrl: basePost.xPostUrl,
@@ -118,7 +120,64 @@ describeIfDb('duplicate protection', () => {
     expect(error).toBeInstanceOf(Error);
     const cause = (error as { cause?: { code?: string; constraint_name?: string } }).cause;
     expect(cause?.code).toBe('23505');
-    expect(cause?.constraint_name).toBe('processed_posts_x_post_id_key');
+    // Scoped to the workspace now: the same post may exist once per tenant.
+    expect(cause?.constraint_name).toBe('processed_posts_workspace_x_post_id_key');
+  });
+
+  it('allows the same post in a second workspace', async () => {
+    /**
+     * The whole point of scoping the unique index: two tenants publishing the
+     * same X post to their own channels are not duplicates of each other. This
+     * fails against the old global UNIQUE (x_post_id).
+     */
+    const [other] = await db
+      .insert(workspaces)
+      .values({ name: 'second-tenant' })
+      .returning();
+
+    const first = await claimPost(db, basePost);
+    expect(first.claimed).toBe(true);
+
+    const second = await claimPost(db, { ...basePost, workspaceId: other!.id });
+    expect(second.claimed).toBe(true);
+    expect(second.row!.id).not.toBe(first.row!.id);
+
+    const rows = await db
+      .select()
+      .from(processedPosts)
+      .where(eq(processedPosts.xPostId, basePost.xPostId));
+    expect(rows).toHaveLength(2);
+
+    // Duplicate protection still holds inside each workspace.
+    expect((await claimPost(db, { ...basePost, workspaceId: other!.id })).claimed).toBe(false);
+
+    await db.delete(workspaces).where(eq(workspaces.id, other!.id));
+  });
+
+  it('records which source a post came from', async () => {
+    const [source] = await db
+      .insert(sources)
+      .values({ platform: 'x', externalId: '4242', username: 'attributed' })
+      .returning();
+
+    const claim = await claimPost(db, { ...basePost, sourceId: source!.id });
+    expect(claim.row?.sourceId).toBe(source!.id);
+  });
+
+  it('keeps the post when its source is deleted', async () => {
+    // Losing a source must not lose the record that the post was published,
+    // or it would be offered for review all over again.
+    const [source] = await db
+      .insert(sources)
+      .values({ platform: 'x', externalId: '4243', username: 'doomed' })
+      .returning();
+
+    const claim = await claimPost(db, { ...basePost, sourceId: source!.id });
+    await db.delete(sources).where(eq(sources.id, source!.id));
+
+    const row = (await db.select().from(processedPosts).where(eq(processedPosts.id, claim.row!.id)))[0];
+    expect(row).toBeDefined();
+    expect(row?.sourceId).toBeNull();
   });
 
   it('lets exactly one of ten concurrent claims win', async () => {

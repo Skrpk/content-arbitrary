@@ -13,7 +13,7 @@ import {
   publishApprovedPayload,
 } from '@/lib/sync/approval';
 import { claimForDecision, markPublished, markRejected } from '@/lib/sync/repository';
-import { createTestLogger, instantSleep, withEnv } from './helpers';
+import { createTestLogger, instantSleep, withEnv, ensureTestWorkspace } from './helpers';
 
 /**
  * The whole review journey against a real database: a sync run parks a post in
@@ -145,6 +145,7 @@ beforeEach(async () => {
   // Sources are global state too; a row left by another file would be synced
   // instead of the one this file expects.
   await db.delete(sources);
+  await ensureTestWorkspace(db);
 });
 
 async function runSync(stack: ReturnType<typeof makeStack>, mediaKeys = ['3_1', '3_2']) {

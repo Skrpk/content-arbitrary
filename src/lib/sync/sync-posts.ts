@@ -15,6 +15,7 @@ import { acquireSyncLock } from '@/lib/sync/locks';
 import { getSyncState } from '@/lib/sync/repository';
 import { defaultSleep } from '@/lib/sync/retry';
 import { syncXSource } from '@/lib/sync/sync-x-source';
+import { ensureDefaultWorkspace } from '@/lib/workspace';
 import type { SyncSummary } from '@/types';
 
 /**
@@ -92,6 +93,9 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
   try {
     const xClient = options.xClient ?? new XClient({ logger });
     const telegramClient = options.telegramClient ?? new TelegramClient({ logger });
+
+    // Sources and posts are scoped to it, so it has to exist first.
+    await ensureDefaultWorkspace(db, env, logger);
 
     await bootstrapLegacySource({ db, env, xClient, logger });
 

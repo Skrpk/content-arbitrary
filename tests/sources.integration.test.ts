@@ -17,7 +17,7 @@ import {
 import { dispatchCommand, isAuthorizedAdmin } from '@/lib/telegram/commands';
 import { upsertSyncState } from '@/lib/sync/repository';
 import { XClient } from '@/lib/x/client';
-import { createTestLogger } from './helpers';
+import { createTestLogger, ensureTestWorkspace } from './helpers';
 
 /**
  * Source management against a real database: the UNIQUE (platform, external_id)
@@ -77,6 +77,7 @@ beforeEach(async () => {
   await db.delete(processedPosts);
   await db.delete(syncState);
   await db.delete(sources);
+  await ensureTestWorkspace(db);
 });
 
 describeIfDb('sources repository', () => {

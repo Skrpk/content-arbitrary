@@ -7,7 +7,7 @@ import { syncPosts } from '@/lib/sync/sync-posts';
 import { XClient } from '@/lib/x/client';
 import { TelegramClient } from '@/lib/telegram/client';
 import { getSyncState } from '@/lib/sync/repository';
-import { createTestLogger, instantSleep, telegramError, telegramOk, withEnv } from './helpers';
+import { createTestLogger, instantSleep, telegramError, telegramOk, withEnv, ensureTestWorkspace } from './helpers';
 
 /**
  * End-to-end exercise of one sync cycle: X responses and Telegram responses are
@@ -39,6 +39,7 @@ beforeEach(async () => {
   // Sources are global state too; a row left by another file would be synced
   // instead of the one this file expects.
   await db.delete(sources);
+  await ensureTestWorkspace(db);
 });
 
 const photoMedia = (key: string) => ({

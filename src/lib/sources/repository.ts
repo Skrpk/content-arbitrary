@@ -1,6 +1,11 @@
 import { and, asc, eq, sql as rawSql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
-import { sources, type Source, type SourcePlatform } from '@/db/schema';
+import {
+  DEFAULT_WORKSPACE_ID,
+  sources,
+  type Source,
+  type SourcePlatform,
+} from '@/db/schema';
 
 /**
  * All database access for the source list.
@@ -10,34 +15,60 @@ import { sources, type Source, type SourcePlatform } from '@/db/schema';
  * future ownership column land without touching either of them.
  */
 
-export async function listSources(db: Database): Promise<Source[]> {
-  return db.select().from(sources).orderBy(asc(sources.createdAt), asc(sources.id));
+export async function listSources(
+  db: Database,
+  workspaceId: number = DEFAULT_WORKSPACE_ID,
+): Promise<Source[]> {
+  return db
+    .select()
+    .from(sources)
+    .where(eq(sources.workspaceId, workspaceId))
+    .orderBy(asc(sources.createdAt), asc(sources.id));
 }
 
 export async function listEnabledSources(
   db: Database,
   platform: SourcePlatform = 'x',
+  workspaceId: number = DEFAULT_WORKSPACE_ID,
 ): Promise<Source[]> {
   return db
     .select()
     .from(sources)
-    .where(and(eq(sources.platform, platform), eq(sources.enabled, true)))
+    .where(
+      and(
+        eq(sources.workspaceId, workspaceId),
+        eq(sources.platform, platform),
+        eq(sources.enabled, true),
+      ),
+    )
     .orderBy(asc(sources.createdAt), asc(sources.id));
 }
 
-export async function countSources(db: Database): Promise<number> {
-  const rows = await db.select({ count: rawSql<number>`count(*)::int` }).from(sources);
+export async function countSources(
+  db: Database,
+  workspaceId: number = DEFAULT_WORKSPACE_ID,
+): Promise<number> {
+  const rows = await db
+    .select({ count: rawSql<number>`count(*)::int` })
+    .from(sources)
+    .where(eq(sources.workspaceId, workspaceId));
   return rows[0]?.count ?? 0;
 }
 
 export async function findSourceByExternalId(
   db: Database,
-  input: { platform: SourcePlatform; externalId: string },
+  input: { platform: SourcePlatform; externalId: string; workspaceId?: number },
 ): Promise<Source | null> {
   const rows = await db
     .select()
     .from(sources)
-    .where(and(eq(sources.platform, input.platform), eq(sources.externalId, input.externalId)))
+    .where(
+      and(
+        eq(sources.workspaceId, input.workspaceId ?? DEFAULT_WORKSPACE_ID),
+        eq(sources.platform, input.platform),
+        eq(sources.externalId, input.externalId),
+      ),
+    )
     .limit(1);
   return rows[0] ?? null;
 }
@@ -48,13 +79,14 @@ export async function findSourceByExternalId(
  */
 export async function findSourceByUsername(
   db: Database,
-  input: { platform: SourcePlatform; username: string },
+  input: { platform: SourcePlatform; username: string; workspaceId?: number },
 ): Promise<Source | null> {
   const rows = await db
     .select()
     .from(sources)
     .where(
       and(
+        eq(sources.workspaceId, input.workspaceId ?? DEFAULT_WORKSPACE_ID),
         eq(sources.platform, input.platform),
         rawSql`lower(${sources.username}) = lower(${input.username})`,
       ),
@@ -78,19 +110,21 @@ export interface AddSourceResult {
  */
 export async function addSource(
   db: Database,
-  input: { platform: SourcePlatform; externalId: string; username: string },
+  input: { platform: SourcePlatform; externalId: string; username: string; workspaceId?: number },
 ): Promise<AddSourceResult> {
-  const existing = await findSourceByExternalId(db, input);
+  const workspaceId = input.workspaceId ?? DEFAULT_WORKSPACE_ID;
+  const existing = await findSourceByExternalId(db, { ...input, workspaceId });
 
   const rows = await db
     .insert(sources)
     .values({
+      workspaceId,
       platform: input.platform,
       externalId: input.externalId,
       username: input.username,
     })
     .onConflictDoUpdate({
-      target: [sources.platform, sources.externalId],
+      target: [sources.workspaceId, sources.platform, sources.externalId],
       set: { username: input.username, updatedAt: new Date() },
     })
     .returning();
