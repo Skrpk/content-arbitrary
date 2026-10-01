@@ -339,6 +339,40 @@ describeIfDb('legacy env bootstrap', () => {
     expect(telegram.sends.some((send) => send.chatId === CHANNEL)).toBe(true);
   });
 
+  it('attributes the account\'s existing posts to the imported source', async () => {
+    // Posts published before the sources table existed must not stay orphaned:
+    // the 0003 back-fill could not match a source that did not exist yet.
+    await db.insert(processedPosts).values([
+      {
+        xPostId: '1700000000000000001',
+        xPostUrl: 'https://x.com/legacy/status/1700000000000000001',
+        xAuthorUsername: 'legacy',
+        status: 'published',
+      },
+      {
+        xPostId: '1700000000000000002',
+        xPostUrl: 'https://x.com/other/status/1700000000000000002',
+        xAuthorUsername: 'someoneelse',
+        status: 'published',
+      },
+    ]);
+
+    await run(makeXStack({ '1234567890': [] }), makeTelegramStack(), {
+      X_USER_ID: '1234567890',
+      X_USERNAME: 'legacy',
+    });
+
+    const source = (await listSources(db))[0]!;
+    const rows = await db.select().from(processedPosts);
+
+    const mine = rows.find((row) => row.xAuthorUsername === 'legacy');
+    const theirs = rows.find((row) => row.xAuthorUsername === 'someoneelse');
+
+    expect(mine?.sourceId).toBe(source.id);
+    // Someone else's post stays unattributed rather than being misfiled.
+    expect(theirs?.sourceId).toBeNull();
+  });
+
   it('does not import twice across runs', async () => {
     const env = { X_USER_ID: '1234567890', X_USERNAME: 'legacy' };
 

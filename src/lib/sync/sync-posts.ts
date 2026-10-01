@@ -12,7 +12,7 @@ import {
   syncStateKey,
 } from '@/lib/sources/repository';
 import { acquireSyncLock } from '@/lib/sync/locks';
-import { getSyncState } from '@/lib/sync/repository';
+import { attributePostsToSource, getSyncState } from '@/lib/sync/repository';
 import { defaultSleep } from '@/lib/sync/retry';
 import { syncXSource } from '@/lib/sync/sync-x-source';
 import { ensureDefaultWorkspace } from '@/lib/workspace';
@@ -204,10 +204,19 @@ async function bootstrapLegacySource(context: {
 
     const result = await addSource(db, { platform: 'x', externalId, username: username || externalId });
 
+    // Give the imported account its own publishing history, which predates the
+    // sources table and so could not be matched by the migration's back-fill.
+    const attributed = await attributePostsToSource(db, {
+      sourceId: result.source.id,
+      username: result.source.username,
+      workspaceId: result.source.workspaceId,
+    });
+
     logger.info('sources.bootstrap_imported', {
       externalId,
       username: result.source.username,
       created: result.created,
+      attributedExistingPosts: attributed,
     });
   } catch (error) {
     // A failed import must not stop a run that may still have other work.

@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt, or, sql as rawSql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lt, or, sql as rawSql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import {
   DEFAULT_WORKSPACE_ID,
@@ -347,6 +347,36 @@ export async function findTerminalPostIds(
     );
 
   return new Set(rows.map((row) => row.xPostId));
+}
+
+/**
+ * Attach historical posts to a source that has just been registered.
+ *
+ * The 0003 migration back-fills `source_id` by matching the stored author
+ * handle, but it can only match sources that already existed. A source imported
+ * from the legacy environment is created after that migration has run, so its
+ * own history would stay unattributed without this.
+ *
+ * Matching on the handle is safe here precisely because it is historical: these
+ * rows record what the account was called when the post was published.
+ */
+export async function attributePostsToSource(
+  db: Database,
+  input: { sourceId: number; username: string; workspaceId?: number },
+): Promise<number> {
+  const rows = await db
+    .update(processedPosts)
+    .set({ sourceId: input.sourceId })
+    .where(
+      and(
+        eq(processedPosts.workspaceId, input.workspaceId ?? DEFAULT_WORKSPACE_ID),
+        isNull(processedPosts.sourceId),
+        rawSql`lower(${processedPosts.xAuthorUsername}) = lower(${input.username})`,
+      ),
+    )
+    .returning({ id: processedPosts.id });
+
+  return rows.length;
 }
 
 export async function getSyncState(db: Database, source: string) {
