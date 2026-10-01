@@ -36,6 +36,13 @@
       "when": 1790861459550,
       "tag": "0004_loud_warstar",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790863614033,
+      "tag": "0005_fat_cannonball",
+      "breakpoints": true
     }
   ]
 }

@@ -1,3 +1,4 @@
+import { ne } from 'drizzle-orm';
 import { resetEnvCache, type Env, getEnv } from '@/lib/env';
 import type { Database } from '@/lib/db';
 import { DEFAULT_WORKSPACE_ID, workspaces } from '@/db/schema';
@@ -76,7 +77,9 @@ export async function ensureTestWorkspace(db: Database): Promise<void> {
   // Reset, not just create: the row is never deleted between tests (posts and
   // sources reference it), so any state written on it — the legacy-import
   // marker above all — would leak into the next test and silently change what
-  // the code under test decides to do.
+  // the code under test decides to do. Extra workspaces a test created go too,
+  // taking their sources and cursors with them via ON DELETE CASCADE.
+  await db.delete(workspaces).where(ne(workspaces.id, DEFAULT_WORKSPACE_ID));
   await db
     .insert(workspaces)
     .values({ id: DEFAULT_WORKSPACE_ID, name: 'default' })

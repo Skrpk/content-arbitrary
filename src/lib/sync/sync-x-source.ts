@@ -63,8 +63,12 @@ export async function syncXSource(
   };
 
   try {
-    const state = await getSyncState(db, stateKey);
-    await upsertSyncState(db, { source: stateKey, lastSyncAt: new Date() });
+    const state = await getSyncState(db, stateKey, source.workspaceId);
+    await upsertSyncState(db, {
+      source: stateKey,
+      workspaceId: source.workspaceId,
+      lastSyncAt: new Date(),
+    });
 
     const result = await getNewPosts(xClient, {
       userId: source.externalId,
@@ -260,6 +264,7 @@ export async function syncXSource(
 
     await upsertSyncState(db, {
       source: stateKey,
+      workspaceId: source.workspaceId,
       ...(nextCursor !== null && !env.DRY_RUN ? { lastSeenPostId: nextCursor } : {}),
       lastSuccessfulSyncAt: new Date(),
       lastError: null,
@@ -278,7 +283,11 @@ export async function syncXSource(
     summary.error = message;
 
     logger.error('sync.source_failed', { error: message });
-    await upsertSyncState(db, { source: stateKey, lastError: message }).catch(() => {});
+    await upsertSyncState(db, {
+      source: stateKey,
+      workspaceId: source.workspaceId,
+      lastError: message,
+    }).catch(() => {});
 
     return summary;
   }

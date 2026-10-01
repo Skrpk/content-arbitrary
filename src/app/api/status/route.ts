@@ -36,7 +36,7 @@ export async function GET(request: Request): Promise<Response> {
     // Each source keeps its own cursor, so report them side by side.
     const sourceStates = await Promise.all(
       allSources.map(async (source) => {
-        const state = await getSyncState(db, syncStateKey(source));
+        const state = await getSyncState(db, syncStateKey(source), source.workspaceId);
         return {
           username: source.username,
           platform: source.platform,

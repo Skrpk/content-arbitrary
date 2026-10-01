@@ -68,8 +68,8 @@ export type SourcePlatform = (typeof sourcePlatformEnum.enumValues)[number];
  * cached display data, refreshed when we happen to learn a new one, and is
  * never used to decide whether two rows are the same source.
  *
- * Sources are global to this installation. When ownership arrives, it is an
- * added column (or a join table) rather than a change to anything here.
+ * Scoped to a workspace, so a second tenant is a matter of writing a different
+ * `workspace_id` rather than reshaping this table.
  */
 export const sources = pgTable(
   'sources',
@@ -226,7 +226,11 @@ export const syncState = pgTable(
   'sync_state',
   {
     id: serial('id').primaryKey(),
-    /** Stable key for the source, e.g. `x:1234567890`. */
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .default(DEFAULT_WORKSPACE_ID)
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    /** Stable key for the source within a workspace, e.g. `x:1234567890`. */
     source: text('source').notNull(),
     lastSeenPostId: text('last_seen_post_id'),
     lastSyncAt: timestamp('last_sync_at', { withTimezone: true }),
@@ -234,7 +238,13 @@ export const syncState = pgTable(
     lastError: text('last_error'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [uniqueIndex('sync_state_source_key').on(table.source)],
+  /**
+   * Scoped per workspace, because `sources` is: two tenants may watch the same
+   * account, and a cursor shared between them would let whichever synced first
+   * advance `since_id` past posts the other has never seen — a silent loss with
+   * no error and no row to recover from.
+   */
+  (table) => [uniqueIndex('sync_state_workspace_source_key').on(table.workspaceId, table.source)],
 );
 
 /** One asset already uploaded to Telegram, addressable by file_id. */

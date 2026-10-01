@@ -215,7 +215,9 @@ async function bootstrapLegacySource(context: {
       username: result.source.username,
       created: result.created,
       attributedExistingPosts: attributed,
-      resumedFromCursor: (await getSyncState(db, syncStateKey(result.source)))?.lastSeenPostId ?? null,
+      resumedFromCursor:
+        (await getSyncState(db, syncStateKey(result.source), result.source.workspaceId))
+          ?.lastSeenPostId ?? null,
     });
   } catch (error) {
     // A failed import must not stop a run that may still have other work.

@@ -379,8 +379,16 @@ export async function attributePostsToSource(
   return rows.length;
 }
 
-export async function getSyncState(db: Database, source: string) {
-  const rows = await db.select().from(syncState).where(eq(syncState.source, source)).limit(1);
+export async function getSyncState(
+  db: Database,
+  source: string,
+  workspaceId: number = DEFAULT_WORKSPACE_ID,
+) {
+  const rows = await db
+    .select()
+    .from(syncState)
+    .where(and(eq(syncState.workspaceId, workspaceId), eq(syncState.source, source)))
+    .limit(1);
   return rows[0] ?? null;
 }
 
@@ -388,6 +396,7 @@ export async function upsertSyncState(
   db: Database,
   input: {
     source: string;
+    workspaceId?: number;
     lastSeenPostId?: string | null;
     lastSyncAt?: Date;
     lastSuccessfulSyncAt?: Date | null;
@@ -403,13 +412,14 @@ export async function upsertSyncState(
   await db
     .insert(syncState)
     .values({
+      workspaceId: input.workspaceId ?? DEFAULT_WORKSPACE_ID,
       source: input.source,
       lastSeenPostId: input.lastSeenPostId ?? null,
       lastSyncAt: input.lastSyncAt ?? null,
       lastSuccessfulSyncAt: input.lastSuccessfulSyncAt ?? null,
       lastError: input.lastError ?? null,
     })
-    .onConflictDoUpdate({ target: syncState.source, set });
+    .onConflictDoUpdate({ target: [syncState.workspaceId, syncState.source], set });
 }
 
 export async function getRecentPosts(db: Database, limit = 10) {

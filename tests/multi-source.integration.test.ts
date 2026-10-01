@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from '@/db/schema';
-import { processedPosts, sources, syncState, telegramMessages } from '@/db/schema';
+import { processedPosts, sources, syncState, telegramMessages, workspaces } from '@/db/schema';
 import { syncPosts } from '@/lib/sync/sync-posts';
 import { addSource, listSources, setSourceEnabled } from '@/lib/sources/repository';
 import { getSyncState, upsertSyncState } from '@/lib/sync/repository';
@@ -426,5 +427,64 @@ describeIfDb('legacy env bootstrap', () => {
     const stored = await listSources(db);
     expect(stored).toHaveLength(1);
     expect(stored[0]!.externalId).toBe('999');
+  });
+});
+
+describeIfDb('cursors across workspaces', () => {
+  /**
+   * The gap this closes: the cursor used to be unique on `source` alone, while
+   * `sources` is unique per workspace. Two tenants watching the same account
+   * therefore shared one position, and whichever synced first moved `since_id`
+   * past posts the other had never been shown — no error, no row, nothing to
+   * recover from.
+   */
+  const SECOND_WORKSPACE = 2;
+
+  beforeEach(async () => {
+    await db
+      .insert(workspaces)
+      .values({ id: SECOND_WORKSPACE, name: 'second' })
+      .onConflictDoNothing();
+  });
+
+  it('keeps one account\'s cursor independent in each workspace', async () => {
+    await upsertSyncState(db, { source: 'x:555', lastSeenPostId: '1700000000000000001' });
+    await upsertSyncState(db, {
+      source: 'x:555',
+      workspaceId: SECOND_WORKSPACE,
+      lastSeenPostId: '1700000000000000999',
+    });
+
+    expect((await getSyncState(db, 'x:555'))?.lastSeenPostId).toBe('1700000000000000001');
+    expect((await getSyncState(db, 'x:555', SECOND_WORKSPACE))?.lastSeenPostId).toBe(
+      '1700000000000000999',
+    );
+
+    // Two rows, not one overwritten by the other.
+    expect(await db.select().from(syncState)).toHaveLength(2);
+  });
+
+  it('still refuses two cursors for one account inside a workspace', async () => {
+    await db.insert(syncState).values({ source: 'x:555' });
+
+    const error = await db
+      .insert(syncState)
+      .values({ source: 'x:555' })
+      .then(() => null)
+      .catch((caught: unknown) => caught);
+
+    expect((error as { cause?: { code?: string } }).cause?.code).toBe('23505');
+  });
+
+  it('takes a workspace\'s cursors with it when the workspace goes', async () => {
+    await upsertSyncState(db, {
+      source: 'x:555',
+      workspaceId: SECOND_WORKSPACE,
+      lastSeenPostId: '1700000000000000999',
+    });
+
+    await db.delete(workspaces).where(eq(workspaces.id, SECOND_WORKSPACE));
+
+    expect(await getSyncState(db, 'x:555', SECOND_WORKSPACE)).toBeNull();
   });
 });
