@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { Workspace } from '@/db/schema';
 import { getDb, getSql, type Database } from '@/lib/db';
 import { getEnv, type Env } from '@/lib/env';
 import { describeError } from '@/lib/errors';
@@ -15,7 +16,7 @@ import { acquireSyncLock } from '@/lib/sync/locks';
 import { attributePostsToSource, getSyncState } from '@/lib/sync/repository';
 import { defaultSleep } from '@/lib/sync/retry';
 import { syncXSource } from '@/lib/sync/sync-x-source';
-import { ensureDefaultWorkspace } from '@/lib/workspace';
+import { ensureDefaultWorkspace, markLegacySourceImported } from '@/lib/workspace';
 import type { SyncSummary } from '@/types';
 
 /**
@@ -95,9 +96,9 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
     const telegramClient = options.telegramClient ?? new TelegramClient({ logger });
 
     // Sources and posts are scoped to it, so it has to exist first.
-    await ensureDefaultWorkspace(db, env, logger);
+    const workspace = await ensureDefaultWorkspace(db, env, logger);
 
-    await bootstrapLegacySource({ db, env, xClient, logger });
+    await bootstrapLegacySource({ db, env, xClient, logger, workspace });
 
     const enabled = await listEnabledSources(db, 'x');
 
@@ -168,19 +169,23 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
  * the first time a run finds no sources at all.
  *
  * It must never run twice, or an account the admin deliberately removed would
- * reappear. The guard is the account's own `sync_state` row: it is written on
- * the very first sync and is deliberately left behind by `deleteSource`, so its
- * presence proves this account has been imported before.
+ * reappear. The guard is `workspaces.legacy_source_imported_at`, set as soon as
+ * the import succeeds. An earlier version inferred this from the account's
+ * `sync_state` row instead, which was wrong in exactly the case this function
+ * exists for: an installation running since before `sources` existed already
+ * has that cursor, so the import it needed was skipped.
  */
 async function bootstrapLegacySource(context: {
   db: Database;
   env: Env;
   xClient: XClient;
   logger: Logger;
+  workspace: Workspace;
 }): Promise<void> {
-  const { db, env, xClient, logger } = context;
+  const { db, env, xClient, logger, workspace } = context;
 
   if (!env.X_USER_ID && !env.X_USERNAME) return;
+  if (workspace.legacySourceImportedAt) return;
   if ((await countSources(db)) > 0) return;
 
   try {
@@ -193,15 +198,6 @@ async function bootstrapLegacySource(context: {
       username = user.username;
     }
 
-    const previous = await getSyncState(db, syncStateKey({ platform: 'x', externalId }));
-    if (previous) {
-      logger.info('sources.bootstrap_skipped', {
-        externalId,
-        reason: 'source was imported before and has since been removed',
-      });
-      return;
-    }
-
     const result = await addSource(db, { platform: 'x', externalId, username: username || externalId });
 
     // Give the imported account its own publishing history, which predates the
@@ -212,11 +208,14 @@ async function bootstrapLegacySource(context: {
       workspaceId: result.source.workspaceId,
     });
 
+    await markLegacySourceImported(db, result.source.workspaceId);
+
     logger.info('sources.bootstrap_imported', {
       externalId,
       username: result.source.username,
       created: result.created,
       attributedExistingPosts: attributed,
+      resumedFromCursor: (await getSyncState(db, syncStateKey(result.source)))?.lastSeenPostId ?? null,
     });
   } catch (error) {
     // A failed import must not stop a run that may still have other work.

@@ -1,1 +1,41 @@
-{"version": "7", "dialect": "postgresql", "entries": [{"idx": 0, "version": "7", "when": 1789327755698, "tag": "0000_dry_pandemic", "breakpoints": true}, {"idx": 1, "version": "7", "when": 1790608256741, "tag": "0001_nasty_ravenous", "breakpoints": true}, {"idx": 2, "version": "7", "when": 1790711077328, "tag": "0002_tiresome_shaman", "breakpoints": true}, {"idx": 3, "version": "7", "when": 1790712084040, "tag": "0003_plain_smiling_tiger", "breakpoints": true}]}
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1789327755698,
+      "tag": "0000_dry_pandemic",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790608256741,
+      "tag": "0001_nasty_ravenous",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790711077328,
+      "tag": "0002_tiresome_shaman",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790712084040,
+      "tag": "0003_plain_smiling_tiger",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790861459550,
+      "tag": "0004_loud_warstar",
+      "breakpoints": true
+    }
+  ]
+}

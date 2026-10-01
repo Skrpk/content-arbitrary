@@ -387,12 +387,34 @@ describeIfDb('legacy env bootstrap', () => {
 
     await run(makeXStack({ '1234567890': [] }), makeTelegramStack(), env);
     await db.delete(sources);
-  await ensureTestWorkspace(db);
 
-    // The cursor row left behind is what proves this account was imported once.
+    // The marker on the workspace is what proves this account was imported
+    // once, so the removal stands.
     await run(makeXStack({ '1234567890': [] }), makeTelegramStack(), env);
 
     expect(await listSources(db)).toHaveLength(0);
+  });
+
+  it('imports an installation that already has a cursor from the single-account era', async () => {
+    // The real upgrade path, and the one a cursor-based guard got wrong: before
+    // `sources` existed the sync wrote its cursor under the very same
+    // `x:<userId>` key, so its presence says nothing about whether the account
+    // has ever been a row in `sources`.
+    await upsertSyncState(db, { source: 'x:1234567890', lastSeenPostId: '1700000000000000500' });
+
+    await run(makeXStack({ '1234567890': [] }), makeTelegramStack(), {
+      X_USER_ID: '1234567890',
+      X_USERNAME: 'legacy',
+    });
+
+    const stored = await listSources(db);
+    expect(stored).toHaveLength(1);
+    expect(stored[0]!.externalId).toBe('1234567890');
+
+    // And it resumes from that cursor rather than re-reading (re-paying for)
+    // the whole window.
+    const state = await getSyncState(db, 'x:1234567890');
+    expect(state?.lastSeenPostId).toBe('1700000000000000500');
   });
 
   it('does not import when sources already exist', async () => {

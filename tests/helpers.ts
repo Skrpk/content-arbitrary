@@ -73,10 +73,17 @@ export function telegramError(
  * cascade away everything else.
  */
 export async function ensureTestWorkspace(db: Database): Promise<void> {
+  // Reset, not just create: the row is never deleted between tests (posts and
+  // sources reference it), so any state written on it — the legacy-import
+  // marker above all — would leak into the next test and silently change what
+  // the code under test decides to do.
   await db
     .insert(workspaces)
     .values({ id: DEFAULT_WORKSPACE_ID, name: 'default' })
-    .onConflictDoNothing();
+    .onConflictDoUpdate({
+      target: workspaces.id,
+      set: { legacySourceImportedAt: null, telegramChatId: null, telegramAdminChatId: null },
+    });
 }
 
 /** No-op sleep so retry tests run instantly. */

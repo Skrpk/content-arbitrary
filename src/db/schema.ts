@@ -29,6 +29,16 @@ export const workspaces = pgTable('workspaces', {
   telegramChatId: text('telegram_chat_id'),
   /** Mirrors TELEGRAM_ADMIN_CHAT_ID. */
   telegramAdminChatId: text('telegram_admin_chat_id'),
+  /**
+   * When the legacy X_USER_ID / X_USERNAME pair was copied into `sources`.
+   *
+   * The import must happen exactly once: never again after the admin removes
+   * that account, or it would reappear on the next run. This records the fact
+   * directly instead of inferring it from a cursor, which cannot distinguish a
+   * removed source from an installation that has simply been running since
+   * before `sources` existed.
+   */
+  legacySourceImportedAt: timestamp('legacy_source_imported_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

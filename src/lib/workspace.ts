@@ -63,3 +63,20 @@ export async function ensureDefaultWorkspace(
 
   return found;
 }
+
+/**
+ * Record that this workspace has imported its legacy environment source.
+ *
+ * Written once, right after the import succeeds, and never cleared — removing
+ * the source is a decision the admin should not have undone for them on the
+ * next cron run.
+ */
+export async function markLegacySourceImported(
+  db: Database,
+  workspaceId: number = DEFAULT_WORKSPACE_ID,
+): Promise<void> {
+  await db
+    .update(workspaces)
+    .set({ legacySourceImportedAt: new Date(), updatedAt: new Date() })
+    .where(eq(workspaces.id, workspaceId));
+}
