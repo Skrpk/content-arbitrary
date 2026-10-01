@@ -37,6 +37,7 @@ X account ──► /api/cron/sync ──► media download ──► Telegram B
 - [P. Debugging common failures](#p-debugging-common-failures)
 - [Q. Telegram 429 and retry_after](#q-telegram-429-and-retry_after)
 - [R. When X does not return the media you expect](#r-when-x-does-not-return-the-media-you-expect)
+- [Multiple channels](#multiple-channels)
 - [Configuration reference](#configuration-reference)
 - [Architecture decisions](#architecture-decisions)
 - [Project structure](#project-structure)
@@ -579,12 +580,78 @@ resumes where it stopped instead of re-reading — and re-paying for — the who
 ### Upgrading from the single-account version
 
 Nothing to do. On the first run with an empty source list, `X_USER_ID` / `X_USERNAME` are
-imported into the `sources` table and everything continues as before. The import happens once:
-the account's own `sync_state` row proves it has been imported, so a source you deliberately
-remove does not reappear on the next run.
+imported into the `sources` table and everything continues as before, resuming from the cursor
+the single-account version left behind rather than re-reading (and re-paying for) the window.
 
-After that the two variables are ignored. Leave them in place or delete them; new
+The import happens once, recorded as `workspaces.legacy_source_imported_at`, so a source you
+deliberately remove does not reappear on the next run. Keep the two variables until you have
+seen the source appear in `/sources`; after that they are ignored and can be deleted. New
 installations should leave them blank and use `/addsource`.
+
+## Multiple channels
+
+One installation can serve several channels. A **workspace** is one of them: a destination
+channel, the reviewer who approves for it, and its own list of sources. Everything else — the
+bot token, the X application, and the tuning in [Configuration reference](#configuration-reference)
+— is shared by all of them.
+
+Because every workspace uses the same X application, two workspaces watching the same account
+each keep their own cursor and are therefore **billed separately** for reading it. One account
+mirrored into three channels costs three times one channel.
+
+### Adding a workspace
+
+There is no command for this: creating a tenant is an operator action, not something a reviewer
+should be able to do from a chat. Insert the row directly.
+
+```sql
+INSERT INTO workspaces (name, telegram_chat_id, telegram_admin_chat_id, legacy_source_imported_at)
+VALUES ('second channel', '-1001234567890', '123456789', now());
+```
+
+- `telegram_chat_id` — the channel, found exactly as in [F](#f-get-your-telegram_chat_id). Add
+  the bot to it as an administrator with **Post messages** first.
+- `telegram_admin_chat_id` — the reviewer's numeric Telegram user id. This is also what
+  authorises them: they can run `/addsource` and press Approve for this workspace and no other.
+- `legacy_source_imported_at` — set it to `now()`. It only matters for workspace 1, and setting
+  it makes clear this tenant has no environment account to inherit.
+
+The reviewer then adds sources from their own chat with the bot:
+
+```
+/addsource @someaccount
+```
+
+Nothing else is needed; the next cron run picks the workspace up. A workspace with no
+`telegram_chat_id` is skipped as still being set up, and so is one with no reviewer while
+`REQUIRE_APPROVAL=true` — publishing unreviewed would defeat the point. `/api/status` lists
+every workspace with a `publishable` flag and the reason when it is false.
+
+`TELEGRAM_CHAT_ID` and `TELEGRAM_ADMIN_CHAT_ID` **seed workspace 1 only**, and only while its
+columns are still empty. Once a workspace row has a destination, the row wins: repoint a channel
+in the database and the environment will not overwrite it on the next run.
+
+### Pausing or removing a workspace
+
+To park a workspace without losing anything, clear its destination. The sync skips it as
+still being set up, and its sources, cursors and history stay exactly as they are:
+
+```sql
+UPDATE workspaces SET telegram_chat_id = NULL WHERE id = 2;
+```
+
+Deleting the row is destructive. `ON DELETE CASCADE` takes its sources, its cursors **and its
+entire publishing history** (`processed_posts`, and the `telegram_messages` hanging off them)
+with it:
+
+```sql
+DELETE FROM workspaces WHERE id = 2;
+```
+
+Losing that history also loses the duplicate protection built on it: re-create the workspace
+with the same sources and, because the cursors are gone too, the next run reads the window from
+scratch and re-publishes posts the channel has already seen. Prefer clearing the destination
+unless you genuinely want the tenant forgotten.
 
 ## Approval before publishing
 

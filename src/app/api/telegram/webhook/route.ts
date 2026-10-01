@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import { getDb } from '@/lib/db';
+import { getDb, type Database } from '@/lib/db';
 import { getEnv } from '@/lib/env';
 import { describeError } from '@/lib/errors';
 import { createLogger } from '@/lib/logger';
@@ -8,7 +8,8 @@ import { TelegramClient } from '@/lib/telegram/client';
 import { TELEGRAM_PARSE_MODE, escapeHtml } from '@/lib/telegram/format-caption';
 import type { SendContext } from '@/lib/telegram/send-media';
 import { parseCallbackData, publishApprovedPayload } from '@/lib/sync/approval';
-import { dispatchCommand, isAuthorizedAdmin, parseCommand } from '@/lib/telegram/commands';
+import { dispatchCommand, parseCommand } from '@/lib/telegram/commands';
+import { destinationFor, findWorkspaceByAdminChatId } from '@/lib/workspace';
 import { XClient } from '@/lib/x/client';
 import type { Logger } from '@/lib/logger';
 import {
@@ -27,8 +28,13 @@ import {
  * Two independent checks guard it:
  *   1. the `X-Telegram-Bot-Api-Secret-Token` header must match
  *      TELEGRAM_WEBHOOK_SECRET, proving the call really came from Telegram;
- *   2. the pressing user must be TELEGRAM_ADMIN_CHAT_ID, so that forwarding the
- *      message to someone else does not hand them the publish button.
+ *   2. the pressing user must be some workspace's reviewer, so that forwarding
+ *      the message to someone else does not hand them the publish button.
+ *
+ * The second check also decides which tenant the request acts on: one bot
+ * serves every workspace, so the sender's id is what tells them apart. The
+ * claim below is scoped to that tenant as well, because a callback carries only
+ * a post id and nothing stops one reviewer sending another's.
  */
 
 export const runtime = 'nodejs';
@@ -86,7 +92,7 @@ export async function POST(request: Request): Promise<Response> {
     return new Response('misconfigured', { status: 500 });
   }
 
-  if (!env.TELEGRAM_WEBHOOK_SECRET || !env.TELEGRAM_ADMIN_CHAT_ID) {
+  if (!env.TELEGRAM_WEBHOOK_SECRET) {
     logger.warn('webhook.approval_disabled', {});
     return new Response('approval not configured', { status: 404 });
   }
@@ -105,22 +111,35 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const client = new TelegramClient({ logger });
+  const db = getDb();
 
-  // Slash commands manage the source list. Same admin check as the buttons.
+  // Slash commands manage the source list. Same tenant lookup as the buttons.
   if (update.message) {
-    await handleCommandMessage(update.message, { env, client, logger });
+    await handleCommandMessage(update.message, { db, client, logger });
     return ok();
   }
 
   const query = update.callback_query;
   if (!query) return ok();
 
-  // Anyone can be forwarded the message; only the reviewer may act on it.
-  if (!isAuthorizedAdmin(query.from.id, env.TELEGRAM_ADMIN_CHAT_ID)) {
+  // Anyone can be forwarded the message; only a reviewer may act on it, and
+  // only on their own tenant's posts.
+  const workspace = await findWorkspaceByAdminChatId(db, query.from.id);
+  if (!workspace) {
     logger.warn('webhook.unauthorized_user', { fromId: query.from.id });
     await client
       .answerCallbackQuery(query.id, 'You are not authorised to review posts.')
       .catch(() => {});
+    return ok();
+  }
+
+  const resolved = destinationFor(workspace, env);
+  if (!resolved.ok) {
+    logger.error('webhook.workspace_unpublishable', {
+      workspaceId: workspace.id,
+      reason: resolved.reason,
+    });
+    await client.answerCallbackQuery(query.id, 'This channel is not configured.').catch(() => {});
     return ok();
   }
 
@@ -131,12 +150,16 @@ export async function POST(request: Request): Promise<Response> {
     return ok();
   }
 
-  const postLogger = logger.child({ postId: parsed.postId, action: parsed.action });
-  const db = getDb();
+  const postLogger = logger.child({
+    postId: parsed.postId,
+    action: parsed.action,
+    workspaceId: workspace.id,
+  });
 
   // A single conditional UPDATE decides the winner, so a double tap — or an
-  // Approve racing a Reject — can only ever act once.
-  const claim = await claimForDecision(db, parsed.postId);
+  // Approve racing a Reject — can only ever act once. Scoped to the presser's
+  // tenant, so a post id from another tenant simply does not match.
+  const claim = await claimForDecision(db, parsed.postId, workspace.id);
 
   if (!claim.claimed || !claim.row) {
     const status = claim.currentStatus ?? 'unknown';
@@ -186,8 +209,8 @@ export async function POST(request: Request): Promise<Response> {
 
   const channelContext: SendContext = {
     client,
-    chatId: env.TELEGRAM_CHAT_ID,
-    disableNotification: env.TELEGRAM_DISABLE_NOTIFICATION,
+    chatId: resolved.destination.chatId,
+    disableNotification: resolved.destination.disableNotification,
   };
 
   try {
@@ -201,7 +224,7 @@ export async function POST(request: Request): Promise<Response> {
 
     await markPublished(db, {
       id: parsed.postId,
-      telegramChatId: env.TELEGRAM_CHAT_ID,
+      telegramChatId: resolved.destination.chatId,
       primaryMessageId: result.primaryMessageId,
       telegramMethod: result.method,
       mediaCount: payload.items.length,
@@ -229,20 +252,22 @@ export async function POST(request: Request): Promise<Response> {
 /**
  * Run a slash command sent to the bot.
  *
- * Only the configured reviewer may manage sources; anyone else is ignored
- * silently rather than told what the bot is, so a stranger who finds it learns
- * nothing about the setup.
+ * Only a workspace's own reviewer may manage its sources; anyone else is
+ * ignored silently rather than told what the bot is, so a stranger who finds it
+ * learns nothing about the setup. The sender's id is also what selects the
+ * tenant, since one bot serves them all.
  */
 async function handleCommandMessage(
   message: { chat: { id: number }; from?: { id: number }; text?: string },
-  context: { env: ReturnType<typeof getEnv>; client: TelegramClient; logger: Logger },
+  context: { db: Database; client: TelegramClient; logger: Logger },
 ): Promise<void> {
-  const { env, client, logger } = context;
+  const { db, client, logger } = context;
 
   const parsed = parseCommand(message.text);
   if (!parsed) return;
 
-  if (!isAuthorizedAdmin(message.from?.id, env.TELEGRAM_ADMIN_CHAT_ID)) {
+  const workspace = await findWorkspaceByAdminChatId(db, message.from?.id);
+  if (!workspace) {
     logger.warn('webhook.unauthorized_command', {
       fromId: message.from?.id,
       command: parsed.command,
@@ -254,7 +279,12 @@ async function handleCommandMessage(
 
   try {
     const reply = await dispatchCommand(
-      { db: getDb(), xClient: new XClient({ logger }), logger },
+      {
+        db,
+        xClient: new XClient({ logger }),
+        logger: logger.child({ workspaceId: workspace.id }),
+        workspaceId: workspace.id,
+      },
       parsed,
     );
     if (!reply) return;

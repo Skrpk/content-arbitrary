@@ -2,6 +2,7 @@ import { ne } from 'drizzle-orm';
 import { resetEnvCache, type Env, getEnv } from '@/lib/env';
 import type { Database } from '@/lib/db';
 import { DEFAULT_WORKSPACE_ID, workspaces } from '@/db/schema';
+import type { TelegramDestination } from '@/lib/workspace';
 import { createLogger, type Logger } from '@/lib/logger';
 
 /** Run `fn` with temporary environment overrides, then restore. */
@@ -91,3 +92,21 @@ export async function ensureTestWorkspace(db: Database): Promise<void> {
 
 /** No-op sleep so retry tests run instantly. */
 export const instantSleep = async () => {};
+
+/**
+ * The destination a single-tenant install produces: workspace 1, pointed at
+ * whatever the environment says. Keeps unit tests on the env-derived values
+ * they were written against while the production path reads the workspace row.
+ */
+export function testDestination(
+  env: Env,
+  overrides: Partial<TelegramDestination> = {},
+): TelegramDestination {
+  return {
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    chatId: env.TELEGRAM_CHAT_ID,
+    adminChatId: env.TELEGRAM_ADMIN_CHAT_ID ?? null,
+    disableNotification: env.TELEGRAM_DISABLE_NOTIFICATION,
+    ...overrides,
+  };
+}

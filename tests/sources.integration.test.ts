@@ -1,8 +1,16 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from '@/db/schema';
-import { processedPosts, sources, syncState, telegramMessages } from '@/db/schema';
+import {
+  DEFAULT_WORKSPACE_ID,
+  processedPosts,
+  sources,
+  syncState,
+  telegramMessages,
+  workspaces,
+} from '@/db/schema';
 import {
   addSource,
   countSources,
@@ -14,7 +22,8 @@ import {
   setSourceEnabled,
   syncStateKey,
 } from '@/lib/sources/repository';
-import { dispatchCommand, isAuthorizedAdmin } from '@/lib/telegram/commands';
+import { dispatchCommand } from '@/lib/telegram/commands';
+import { findWorkspaceByAdminChatId } from '@/lib/workspace';
 import { upsertSyncState } from '@/lib/sync/repository';
 import { XClient } from '@/lib/x/client';
 import { createTestLogger, ensureTestWorkspace } from './helpers';
@@ -58,7 +67,12 @@ function makeXClient(known: Record<string, string>) {
 }
 
 function makeContext(known: Record<string, string> = { karpathy: '33836629', sama: '1605' }) {
-  return { db, xClient: makeXClient(known), logger: createTestLogger() };
+  return {
+    db,
+    xClient: makeXClient(known),
+    logger: createTestLogger(),
+    workspaceId: DEFAULT_WORKSPACE_ID,
+  };
 }
 
 beforeAll(async () => {
@@ -283,26 +297,40 @@ describeIfDb('source commands', () => {
   });
 
   /**
-   * Authorisation is decided by isAuthorizedAdmin, which the webhook applies
-   * before dispatching. Tested here together with its effect on the data.
+   * Authorisation is a workspace lookup: the sender's id is both the proof they
+   * may act and the choice of tenant they act on. The webhook applies it before
+   * dispatching, so it is tested here alongside its effect on the data.
    */
-  it('runs a command for the configured admin', async () => {
-    expect(isAuthorizedAdmin(555001, '555001')).toBe(true);
+  it('runs a command for a workspace reviewer', async () => {
+    await db
+      .update(workspaces)
+      .set({ telegramChatId: '-1001', telegramAdminChatId: '555001' })
+      .where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+
+    const found = await findWorkspaceByAdminChatId(db, 555001);
+    expect(found?.id).toBe(DEFAULT_WORKSPACE_ID);
 
     await dispatchCommand(makeContext(), { command: 'addsource', args: 'karpathy' });
     expect(await countSources(db)).toBe(1);
   });
 
   it('refuses a stranger, leaving sources untouched', async () => {
-    const adminChatId = '555001';
+    await db
+      .update(workspaces)
+      .set({ telegramChatId: '-1001', telegramAdminChatId: '555001' })
+      .where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
 
-    expect(isAuthorizedAdmin(999999, adminChatId)).toBe(false);
-    expect(isAuthorizedAdmin(undefined, adminChatId)).toBe(false);
-    // No admin configured means nobody is an admin.
-    expect(isAuthorizedAdmin(555001, undefined)).toBe(false);
+    expect(await findWorkspaceByAdminChatId(db, 999999)).toBeNull();
+    expect(await findWorkspaceByAdminChatId(db, undefined)).toBeNull();
 
     // The webhook stops before dispatch, so nothing is written.
     expect(await countSources(db)).toBe(0);
+  });
+
+  it('is nobody\'s admin when no workspace names a reviewer', async () => {
+    // ensureTestWorkspace leaves both columns null, which is the state of a
+    // tenant mid-setup: its id must not authorise anyone.
+    expect(await findWorkspaceByAdminChatId(db, 555001)).toBeNull();
   });
 
   it('returns help for /start', async () => {

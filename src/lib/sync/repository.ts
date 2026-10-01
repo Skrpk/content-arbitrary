@@ -205,12 +205,20 @@ export async function markAwaitingApproval(
 export async function claimForDecision(
   db: Database,
   postId: number,
+  workspaceId: number = DEFAULT_WORKSPACE_ID,
 ): Promise<{ claimed: boolean; row?: typeof processedPosts.$inferSelect; currentStatus?: PostStatus }> {
   const rows = await db
     .update(processedPosts)
     .set({ status: 'processing', lockedAt: new Date(), updatedAt: new Date() })
     .where(
-      and(eq(processedPosts.id, postId), eq(processedPosts.status, 'awaiting_approval')),
+      and(
+        eq(processedPosts.id, postId),
+        // Scoped to the presser's own tenant: a callback carries only a post id,
+        // so without this one reviewer could publish another tenant's post by
+        // sending a button press for an id that was never theirs.
+        eq(processedPosts.workspaceId, workspaceId),
+        eq(processedPosts.status, 'awaiting_approval'),
+      ),
     )
     .returning();
 

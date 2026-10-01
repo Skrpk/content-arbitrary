@@ -23,6 +23,7 @@ import type { NormalizedMedia, NormalizedPost, TelegramMethod } from '@/types';
 import { sendForApproval } from '@/lib/sync/approval';
 import type { ApprovalPayload } from '@/db/schema';
 import { defaultSleep } from '@/lib/sync/retry';
+import type { TelegramDestination } from '@/lib/workspace';
 
 export interface ProcessOutcome {
   status: 'published' | 'failed' | 'skipped' | 'dry-run' | 'awaiting-approval';
@@ -63,6 +64,12 @@ export async function processPost(
     sleep?: (ms: number) => Promise<void>;
     /** Database id of the row, needed to address the approval buttons. */
     postId?: number;
+    /**
+     * Where this post goes. Passed in rather than read from the environment,
+     * because the channel and the reviewer belong to the tenant that owns the
+     * source, not to the installation.
+     */
+    destination: TelegramDestination;
   },
 ): Promise<ProcessOutcome> {
   const env = options.env ?? getEnv();
@@ -230,9 +237,11 @@ export async function processPost(
    * stored so that approval can re-send without downloading from X again.
    */
   if (env.REQUIRE_APPROVAL) {
+    // destinationFor refuses a tenant with approval on and no reviewer, so by
+    // the time a post reaches here the admin chat is known to exist.
     const reviewContext: SendContext = {
       client: options.client,
-      chatId: env.TELEGRAM_ADMIN_CHAT_ID!,
+      chatId: options.destination.adminChatId!,
       disableNotification: false,
     };
 
@@ -294,8 +303,8 @@ export async function processPost(
 
   const context: SendContext = {
     client: options.client,
-    chatId: env.TELEGRAM_CHAT_ID,
-    disableNotification: env.TELEGRAM_DISABLE_NOTIFICATION,
+    chatId: options.destination.chatId,
+    disableNotification: options.destination.disableNotification,
   };
 
   logger.info('telegram.upload_start', {

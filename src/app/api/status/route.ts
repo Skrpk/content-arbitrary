@@ -5,6 +5,7 @@ import { describeError } from '@/lib/errors';
 import { logger } from '@/lib/logger';
 import { getRecentPosts, getStatusCounts, getSyncState } from '@/lib/sync/repository';
 import { listSources, syncStateKey } from '@/lib/sources/repository';
+import { destinationFor, listAllWorkspaces } from '@/lib/workspace';
 
 /**
  * GET /api/status — operational visibility.
@@ -27,33 +28,62 @@ export async function GET(request: Request): Promise<Response> {
   try {
     const env = getEnv();
     const db = getDb();
-    const [allSources, counts, recent] = await Promise.all([
-      listSources(db),
+    const [tenants, counts, recent] = await Promise.all([
+      listAllWorkspaces(db),
       getStatusCounts(db),
       getRecentPosts(db, 10),
     ]);
 
-    // Each source keeps its own cursor, so report them side by side.
-    const sourceStates = await Promise.all(
-      allSources.map(async (source) => {
-        const state = await getSyncState(db, syncStateKey(source), source.workspaceId);
+    /**
+     * Reported per tenant, because sources are scoped to one: a flat list would
+     * silently show only the first workspace's accounts and read as if the
+     * others had none.
+     */
+    const workspaceStates = await Promise.all(
+      tenants.map(async (tenant) => {
+        const tenantSources = await listSources(db, tenant.id);
+
+        // Each source keeps its own cursor, so report them side by side.
+        const sourceStates = await Promise.all(
+          tenantSources.map(async (source) => {
+            const state = await getSyncState(db, syncStateKey(source), source.workspaceId);
+            return {
+              username: source.username,
+              platform: source.platform,
+              externalId: source.externalId,
+              enabled: source.enabled,
+              lastSyncAt: state?.lastSyncAt ?? null,
+              lastSuccessfulSyncAt: state?.lastSuccessfulSyncAt ?? null,
+              lastSeenPostId: state?.lastSeenPostId ?? null,
+              lastError: state?.lastError ?? null,
+            };
+          }),
+        );
+
+        const publishable = destinationFor(tenant, env);
+
         return {
-          username: source.username,
-          platform: source.platform,
-          externalId: source.externalId,
-          enabled: source.enabled,
-          lastSyncAt: state?.lastSyncAt ?? null,
-          lastSuccessfulSyncAt: state?.lastSuccessfulSyncAt ?? null,
-          lastSeenPostId: state?.lastSeenPostId ?? null,
-          lastError: state?.lastError ?? null,
+          workspaceId: tenant.id,
+          name: tenant.name,
+          // Chat ids are configuration, not secrets, and knowing where a tenant
+          // publishes is the point of this endpoint.
+          telegramChatId: tenant.telegramChatId,
+          hasReviewer: Boolean(tenant.telegramAdminChatId),
+          publishable: publishable.ok,
+          ...(publishable.ok ? {} : { unpublishableReason: publishable.reason }),
+          sources: sourceStates,
         };
       }),
     );
+
+    // Kept for anything already reading a flat list of this install's sources.
+    const sourceStates = workspaceStates.flatMap((tenant) => tenant.sources);
 
     return Response.json(
       {
         ok: true,
         config: redactedEnvSummary(env),
+        workspaces: workspaceStates,
         sources: sourceStates,
         counts,
         recentPosts: recent.map((post) => ({

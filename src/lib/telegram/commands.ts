@@ -44,24 +44,16 @@ export function parseCommand(text: string | undefined): ParsedCommand | null {
   return { command: match[1]!.toLowerCase(), args: (match[2] ?? '').trim() };
 }
 
-/**
- * Whether a Telegram user may manage sources.
- *
- * Named and exported so the rule is stated once and can be tested directly,
- * rather than being an inline comparison inside the webhook.
- */
-export function isAuthorizedAdmin(
-  fromId: number | string | undefined,
-  adminChatId: string | undefined,
-): boolean {
-  if (fromId === undefined || !adminChatId) return false;
-  return String(fromId) === adminChatId;
-}
-
 export interface CommandContext {
   db: Database;
   xClient: XClient;
   logger: Logger;
+  /**
+   * The tenant whose sources this command acts on, resolved from the sender by
+   * the webhook. Every repository call below is scoped to it, so one reviewer
+   * can never list or change another tenant's accounts.
+   */
+  workspaceId: number;
 }
 
 const HELP_TEXT = [
@@ -93,7 +85,7 @@ async function resolveHandleArgument(
 }
 
 export async function handleSources(context: CommandContext): Promise<string> {
-  const all = await listSources(context.db);
+  const all = await listSources(context.db, context.workspaceId);
 
   if (all.length === 0) {
     return [
@@ -137,6 +129,7 @@ export async function handleAddSource(context: CommandContext, args: string): Pr
     platform: 'x',
     externalId: user.id,
     username: user.username,
+    workspaceId: context.workspaceId,
   });
 
   if (!result.created) {
@@ -146,13 +139,21 @@ export async function handleAddSource(context: CommandContext, args: string): Pr
     return `ℹ️ <b>@${escapeHtml(user.username)}</b> is already in your sources.${note}`;
   }
 
-  context.logger.info('command.source_added', { username: user.username, externalId: user.id });
+  context.logger.info('command.source_added', {
+    workspaceId: context.workspaceId,
+    username: user.username,
+    externalId: user.id,
+  });
   return `✅ <b>Source added</b>\n\n@${escapeHtml(user.username)}`;
 }
 
 /** Find a source by handle, preferring an exact match on what X currently reports. */
 async function findByHandle(context: CommandContext, username: string) {
-  return findSourceByUsername(context.db, { platform: 'x', username });
+  return findSourceByUsername(context.db, {
+    platform: 'x',
+    username,
+    workspaceId: context.workspaceId,
+  });
 }
 
 export async function handleRemoveSource(context: CommandContext, args: string): Promise<string> {

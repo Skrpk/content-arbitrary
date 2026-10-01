@@ -35,7 +35,10 @@ export async function GET(request: Request): Promise<Response> {
         awaitingApproval: summary.awaitingApproval,
         failed: summary.failed,
         skipped: summary.skipped,
+        workspaces: summary.workspaces,
+        ...(summary.skippedWorkspaces ? { skippedWorkspaces: summary.skippedWorkspaces } : {}),
         sources: summary.sources.map((source) => ({
+          workspaceId: source.workspaceId,
           username: source.username,
           checked: source.checked,
           published: source.published,
@@ -69,6 +72,7 @@ export async function GET(request: Request): Promise<Response> {
         awaitingApproval: 0,
         failed: 0,
         skipped: 0,
+        workspaces: 0,
         sources: [],
         error: message,
       },

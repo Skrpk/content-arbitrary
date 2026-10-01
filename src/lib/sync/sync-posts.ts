@@ -16,22 +16,34 @@ import { acquireSyncLock } from '@/lib/sync/locks';
 import { attributePostsToSource, getSyncState } from '@/lib/sync/repository';
 import { defaultSleep } from '@/lib/sync/retry';
 import { syncXSource } from '@/lib/sync/sync-x-source';
-import { ensureDefaultWorkspace, markLegacySourceImported } from '@/lib/workspace';
+import {
+  destinationFor,
+  ensureDefaultWorkspace,
+  listActiveWorkspaces,
+  markLegacySourceImported,
+} from '@/lib/workspace';
 import type { SyncSummary } from '@/types';
 
 /**
- * One complete synchronisation cycle across every enabled source.
+ * One complete synchronisation cycle: every tenant, and within a tenant every
+ * enabled source.
  *
  * Safety model, in layers:
- *   1. A Postgres advisory lock means only one invocation runs at a time.
- *   2. An atomic claim on the UNIQUE `x_post_id` means that even if the lock
- *      were bypassed, a post can only ever be claimed by one runner.
+ *   1. A Postgres advisory lock per tenant means only one invocation syncs a
+ *      given tenant at a time. Per tenant rather than global, so one slow
+ *      account cannot hold up every other tenant's run.
+ *   2. An atomic claim on the UNIQUE (workspace_id, x_post_id) means that even
+ *      if the lock were bypassed, a post can only ever be claimed by one runner.
  *   3. Each post is processed in isolation, so one bad post cannot abort a
- *      source; each source is isolated too, so one unreachable account cannot
- *      abort the run.
+ *      source; sources and tenants are isolated too, so neither an unreachable
+ *      account nor a misconfigured tenant can abort the run.
  *
  * `MAX_POSTS_PER_RUN` applies per source, which is what makes sources
  * independent: adding a busy account cannot starve a quiet one.
+ *
+ * Every tenant shares one X application, so the bearer token, the rate limit
+ * and the per-read cost are installation-wide: two tenants watching the same
+ * account keep separate cursors and are therefore billed separately for it.
  */
 
 export interface SyncOptions {
@@ -63,10 +75,13 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
     failed: 0,
     skipped: 0,
     sources: [],
+    workspaces: 0,
     dryRun: env.DRY_RUN,
     durationMs: 0,
     runId,
   };
+
+  const skippedWorkspaces: { workspaceId: number; reason: string }[] = [];
 
   logger.info('sync.start', {
     dryRun: env.DRY_RUN,
@@ -77,64 +92,93 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
     requireApproval: env.REQUIRE_APPROVAL,
   });
 
-  const lock = options.skipLock
-    ? { acquired: true, release: async () => {} }
-    : await acquireSyncLock(getSql(), 'content-arbitrary:sync');
-
-  if (!lock.acquired) {
-    // Another invocation is mid-run. Exiting immediately is correct: the work
-    // is not lost, the in-flight run is already doing it.
-    logger.warn('sync.lock_busy', {});
-    summary.lockBusy = true;
-    summary.durationMs = Date.now() - startedAt;
-    logger.info('sync.end', { ...summary });
-    return summary;
-  }
-
   try {
     const xClient = options.xClient ?? new XClient({ logger });
     const telegramClient = options.telegramClient ?? new TelegramClient({ logger });
 
-    // Sources and posts are scoped to it, so it has to exist first.
-    const workspace = await ensureDefaultWorkspace(db, env, logger);
+    // Sources, posts and cursors are all scoped to it, so it has to exist first.
+    const defaultWorkspace = await ensureDefaultWorkspace(db, env, logger);
 
-    await bootstrapLegacySource({ db, env, xClient, logger, workspace });
-
-    const enabled = await listEnabledSources(db, 'x');
-
-    if (enabled.length === 0) {
-      logger.warn('sync.no_sources', {});
-      summary.durationMs = Date.now() - startedAt;
-      logger.info('sync.end', { ...summary });
-      return summary;
-    }
-
-    logger.info('sync.sources_loaded', {
-      count: enabled.length,
-      usernames: enabled.map((source) => source.username),
+    const tenants = await listActiveWorkspaces(db);
+    logger.info('sync.workspaces_loaded', {
+      count: tenants.length,
+      ids: tenants.map((tenant) => tenant.id),
     });
 
-    for (const source of enabled) {
-      // syncXSource never throws; a failure is reported in its summary so the
-      // remaining sources still get their turn.
-      const sourceSummary = await syncXSource(source, {
-        db,
-        env,
-        logger,
-        xClient,
-        telegramClient,
-        sleep,
-        fetchImpl: options.fetchImpl,
-      });
+    for (const tenant of tenants) {
+      const resolved = destinationFor(tenant, env);
+      if (!resolved.ok) {
+        // A tenant mid-setup, not a failure: nothing of its own is wrong with
+        // the run, and the other tenants still get their turn.
+        logger.warn('sync.workspace_skipped', { workspaceId: tenant.id, reason: resolved.reason });
+        skippedWorkspaces.push({ workspaceId: tenant.id, reason: resolved.reason });
+        continue;
+      }
 
-      summary.sources.push(sourceSummary);
-      summary.checked += sourceSummary.checked;
-      summary.newPosts += sourceSummary.newPosts;
-      summary.published += sourceSummary.published;
-      summary.awaitingApproval += sourceSummary.awaitingApproval;
-      summary.failed += sourceSummary.failed;
-      summary.skipped += sourceSummary.skipped;
+      /**
+       * One lock per tenant. A tenant already being synced by an overlapping
+       * invocation is skipped rather than waited for: the work is not lost, the
+       * in-flight run is already doing it.
+       */
+      const lock = options.skipLock
+        ? { acquired: true, release: async () => {} }
+        : await acquireSyncLock(getSql(), `content-arbitrary:sync:${tenant.id}`);
+
+      if (!lock.acquired) {
+        logger.warn('sync.lock_busy', { workspaceId: tenant.id });
+        skippedWorkspaces.push({ workspaceId: tenant.id, reason: 'another run holds its lock' });
+        continue;
+      }
+
+      try {
+        // Only tenant 1 ever had an environment-configured account to inherit.
+        if (tenant.id === defaultWorkspace.id) {
+          await bootstrapLegacySource({ db, env, xClient, logger, workspace: tenant });
+        }
+
+        const enabled = await listEnabledSources(db, 'x', tenant.id);
+
+        if (enabled.length === 0) {
+          logger.warn('sync.no_sources', { workspaceId: tenant.id });
+          continue;
+        }
+
+        logger.info('sync.sources_loaded', {
+          workspaceId: tenant.id,
+          count: enabled.length,
+          usernames: enabled.map((source) => source.username),
+        });
+
+        summary.workspaces += 1;
+
+        for (const source of enabled) {
+          // syncXSource never throws; a failure is reported in its summary so
+          // the remaining sources and tenants still get their turn.
+          const sourceSummary = await syncXSource(source, {
+            db,
+            env,
+            logger,
+            xClient,
+            telegramClient,
+            sleep,
+            fetchImpl: options.fetchImpl,
+            destination: resolved.destination,
+          });
+
+          summary.sources.push(sourceSummary);
+          summary.checked += sourceSummary.checked;
+          summary.newPosts += sourceSummary.newPosts;
+          summary.published += sourceSummary.published;
+          summary.awaitingApproval += sourceSummary.awaitingApproval;
+          summary.failed += sourceSummary.failed;
+          summary.skipped += sourceSummary.skipped;
+        }
+      } finally {
+        await lock.release().catch(() => {});
+      }
     }
+
+    if (skippedWorkspaces.length > 0) summary.skippedWorkspaces = skippedWorkspaces;
 
     const failedSources = summary.sources.filter((source) => source.error);
     if (failedSources.length > 0) {
@@ -155,8 +199,6 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
     logger.error('sync.failed', { error: message });
     logger.info('sync.end', { ...summary });
     return summary;
-  } finally {
-    await lock.release().catch(() => {});
   }
 }
 

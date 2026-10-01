@@ -20,6 +20,7 @@ import {
 } from '@/lib/sync/repository';
 import type { XClient } from '@/lib/x/client';
 import { compareSnowflake, getNewPosts } from '@/lib/x/get-new-posts';
+import type { TelegramDestination } from '@/lib/workspace';
 import type { SourceSyncSummary } from '@/types';
 
 /**
@@ -39,6 +40,8 @@ export interface SourceSyncContext {
   telegramClient: TelegramClient;
   sleep: (ms: number) => Promise<void>;
   fetchImpl?: typeof fetch;
+  /** The tenant's channel and reviewer, resolved once per workspace. */
+  destination: TelegramDestination;
 }
 
 export async function syncXSource(
@@ -51,6 +54,7 @@ export async function syncXSource(
 
   const summary: SourceSyncSummary = {
     sourceId: source.id,
+    workspaceId: source.workspaceId,
     platform: source.platform,
     externalId: source.externalId,
     username: source.username,
@@ -171,12 +175,13 @@ export async function syncXSource(
           sleep,
           fetchImpl: context.fetchImpl,
           postId: claim.row.id,
+          destination: context.destination,
         });
 
         if (outcome.status === 'published') {
           await markPublished(db, {
             id: claim.row.id,
-            telegramChatId: env.TELEGRAM_CHAT_ID,
+            telegramChatId: context.destination.chatId,
             primaryMessageId: outcome.primaryMessageId,
             telegramMethod: outcome.method,
             mediaCount: outcome.mediaCount,

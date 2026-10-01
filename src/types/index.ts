@@ -46,6 +46,7 @@ export interface NormalizedPost {
 /** Outcome of one source's pass, so a failure can be attributed. */
 export interface SourceSyncSummary {
   sourceId: number;
+  workspaceId: number;
   platform: string;
   externalId: string;
   username: string;
@@ -66,8 +67,12 @@ export interface SyncSummary {
   awaitingApproval: number;
   failed: number;
   skipped: number;
-  /** Per-source breakdown of the totals above. */
+  /** Per-source breakdown of the totals above, across every tenant. */
   sources: SourceSyncSummary[];
+  /** How many tenants this run actually visited. */
+  workspaces: number;
+  /** Tenants passed over, with the reason — mid-setup, or busy elsewhere. */
+  skippedWorkspaces?: { workspaceId: number; reason: string }[];
   dryRun: boolean;
   durationMs: number;
   runId: string;

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { chooseMethod, processPost } from '@/lib/sync/process-post';
 import { TelegramClient } from '@/lib/telegram/client';
 import type { NormalizedMedia, NormalizedPost } from '@/types';
-import { createTestLogger, instantSleep, telegramError, telegramOk, withEnv } from './helpers';
+import { createTestLogger, instantSleep, telegramError, telegramOk, withEnv, testDestination } from './helpers';
 
 const photo = (key: string): NormalizedMedia => ({
   mediaKey: key,
@@ -124,6 +124,7 @@ describe('processPost publishing', () => {
         env,
         fetchImpl,
         sleep: instantSleep,
+        destination: testDestination(env),
       }),
     );
 
@@ -143,6 +144,7 @@ describe('processPost publishing', () => {
         env,
         fetchImpl,
         sleep: instantSleep,
+        destination: testDestination(env),
       }),
     );
 
@@ -166,6 +168,7 @@ describe('processPost publishing', () => {
         env,
         fetchImpl,
         sleep: instantSleep,
+        destination: testDestination(env),
       }),
     );
 
@@ -191,6 +194,7 @@ describe('processPost publishing', () => {
         env,
         fetchImpl,
         sleep: instantSleep,
+        destination: testDestination(env),
       }),
     );
 
@@ -213,6 +217,7 @@ describe('processPost publishing', () => {
         env,
         fetchImpl,
         sleep: instantSleep,
+        destination: testDestination(env),
       }),
     );
 
@@ -230,6 +235,7 @@ describe('processPost publishing', () => {
         env,
         fetchImpl,
         sleep: instantSleep,
+        destination: testDestination(env),
       }),
     );
 
@@ -251,6 +257,7 @@ describe('processPost publishing', () => {
         env,
         fetchImpl,
         sleep: instantSleep,
+        destination: testDestination(env),
       }),
     );
 
@@ -269,6 +276,7 @@ describe('processPost publishing', () => {
         env,
         fetchImpl,
         sleep: instantSleep,
+        destination: testDestination(env),
       }),
     );
 
@@ -340,6 +348,7 @@ describe('processPost video variant selection', () => {
         env,
         fetchImpl,
         sleep: instantSleep,
+        destination: testDestination(env),
       }),
     );
 
@@ -362,6 +371,7 @@ describe('processPost video variant selection', () => {
         env,
         fetchImpl,
         sleep: instantSleep,
+        destination: testDestination(env),
       }),
     );
 
@@ -387,6 +397,7 @@ describe('processPost video variant selection', () => {
         env,
         fetchImpl,
         sleep: instantSleep,
+        destination: testDestination(env),
       }),
     );
 
@@ -407,6 +418,7 @@ describe('processPost video variant selection', () => {
         env,
         fetchImpl,
         sleep: instantSleep,
+        destination: testDestination(env),
       }),
     );
 
@@ -431,6 +443,7 @@ describe('processPost video variant selection', () => {
           env,
           fetchImpl,
           sleep: instantSleep,
+          destination: testDestination(env),
         }),
     );
 
@@ -454,6 +467,7 @@ describe('processPost video variant selection', () => {
           env,
           fetchImpl,
           sleep: instantSleep,
+          destination: testDestination(env),
         }),
     );
 
@@ -474,6 +488,7 @@ describe('processPost video variant selection', () => {
         env,
         fetchImpl,
         sleep: instantSleep,
+        destination: testDestination(env),
       }),
     );
 
@@ -500,6 +515,7 @@ describe('processPost video variant selection', () => {
         env,
         fetchImpl,
         sleep: instantSleep,
+        destination: testDestination(env),
       }),
     );
 
@@ -524,6 +540,7 @@ describe('processPost failure handling', () => {
         env,
         fetchImpl,
         sleep: instantSleep,
+        destination: testDestination(env),
       }),
     );
 
@@ -550,6 +567,7 @@ describe('processPost failure handling', () => {
         env,
         fetchImpl,
         sleep: instantSleep,
+        destination: testDestination(env),
       }),
     );
 
@@ -581,6 +599,7 @@ describe('processPost failure handling', () => {
         env,
         fetchImpl,
         sleep: instantSleep,
+        destination: testDestination(env),
       }),
     );
 
@@ -601,6 +620,7 @@ describe('processPost failure handling', () => {
         env,
         fetchImpl,
         sleep: instantSleep,
+        destination: testDestination(env),
       }),
     );
 
@@ -620,6 +640,7 @@ describe('processPost failure handling', () => {
         env,
         fetchImpl,
         sleep: instantSleep,
+        destination: testDestination(env),
       }),
     );
 
@@ -642,6 +663,7 @@ describe('processPost failure handling', () => {
         env,
         fetchImpl,
         sleep: instantSleep,
+        destination: testDestination(env),
       }),
     );
 
@@ -662,6 +684,7 @@ describe('processPost dry run', () => {
         env,
         fetchImpl,
         sleep: instantSleep,
+        destination: testDestination(env),
       }),
     );
 
