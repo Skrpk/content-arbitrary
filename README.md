@@ -605,16 +605,23 @@ There is no command for this: creating a tenant is an operator action, not somet
 should be able to do from a chat. Insert the row directly.
 
 ```sql
-INSERT INTO workspaces (name, telegram_chat_id, telegram_admin_chat_id, legacy_source_imported_at)
-VALUES ('second channel', '-1001234567890', '123456789', now());
+INSERT INTO workspaces (name, telegram_chat_id, telegram_admin_chat_id)
+VALUES ('second channel', '-1001234567890', '123456789');
 ```
 
 - `telegram_chat_id` — the channel, found exactly as in [F](#f-get-your-telegram_chat_id). Add
   the bot to it as an administrator with **Post messages** first.
 - `telegram_admin_chat_id` — the reviewer's numeric Telegram user id. This is also what
   authorises them: they can run `/addsource` and press Approve for this workspace and no other.
-- `legacy_source_imported_at` — set it to `now()`. It only matters for workspace 1, and setting
-  it makes clear this tenant has no environment account to inherit.
+  Note that a channel id is negative and begins `-100`, while a user id is positive.
+
+The reviewer must have sent the bot a message at least once before the first post is held for
+them: Telegram does not allow a bot to open a conversation, so review would otherwise fail with
+`403 bot can't initiate conversation with a user`. Their `/start` also reveals their user id —
+it is logged as the `fromId` of `webhook.unauthorized_command`.
+
+`legacy_source_imported_at` needs no value. The environment account is imported for workspace 1
+only, and the guard for that is the workspace id check in `syncPosts`, not this column.
 
 The reviewer then adds sources from their own chat with the bot:
 
