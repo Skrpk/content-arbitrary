@@ -17,6 +17,17 @@ export function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/**
+ * Reverse `escapeHtml`.
+ *
+ * Captions are stored escaped, so the editor has to show the plain text the
+ * reviewer actually wrote. The order matters: resolving `&amp;` last is what
+ * makes the round trip lossless for text that itself contained an entity.
+ */
+export function unescapeHtml(text: string): string {
+  return text.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
+
 export interface CaptionOptions {
   text: string;
   username: string;

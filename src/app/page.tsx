@@ -5,7 +5,7 @@
  */
 export default function HomePage() {
   return (
-    <main style={{ maxWidth: '40rem', margin: '0 auto' }}>
+    <main style={{ maxWidth: '40rem', margin: '0 auto', padding: '3rem 1.5rem' }}>
       <h1 style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>content-arbitrary</h1>
       <p style={{ color: '#555' }}>
         Scheduled worker that mirrors new photos and videos from an X account into a Telegram

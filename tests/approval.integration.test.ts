@@ -12,7 +12,14 @@ import {
   parseCallbackData,
   publishApprovedPayload,
 } from '@/lib/sync/approval';
-import { claimForDecision, markPublished, markRejected } from '@/lib/sync/repository';
+import {
+  claimForDecision,
+  findPostAwaitingReview,
+  markPublished,
+  markRejected,
+  updateApprovalCaption,
+} from '@/lib/sync/repository';
+import { DEFAULT_WORKSPACE_ID } from '@/db/schema';
 import { createTestLogger, instantSleep, withEnv, ensureTestWorkspace } from './helpers';
 
 /**
@@ -301,5 +308,162 @@ describeIfDb('approval journey', () => {
     expect(summary.published).toBe(1);
     expect(summary.awaitingApproval).toBe(0);
     expect(stack.sends.every((send) => send.chatId === CHANNEL_CHAT)).toBe(true);
+  });
+});
+
+describeIfDb('editing the caption before approval', () => {
+  const edited = 'My own words, not the author\'s.';
+
+  async function queueOne() {
+    const stack = makeStack();
+    await runSync(stack, ['3_1']);
+    const row = (await db.select().from(processedPosts))[0]!;
+    return { stack, row };
+  }
+
+  it('publishes the edited caption, not the original', async () => {
+    const { row } = await queueOne();
+    const original = row.approvalPayload!.caption;
+
+    const result = await updateApprovalCaption(db, {
+      id: row.id,
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      caption: edited,
+    });
+    expect(result.updated).toBe(true);
+
+    // Approve, and watch which caption actually goes out.
+    const publishStack = makeStack();
+    const captions: unknown[] = [];
+    const claim = await claimForDecision(db, row.id, DEFAULT_WORKSPACE_ID);
+    expect(claim.row!.approvalPayload!.caption).toBe(edited);
+    expect(claim.row!.approvalPayload!.caption).not.toBe(original);
+
+    await publishApprovedPayload(
+      {
+        client: publishStack.client,
+        chatId: CHANNEL_CHAT,
+        disableNotification: false,
+      },
+      claim.row!.approvalPayload!,
+      { logger: createTestLogger(), sleep: instantSleep },
+    );
+
+    captions.push(...publishStack.sends.map((send) => send.method));
+    expect(captions).toEqual(['sendPhoto']);
+  });
+
+  it('leaves the stored media untouched', async () => {
+    const { row } = await queueOne();
+    const fileIds = row.approvalPayload!.items.map((item) => item.fileId);
+
+    await updateApprovalCaption(db, {
+      id: row.id,
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      caption: edited,
+    });
+
+    const after = await findPostAwaitingReview(db, {
+      id: row.id,
+      workspaceId: DEFAULT_WORKSPACE_ID,
+    });
+
+    // Only the text changes: the file_ids are what make approval cheap, and
+    // re-deriving them would mean downloading from X again.
+    expect(after!.approvalPayload!.items.map((item) => item.fileId)).toEqual(fileIds);
+    expect(after!.approvalPayload!.method).toBe('sendPhoto');
+    expect(after!.approvalPayload!.captionEditedAt).toBeTruthy();
+  });
+
+  it('records the preview message so the chat can be refreshed', async () => {
+    const { row } = await queueOne();
+    // sendPhoto returned message_id 30; the control message is 12.
+    expect(row.approvalPayload!.adminMediaMessageId).toBe(30);
+    expect(row.adminMessageId).toBe(12);
+  });
+
+  it('drops the overflow follow-up, which the new text replaces', async () => {
+    const { row } = await queueOne();
+
+    await db
+      .update(processedPosts)
+      .set({
+        approvalPayload: { ...row.approvalPayload!, overflowMessage: 'the full original text' },
+      })
+      .where(eq(processedPosts.id, row.id));
+
+    await updateApprovalCaption(db, {
+      id: row.id,
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      caption: edited,
+    });
+
+    const after = await findPostAwaitingReview(db, {
+      id: row.id,
+      workspaceId: DEFAULT_WORKSPACE_ID,
+    });
+    expect(after!.approvalPayload!.overflowMessage).toBeUndefined();
+  });
+
+  it('refuses to edit a post that is already published', async () => {
+    const { row } = await queueOne();
+
+    await claimForDecision(db, row.id, DEFAULT_WORKSPACE_ID);
+    await markPublished(db, {
+      id: row.id,
+      telegramChatId: CHANNEL_CHAT,
+      primaryMessageId: 30,
+      telegramMethod: 'sendPhoto',
+      mediaCount: 1,
+      messages: [],
+    });
+
+    const result = await updateApprovalCaption(db, {
+      id: row.id,
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      caption: edited,
+    });
+
+    expect(result).toEqual({ updated: false, currentStatus: 'published' });
+  });
+
+  it('refuses to edit a post that was rejected', async () => {
+    const { row } = await queueOne();
+
+    await claimForDecision(db, row.id, DEFAULT_WORKSPACE_ID);
+    await markRejected(db, row.id);
+
+    const result = await updateApprovalCaption(db, {
+      id: row.id,
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      caption: edited,
+    });
+
+    expect(result.updated).toBe(false);
+    expect(result.currentStatus).toBe('rejected');
+  });
+
+  it('refuses an edit from another tenant', async () => {
+    const { row } = await queueOne();
+
+    const result = await updateApprovalCaption(db, {
+      id: row.id,
+      workspaceId: 999,
+      caption: 'not yours',
+    });
+
+    expect(result.updated).toBe(false);
+
+    const after = await findPostAwaitingReview(db, {
+      id: row.id,
+      workspaceId: DEFAULT_WORKSPACE_ID,
+    });
+    expect(after!.approvalPayload!.caption).not.toBe('not yours');
+  });
+
+  it('finds nothing for a post id that does not exist', async () => {
+    expect(
+      await findPostAwaitingReview(db, { id: 987654, workspaceId: DEFAULT_WORKSPACE_ID }),
+    ).toBeNull();
   });
 });

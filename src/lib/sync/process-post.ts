@@ -2,7 +2,7 @@ import { getEnv, type Env } from '@/lib/env';
 import { describeError, MediaUnsupportedError } from '@/lib/errors';
 import type { Logger } from '@/lib/logger';
 import type { TelegramClient } from '@/lib/telegram/client';
-import { formatCaption, formatMessageText } from '@/lib/telegram/format-caption';
+import { formatCaption, formatMessageText, unescapeHtml } from '@/lib/telegram/format-caption';
 import {
   photoDimensionsAreAcceptable,
   TELEGRAM_MEDIA_GROUP_MAX,
@@ -20,7 +20,7 @@ import { downloadMedia, formatBytes, type DownloadedMedia } from '@/lib/x/downlo
 import { selectTelegramVideoVariant } from '@/lib/x/select-video-variant';
 import { maxUploadBytesFor } from '@/lib/telegram/limits';
 import type { NormalizedMedia, NormalizedPost, TelegramMethod } from '@/types';
-import { sendForApproval } from '@/lib/sync/approval';
+import { buildEditUrl, sendForApproval } from '@/lib/sync/approval';
 import type { ApprovalPayload } from '@/db/schema';
 import { defaultSleep } from '@/lib/sync/retry';
 import type { TelegramDestination } from '@/lib/workspace';
@@ -262,6 +262,9 @@ export async function processPost(
           caption,
           overflowMessage,
           payloads,
+          editUrl: env.APP_BASE_URL
+            ? buildEditUrl(env.APP_BASE_URL, options.postId!)
+            : undefined,
         },
         { logger, sleep },
       );
@@ -365,7 +368,7 @@ export async function processPost(
       // in a single chat, and we have just sent an album.
       await sleep(TELEGRAM_MIN_DELAY_BETWEEN_SENDS_MS);
 
-      const followUp = await sendText(context, formatMessageText(stripHtml(overflowMessage)), {
+      const followUp = await sendText(context, formatMessageText(unescapeHtml(overflowMessage)), {
         replyToMessageId: primaryMessageId ?? undefined,
       });
       messages.push({ messageId: followUp.message_id, mediaIndex: null, kind: 'text' });
@@ -402,11 +405,6 @@ function isPermanentTelegramError(error: unknown): boolean {
     'transient' in error &&
     (error as { transient: unknown }).transient === false
   );
-}
-
-/** The overflow message is re-escaped by formatMessageText, so unescape first. */
-function stripHtml(html: string): string {
-  return html.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 }
 
 function logDryRun(

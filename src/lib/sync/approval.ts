@@ -49,14 +49,33 @@ export function parseCallbackData(
   return { action: match[1] === 'ap' ? 'approve' : 'reject', postId };
 }
 
-export function buildApprovalKeyboard(postId: number): InlineKeyboardMarkup {
+/**
+ * Absolute URL of the Mini App that edits this post's caption.
+ *
+ * Absolute because Telegram opens it itself, not the chat client's current
+ * origin; the post id travels in the query string, which is safe — it is an
+ * internal row id and the Mini App proves who is asking with its own signed
+ * init data before the id means anything.
+ */
+export function buildEditUrl(baseUrl: string, postId: number): string {
+  return `${baseUrl.replace(/\/+$/, '')}/review?post=${postId}`;
+}
+
+export function buildApprovalKeyboard(
+  postId: number,
+  options?: { editUrl?: string },
+): InlineKeyboardMarkup {
+  const decide = [
+    { text: '✅ Approve', callback_data: buildCallbackData('approve', postId) },
+    { text: '🚫 Reject', callback_data: buildCallbackData('reject', postId) },
+  ];
+
+  // Its own row: Edit opens a Mini App rather than settling the post, and
+  // sitting beside the two final actions invites a misclick.
   return {
-    inline_keyboard: [
-      [
-        { text: '✅ Approve', callback_data: buildCallbackData('approve', postId) },
-        { text: '🚫 Reject', callback_data: buildCallbackData('reject', postId) },
-      ],
-    ],
+    inline_keyboard: options?.editUrl
+      ? [decide, [{ text: '✏️ Edit text', web_app: { url: options.editUrl } }]]
+      : [decide],
   };
 }
 
@@ -99,6 +118,8 @@ export interface ReviewRequest {
   caption: string;
   overflowMessage?: string;
   payloads: MediaPayload[];
+  /** Mini App URL for the Edit button; omitted when APP_BASE_URL is unset. */
+  editUrl?: string;
 }
 
 export interface ReviewResult {
@@ -121,7 +142,7 @@ export async function sendForApproval(
   options?: { logger?: Logger; sleep?: (ms: number) => Promise<void> },
 ): Promise<ReviewResult> {
   const sleep = options?.sleep ?? defaultSleep;
-  const keyboard = buildApprovalKeyboard(request.postId);
+  const keyboard = buildApprovalKeyboard(request.postId, { editUrl: request.editUrl });
 
   /**
    * The media is sent exactly as it would appear in the channel — same caption,
@@ -177,6 +198,7 @@ export async function sendForApproval(
       caption: request.caption,
       overflowMessage: request.overflowMessage,
       items,
+      adminMediaMessageId: mediaMessages[0]?.message_id,
     },
   };
 }

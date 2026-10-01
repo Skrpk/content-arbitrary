@@ -720,6 +720,54 @@ reply underneath the album.
 Without step 5 the buttons appear but nothing happens when pressed — Telegram has nowhere to
 deliver the callback.
 
+### Editing the caption before publishing
+
+With `APP_BASE_URL` set, the review message also carries **✏️ Edit text**, which opens a Mini
+App — a small web page inside Telegram — holding the caption the post will be published with.
+Save, then Approve as usual.
+
+```
+X ──► cron ──► your private chat ──[Edit]──► Mini App ──save──► caption replaced
+                      │
+                      └──[Approve]──►  channel, with whatever the caption now says
+```
+
+What editing does and does not touch:
+
+- only the **text** changes; the media is left alone. Approval re-sends by `file_id`, and
+  re-deriving those would mean downloading from X again;
+- the caption is stored escaped, so anything that looks like markup is published as the
+  characters you typed. There is no way to break Telegram's parser from the editor;
+- the limit is Telegram's own 1024 characters, counted as you see them. The editor shows the
+  count and refuses to save over it, and the server checks again;
+- if the original post was too long for a caption, the follow-up message carrying the
+  untruncated text is **dropped** on edit: a hand-written caption replaces the original rather
+  than summarising it. The editor says so when that applies;
+- a post that has already been published or rejected cannot be edited. Approve and Edit race
+  safely — whichever lands first wins, and the other is refused.
+
+Setup is one variable:
+
+```
+APP_BASE_URL=https://your-app.vercel.app
+```
+
+It must be HTTPS, which Telegram requires for Mini Apps, and it must be the stable production
+domain rather than a per-deployment URL — the button is built when the post is queued and may
+be pressed days later. Leave it unset and review works exactly as before, without the button.
+
+A Mini App page is openly reachable; that is normal, and it is not what guards anything.
+Telegram hands the page a signed `initData` string, every request carries it in an
+`Authorization: tma …` header, and the server does nothing until that signature verifies
+against the bot token, names a Telegram user who is some workspace's reviewer, and that
+reviewer's workspace owns the post. The post id in the URL is therefore not a credential:
+asking for another tenant's post returns exactly what asking for a nonexistent one returns.
+Signed data older than 24 hours is refused, so a captured `initData` string does not stay
+usable.
+
+If Telegram ever refuses to open the button, set your domain under **Bot Settings** in
+BotFather and try again; the inline-keyboard button type documents only the HTTPS requirement.
+
 ### New states
 
 | Status | Meaning |
@@ -747,6 +795,7 @@ shows both statuses in its counts and recent posts.
 | `REQUIRE_APPROVAL` | `false` | Hold every post for review instead of publishing directly. |
 | `TELEGRAM_ADMIN_CHAT_ID` | — | Your numeric Telegram user id. Required when `REQUIRE_APPROVAL` is on. |
 | `TELEGRAM_WEBHOOK_SECRET` | — | ≥ 16 chars, `A-Z a-z 0-9 _ -` only. Required when `REQUIRE_APPROVAL` is on. |
+| `APP_BASE_URL` | — | Public HTTPS origin, e.g. `https://your-app.vercel.app`. Enables the Edit button; without it review works unchanged. |
 | `ADMIN_SECRET` | falls back to `CRON_SECRET` | Protects `/api/status`. |
 | `CAPTION_PREFIX` | empty | Text prepended, separated by a blank line. |
 | `CAPTION_SUFFIX` | empty | Text appended, separated by a blank line. |

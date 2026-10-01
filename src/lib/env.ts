@@ -152,6 +152,25 @@ const schema = z
       .optional()
       .or(z.literal('').transform(() => undefined)),
 
+    /**
+     * Public HTTPS origin of this deployment, e.g. https://your-app.vercel.app.
+     *
+     * Needed only for the Edit button: a Mini App is opened by absolute URL, and
+     * the button is built during a cron run where no request is available to
+     * infer the host from. Telegram requires HTTPS. Leave it unset and review
+     * still works, just without Edit.
+     */
+    APP_BASE_URL: z
+      .string()
+      .trim()
+      .optional()
+      .or(z.literal('').transform(() => undefined))
+      .refine(
+        (value) => value === undefined || /^https:\/\/[^\s/]+/i.test(value),
+        'APP_BASE_URL must be an https:// URL, e.g. https://your-app.vercel.app',
+      )
+      .transform((value) => (value === undefined ? undefined : value.replace(/\/+$/, ''))),
+
     CRON_SECRET: z.string().min(16, 'CRON_SECRET must be at least 16 characters'),
     ADMIN_SECRET: z.string().min(16).optional().or(z.literal('').transform(() => undefined)),
 
@@ -289,5 +308,7 @@ export function redactedEnvSummary(env: Env = getEnv()) {
     requireApproval: env.REQUIRE_APPROVAL,
     hasAdminChatId: Boolean(env.TELEGRAM_ADMIN_CHAT_ID),
     hasWebhookSecret: Boolean(env.TELEGRAM_WEBHOOK_SECRET),
+    // Not a secret, and whether editing is available depends on it.
+    appBaseUrl: env.APP_BASE_URL ?? null,
   } as const;
 }

@@ -22,8 +22,19 @@ export interface SendContext {
   replyMarkup?: InlineKeyboardMarkup;
 }
 
+/**
+ * The two button kinds this app sends.
+ *
+ * A `web_app` button opens a Mini App and, per the Bot API, is only available
+ * in private chats between a user and the bot — which is exactly where the
+ * review message lives, and why the Edit button cannot leak into a channel.
+ */
+export type InlineKeyboardButton =
+  | { text: string; callback_data: string }
+  | { text: string; web_app: { url: string } };
+
 export interface InlineKeyboardMarkup {
-  inline_keyboard: { text: string; callback_data: string }[][];
+  inline_keyboard: InlineKeyboardButton[][];
 }
 
 export type MediaPayload =

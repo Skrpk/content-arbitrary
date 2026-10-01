@@ -261,6 +261,14 @@ export interface ApprovalPayload {
   caption: string;
   overflowMessage?: string;
   items: ApprovalMediaItem[];
+  /**
+   * The media message in the reviewer's chat, so an edited caption can be shown
+   * on the preview they are looking at. Absent on posts queued before editing
+   * existed, which is why every use of it is optional.
+   */
+  adminMediaMessageId?: number;
+  /** Set once a reviewer has rewritten the caption by hand. */
+  captionEditedAt?: string;
 }
 
 export type ProcessedPost = typeof processedPosts.$inferSelect;

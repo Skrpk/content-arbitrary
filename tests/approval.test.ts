@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildApprovalKeyboard,
+  buildEditUrl,
   buildCallbackData,
   parseCallbackData,
   publishApprovedPayload,
@@ -126,11 +127,36 @@ describe('callback data', () => {
 
   it('builds a keyboard whose buttons carry the post id', () => {
     const keyboard = buildApprovalKeyboard(99);
-    const [row] = keyboard.inline_keyboard;
 
-    expect(row).toHaveLength(2);
-    expect(row![0]!.callback_data).toBe('ap:99');
-    expect(row![1]!.callback_data).toBe('rj:99');
+    expect(keyboard.inline_keyboard).toHaveLength(1);
+    expect(keyboard.inline_keyboard[0]).toEqual([
+      { text: '✅ Approve', callback_data: 'ap:99' },
+      { text: '🚫 Reject', callback_data: 'rj:99' },
+    ]);
+  });
+
+  it('adds Edit as its own row when a Mini App URL is configured', () => {
+    const keyboard = buildApprovalKeyboard(99, {
+      editUrl: buildEditUrl('https://example.vercel.app', 99),
+    });
+
+    expect(keyboard.inline_keyboard).toHaveLength(2);
+    // A separate row: Edit opens an editor, the other two settle the post.
+    expect(keyboard.inline_keyboard[1]).toEqual([
+      { text: '✏️ Edit text', web_app: { url: 'https://example.vercel.app/review?post=99' } },
+    ]);
+  });
+
+  it('omits Edit entirely when no URL is configured', () => {
+    // Review must keep working on a deployment that has not set APP_BASE_URL.
+    const keyboard = buildApprovalKeyboard(99, { editUrl: undefined });
+    expect(keyboard.inline_keyboard).toHaveLength(1);
+  });
+
+  it('builds an https Mini App URL without a double slash', () => {
+    expect(buildEditUrl('https://example.vercel.app/', 7)).toBe(
+      'https://example.vercel.app/review?post=7',
+    );
   });
 });
 
