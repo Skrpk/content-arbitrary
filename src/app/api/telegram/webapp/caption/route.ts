@@ -2,9 +2,10 @@ import { z } from 'zod';
 import { describeError } from '@/lib/errors';
 import { TelegramClient } from '@/lib/telegram/client';
 import { TELEGRAM_PARSE_MODE, escapeHtml, unescapeHtml } from '@/lib/telegram/format-caption';
-import { TELEGRAM_CAPTION_LIMIT } from '@/lib/telegram/limits';
+import { TELEGRAM_CAPTION_LIMIT, TELEGRAM_MESSAGE_TEXT_LIMIT } from '@/lib/telegram/limits';
 import { authorizeReviewer, json } from '@/lib/telegram/webapp-request';
 import { findPostAwaitingReview, updateApprovalCaption } from '@/lib/sync/repository';
+import type { ApprovalPayload } from '@/db/schema';
 
 /**
  * The Mini App's API: read the caption a post will be published with, and
@@ -33,6 +34,10 @@ const saveSchema = z.object({
   caption: z.string(),
 });
 
+/** A text-only post is a whole message; anything else, a caption under media. */
+const lengthLimitFor = (payload: ApprovalPayload) =>
+  payload.method === 'sendMessage' ? TELEGRAM_MESSAGE_TEXT_LIMIT : TELEGRAM_CAPTION_LIMIT;
+
 export async function GET(request: Request): Promise<Response> {
   let auth: Awaited<ReturnType<typeof authorizeReviewer>>;
   try {
@@ -60,7 +65,7 @@ export async function GET(request: Request): Promise<Response> {
     // The editor works in plain text; the stored caption is escaped. The
     // fallback covers a post queued before the caption column existed.
     caption: unescapeHtml(post.caption ?? post.approvalPayload.caption),
-    limit: TELEGRAM_CAPTION_LIMIT,
+    limit: lengthLimitFor(post.approvalPayload),
     hasOverflowMessage: Boolean(post.approvalPayload.overflowMessage),
     edited: post.captionEditedAt !== null,
   });
@@ -85,14 +90,23 @@ export async function POST(request: Request): Promise<Response> {
 
   const caption = body.caption.trim();
 
+  const target = await findPostAwaitingReview(auth.db, {
+    id: body.postId,
+    workspaceId: auth.workspace.id,
+  });
+  if (!target?.approvalPayload) {
+    return json({ error: 'This post is no longer awaiting review.' }, 409);
+  }
+
   /**
    * Length is checked on the plain text, which is what Telegram counts: the
    * caption is stored escaped, but HTML entities are resolved before the limit
    * applies, so `&amp;` costs one character and not five.
    */
-  if (caption.length > TELEGRAM_CAPTION_LIMIT) {
+  const limit = lengthLimitFor(target.approvalPayload);
+  if (caption.length > limit) {
     return json(
-      { error: `Caption is ${caption.length} characters; the limit is ${TELEGRAM_CAPTION_LIMIT}.` },
+      { error: `Caption is ${caption.length} characters; the limit is ${limit}.` },
       422,
     );
   }
@@ -131,12 +145,12 @@ export async function POST(request: Request): Promise<Response> {
 
   if (post?.adminChatId && previewMessageId) {
     try {
-      await client.editMessageCaption(
-        post.adminChatId,
-        previewMessageId,
-        escapeHtml(caption),
-        TELEGRAM_PARSE_MODE,
-      );
+      // A text-only post's preview is a text message, which has no caption.
+      const edit =
+        post.approvalPayload?.method === 'sendMessage'
+          ? client.editMessageText.bind(client)
+          : client.editMessageCaption.bind(client);
+      await edit(post.adminChatId, previewMessageId, escapeHtml(caption), TELEGRAM_PARSE_MODE);
       previewUpdated = true;
     } catch (error) {
       auth.logger.warn('webapp.preview_update_failed', { error: describeError(error) });

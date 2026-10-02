@@ -146,6 +146,17 @@ export function formatCaption(options: CaptionOptions): CaptionResult {
 }
 
 /**
+ * Build the message for a post with no media, which goes out as plain text.
+ *
+ * The same framing as a caption, under the larger message limit, and with no
+ * follow-up: anything past 4096 characters is shortened the way an overlong
+ * caption is — the author's text gives way, the framing stays.
+ */
+export function formatTextPost(options: CaptionOptions): string {
+  return escapeHtml(fitToLimit(options, composePlainText(options), TELEGRAM_MESSAGE_TEXT_LIMIT));
+}
+
+/**
  * The composed text, shortened to `limit` if it must be.
  */
 function fitToLimit(options: CaptionOptions, plain: string, limit: number): string {

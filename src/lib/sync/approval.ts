@@ -233,7 +233,8 @@ export interface ReviewRequest {
   xPostUrl: string;
   /** Handle the post came from, shown in the preview. */
   sourceUsername: string;
-  method: Exclude<TelegramMethod, 'sendMessage' | 'none'>;
+  /** `sendMessage` for a text-only post: `caption` is its text, `payloads` empty. */
+  method: Exclude<TelegramMethod, 'none'>;
   caption: string;
   overflowMessage?: string;
   payloads: MediaPayload[];
@@ -272,10 +273,14 @@ export async function sendForApproval(
    * keyboard at all, and anything added to the caption here would be stored and
    * published verbatim on approval.
    */
-  let mediaMessages: TelegramMessage[];
+  let previewMessages: TelegramMessage[];
 
-  if (request.method === 'sendMediaGroup') {
-    mediaMessages = await sendMediaGroup(
+  if (request.method === 'sendMessage') {
+    previewMessages = [
+      await sendText({ ...context, replyMarkup: undefined }, request.caption),
+    ];
+  } else if (request.method === 'sendMediaGroup') {
+    previewMessages = await sendMediaGroup(
       { ...context, replyMarkup: undefined },
       request.payloads,
       request.caption,
@@ -286,7 +291,7 @@ export async function sendForApproval(
       request.method === 'sendVideo'
         ? await sendVideo({ ...context, replyMarkup: undefined }, single, request.caption)
         : await sendPhoto({ ...context, replyMarkup: undefined }, single, request.caption);
-    mediaMessages = [sent];
+    previewMessages = [sent];
   }
 
   await sleep(TELEGRAM_MIN_DELAY_BETWEEN_SENDS_MS);
@@ -306,7 +311,7 @@ export async function sendForApproval(
       const overflow = await sendText(
         { ...context, replyMarkup: undefined },
         request.overflowMessage,
-        { replyToMessageId: mediaMessages[0]?.message_id },
+        { replyToMessageId: previewMessages[0]?.message_id },
       );
       overflowMessageId = overflow.message_id;
     } catch (error) {
@@ -322,11 +327,11 @@ export async function sendForApproval(
     formatMessageText(
       `Source: @${request.sourceUsername.replace(/^@/, '')}\n${request.xPostUrl}`,
     ),
-    { replyToMessageId: mediaMessages[0]?.message_id },
+    { replyToMessageId: previewMessages[0]?.message_id },
   );
   const buttonMessageId = control.message_id;
 
-  const items = collectMediaItems(mediaMessages, request.payloads);
+  const items = collectMediaItems(previewMessages, request.payloads);
 
   if (items.length !== request.payloads.length) {
     options?.logger?.warn('approval.file_id_missing', {
@@ -343,7 +348,7 @@ export async function sendForApproval(
       caption: request.caption,
       overflowMessage: request.overflowMessage,
       items,
-      adminMediaMessageId: mediaMessages[0]?.message_id,
+      adminMediaMessageId: previewMessages[0]?.message_id,
       adminOverflowMessageId: overflowMessageId,
     },
   };
@@ -382,7 +387,10 @@ export async function publishApprovedPayload(
 
   const messages: PublishResult['messages'] = [];
 
-  if (payload.method === 'sendMediaGroup') {
+  if (payload.method === 'sendMessage') {
+    const sent = await sendText(context, payload.caption);
+    messages.push({ messageId: sent.message_id, mediaIndex: null, kind: 'text' });
+  } else if (payload.method === 'sendMediaGroup') {
     const sent = await sendMediaGroup(context, payloads, payload.caption);
     sent.forEach((message, index) => {
       messages.push({ messageId: message.message_id, mediaIndex: index, kind: 'media' });

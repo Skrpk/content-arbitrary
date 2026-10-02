@@ -12,11 +12,13 @@ export interface GetNewPostsOptions {
   includeReplies: boolean;
   includeReposts: boolean;
   includeQuotes: boolean;
+  /** Keep posts that have no media at all, to be sent as text. */
+  includeTextOnly: boolean;
   logger: Logger;
 }
 
 export interface GetNewPostsResult {
-  /** Media posts that passed every filter, ordered oldest → newest. */
+  /** Posts that passed every filter, ordered oldest → newest. */
   posts: NormalizedPost[];
   /** How many posts the API returned before filtering. */
   checked: number;
@@ -75,11 +77,14 @@ export async function getNewPosts(
       skipped.push({ id: post.id, reason: 'quote' });
       continue;
     }
-    if (post.media.length === 0) {
-      skipped.push({
-        id: post.id,
-        reason: unsupported.length > 0 ? `no usable media (${unsupported.join('; ')})` : 'no media',
-      });
+    // Media that exists but cannot be sent is never published as text alone:
+    // the post would go out without the very thing that made it a post.
+    if (post.media.length === 0 && unsupported.length > 0) {
+      skipped.push({ id: post.id, reason: `no usable media (${unsupported.join('; ')})` });
+      continue;
+    }
+    if (post.media.length === 0 && (!options.includeTextOnly || post.text === '')) {
+      skipped.push({ id: post.id, reason: post.text === '' ? 'no media and no text' : 'no media' });
       continue;
     }
 

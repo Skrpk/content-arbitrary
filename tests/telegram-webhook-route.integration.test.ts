@@ -63,6 +63,7 @@ function stubTelegram() {
       if (method === 'sendPhoto') {
         return telegramOk({ message_id: 900, chat: { id: -1 }, photo: [{ file_id: 'ONE', file_size: 1 }] });
       }
+      if (method === 'sendMessage') return telegramOk({ message_id: 901, chat: { id: -1 } });
       return telegramOk(true);
     }),
   );
@@ -93,7 +94,30 @@ function press(data: string, fromId = REVIEWER_ID, env: Record<string, string | 
   );
 }
 
-async function queuePost(options?: { caption?: string; workspaceId?: number }) {
+function send(text: string, env: Record<string, string | undefined> = {}) {
+  return withEnv({ ...routeEnv, ...env }, () =>
+    POST(
+      new Request('https://example.vercel.app/api/telegram/webhook', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-telegram-bot-api-secret-token': SECRET,
+        },
+        body: JSON.stringify({
+          update_id: 2,
+          message: {
+            message_id: 5,
+            from: { id: REVIEWER_ID },
+            chat: { id: REVIEWER_ID, type: 'private' },
+            text,
+          },
+        }),
+      }),
+    ),
+  );
+}
+
+async function queuePost(options?: { caption?: string; workspaceId?: number; textOnly?: boolean }) {
   const caption = options?.caption ?? 'A';
   const rows = await db
     .insert(processedPosts)
@@ -105,7 +129,9 @@ async function queuePost(options?: { caption?: string; workspaceId?: number }) {
       status: 'awaiting_approval',
       adminChatId: String(REVIEWER_ID),
       adminMessageId: CONTROL_MESSAGE_ID,
-      approvalPayload: { method: 'sendPhoto', caption, items: [{ kind: 'photo', fileId: 'FILE_A' }] },
+      approvalPayload: options?.textOnly
+        ? { method: 'sendMessage', caption, items: [] }
+        : { method: 'sendPhoto', caption, items: [{ kind: 'photo', fileId: 'FILE_A' }] },
       originalCaption: caption,
       caption,
     })
@@ -403,6 +429,21 @@ describeIfDb('Approve', () => {
     expect(after.rejectionReason).toBeNull();
   });
 
+  it('publishes a text-only post as a text message', async () => {
+    const post = await queuePost({ caption: 'Just words', textOnly: true });
+
+    await press(`ap:${post.id}`);
+
+    const [sent] = callsTo('sendMessage');
+    expect(sent?.body.chat_id).toBe(CHANNEL_CHAT);
+    expect(sent?.body.text).toBe('Just words');
+    expect(callsTo('sendPhoto')).toHaveLength(0);
+
+    const after = await reload(post.id);
+    expect(after.status).toBe('published');
+    expect(after.reviewedAt).toBeInstanceOf(Date);
+  });
+
   it('lets a stranger not approve', async () => {
     const post = await queuePost();
 
@@ -410,5 +451,35 @@ describeIfDb('Approve', () => {
 
     expect((await reload(post.id)).status).toBe('awaiting_approval');
     expect(callsTo('sendPhoto')).toHaveLength(0);
+  });
+});
+
+describeIfDb('the Settings button on source commands', () => {
+  const markupOf = () => callsTo('sendMessage').at(-1)?.body.reply_markup;
+
+  it('comes with the source list when the Mini App is configured', async () => {
+    await db.insert(sources).values({ externalId: '999', username: 'someone' });
+
+    await send('/sources');
+
+    expect(markupOf()).toEqual({
+      inline_keyboard: [[{ text: '⚙️ Settings', web_app: { url: 'https://example.vercel.app/settings' } }]],
+    });
+  });
+
+  it('is left out without a Mini App', async () => {
+    await db.insert(sources).values({ externalId: '999', username: 'someone' });
+
+    await send('/sources', { APP_BASE_URL: undefined });
+
+    expect(callsTo('sendMessage')).toHaveLength(1);
+    expect(markupOf()).toBeUndefined();
+  });
+
+  it('is left out of an answer that is only a usage hint', async () => {
+    await send('/addsource');
+
+    expect(callsTo('sendMessage')).toHaveLength(1);
+    expect(markupOf()).toBeUndefined();
   });
 });

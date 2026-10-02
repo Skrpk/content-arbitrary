@@ -36,6 +36,7 @@ const baseOptions = {
   includeReplies: false,
   includeReposts: false,
   includeQuotes: true,
+  includeTextOnly: false,
   logger: createTestLogger(),
 };
 
@@ -55,6 +56,58 @@ describe('getNewPosts filtering', () => {
     expect(result.posts.map((p) => p.id)).toEqual(['3']);
     expect(result.checked).toBe(2);
     expect(result.skipped).toContainEqual({ id: '2', reason: 'no media' });
+  });
+
+  it('keeps text-only posts for a source that mirrors them', async () => {
+    const { client } = makeClient({
+      data: [
+        { id: '3', text: 'with photo', attachments: { media_keys: ['3_1'] } },
+        { id: '2', text: 'text only' },
+      ],
+      includes: { media: [photoMedia] },
+      meta: { newest_id: '3', oldest_id: '2', result_count: 2 },
+    });
+
+    const result = await getNewPosts(client, { ...baseOptions, includeTextOnly: true });
+
+    expect(result.posts.map((p) => p.id)).toEqual(['2', '3']);
+    expect(result.posts[0]!.media).toEqual([]);
+    expect(result.skipped).toEqual([]);
+  });
+
+  /**
+   * Text-only means the author attached nothing. A post whose video exists but
+   * cannot be sent would otherwise go out stripped of the video it is about.
+   */
+  it('never turns a post with unusable media into a text post', async () => {
+    const { client } = makeClient({
+      data: [{ id: '4', text: 'watch this', attachments: { media_keys: ['7_1'] } }],
+      includes: {
+        media: [{ media_key: '7_1', type: 'video', variants: [{ content_type: 'application/x-mpegURL', url: 'https://v/x.m3u8' }] }],
+      },
+    });
+
+    const result = await getNewPosts(client, { ...baseOptions, includeTextOnly: true });
+
+    expect(result.posts).toHaveLength(0);
+    expect(result.skipped[0]?.reason).toMatch(/^no usable media/);
+  });
+
+  it('skips a post with neither media nor text even when text-only posts are on', async () => {
+    const { client } = makeClient({
+      data: [
+        {
+          id: '6',
+          text: 'https://t.co/pic',
+          entities: { urls: [{ start: 0, end: 16, url: 'https://t.co/pic', display_url: 'pic.x.com/pic' }] },
+        },
+      ],
+    });
+
+    const result = await getNewPosts(client, { ...baseOptions, includeTextOnly: true });
+
+    expect(result.posts).toHaveLength(0);
+    expect(result.skipped[0]).toEqual({ id: '6', reason: 'no media and no text' });
   });
 
   it('drops reposts by default', async () => {

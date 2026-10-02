@@ -702,3 +702,101 @@ describe('processPost dry run', () => {
     });
   });
 });
+
+describe('processPost text-only posts', () => {
+  const run = (
+    post: NormalizedPost,
+    options: { textOnly?: boolean; env?: Record<string, string | undefined> } = {},
+  ) => {
+    const stack = makeFetch();
+    return withEnv({ DRY_RUN: 'false', ...options.env }, async (env) => ({
+      ...stack,
+      outcome: await processPost(post, {
+        client: makeClient(stack.fetchImpl),
+        logger: createTestLogger(),
+        env,
+        fetchImpl: stack.fetchImpl,
+        sleep: instantSleep,
+        postId: 7,
+        destination: testDestination(env, { adminChatId: '555001' }),
+        textOnly: options.textOnly,
+      }),
+    }));
+  };
+
+  const bodyOf = (call: { body: FormData | string }) =>
+    JSON.parse(call.body as string) as Record<string, unknown>;
+
+  it('still skips a post without media for a source that does not mirror text', async () => {
+    const { outcome, telegramCalls } = await run(makePost([], 'Just words'));
+
+    expect(outcome.status).toBe('skipped');
+    expect(outcome.error).toBe('post has no usable media');
+    expect(telegramCalls).toHaveLength(0);
+  });
+
+  it('publishes it to the channel as one text message', async () => {
+    const { outcome, telegramCalls } = await run(makePost([], 'Just words & more'), { textOnly: true });
+
+    expect(outcome.status).toBe('published');
+    expect(outcome.method).toBe('sendMessage');
+    expect(outcome.mediaCount).toBe(0);
+    expect(outcome.primaryMessageId).toBe(100);
+    expect(outcome.messages).toEqual([{ messageId: 100, mediaIndex: null, kind: 'text' }]);
+
+    expect(telegramCalls.map((call) => call.method)).toEqual(['sendMessage']);
+    const body = bodyOf(telegramCalls[0]!);
+    expect(body.chat_id).toBe(process.env.TELEGRAM_CHAT_ID);
+    expect(body.text).toContain('Just words &amp; more');
+    expect(body.text).toContain('Source: https://x.com/testaccount/status/1234567890123456789');
+    expect(outcome.caption).toBe(body.text);
+  });
+
+  it('sends it to the reviewer, with the buttons underneath, when approval is on', async () => {
+    const { outcome, telegramCalls } = await run(makePost([], 'Just words'), {
+      textOnly: true,
+      env: { REQUIRE_APPROVAL: 'true', TELEGRAM_ADMIN_CHAT_ID: '555001', TELEGRAM_WEBHOOK_SECRET: 'a'.repeat(64) },
+    });
+
+    expect(outcome.status).toBe('awaiting-approval');
+    expect(telegramCalls.map((call) => call.method)).toEqual(['sendMessage', 'sendMessage']);
+    expect(telegramCalls.every((call) => bodyOf(call).chat_id === '555001')).toBe(true);
+    expect(bodyOf(telegramCalls[0]!).reply_markup).toBeUndefined();
+    expect(bodyOf(telegramCalls[1]!).reply_markup).toBeDefined();
+
+    expect(outcome.approval?.payload).toMatchObject({ method: 'sendMessage', items: [] });
+    expect(outcome.approval?.payload.caption).toContain('Just words');
+    expect(outcome.approval?.payload.overflowMessage).toBeUndefined();
+  });
+
+  it('only logs it on a dry run', async () => {
+    const { outcome, telegramCalls } = await run(makePost([], 'Just words'), {
+      textOnly: true,
+      env: { DRY_RUN: 'true' },
+    });
+
+    expect(outcome.status).toBe('dry-run');
+    expect(outcome.method).toBe('sendMessage');
+    expect(telegramCalls).toHaveLength(0);
+  });
+
+  it('shortens a text past the message limit, keeping the source link, with no follow-up', async () => {
+    const { outcome, telegramCalls } = await run(makePost([], 'word '.repeat(2000).trim()), {
+      textOnly: true,
+    });
+
+    expect(telegramCalls).toHaveLength(1);
+    const text = bodyOf(telegramCalls[0]!).text as string;
+    expect(text.length).toBeLessThanOrEqual(4096);
+    expect(text).toContain('…');
+    expect(text).toContain('Source: https://x.com/testaccount/status/1234567890123456789');
+    expect(outcome.status).toBe('published');
+  });
+
+  it('never sends an empty message', async () => {
+    const { outcome, telegramCalls } = await run(makePost([], ''), { textOnly: true });
+
+    expect(outcome.status).toBe('skipped');
+    expect(telegramCalls).toHaveLength(0);
+  });
+});

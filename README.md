@@ -52,14 +52,16 @@ Each run:
 
 1. Fetches the account's recent posts (`GET /2/users/:id/tweets`), using a stored `since_id`
    cursor so it only pays for and processes what is new.
-2. Keeps only posts that carry photos or videos. Reposts and replies are skipped by default,
-   both configurable.
+2. Keeps only posts that carry photos or videos — or, for a source with **Posts without
+   media** switched on, text-only posts too. Reposts and replies are skipped by default, both
+   configurable.
 3. Processes posts **oldest first**, so a burst of posts arrives in the channel in the order
    they were written.
 4. Picks the right Bot API method:
    - 1 photo → `sendPhoto`
    - 1 video → `sendVideo` (highest-bitrate MP4, `supports_streaming`)
    - 2+ items → `sendMediaGroup` (one album; photos and videos may mix)
+   - no media (text-only posts, when enabled for the source) → `sendMessage`
 5. Builds a clean caption: the original post text, then `Source: https://x.com/…`.
 6. Records the result so the same post is never published twice.
 
@@ -562,6 +564,26 @@ environment change and no redeploy:
 Only `TELEGRAM_ADMIN_CHAT_ID` may run these; anyone else is ignored without a reply.
 The commands arrive over the same webhook as the Approve buttons, so
 `npm run webhook:set` must have been run once (see below).
+
+### Per-source settings
+
+With `APP_BASE_URL` set, the replies to `/sources` and `/addsource` carry a **⚙️ Settings**
+button. It opens a Mini App listing your sources, each with its own switches, saved as soon as
+they are flipped:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| Active | on | Off is the same as `/pausesource`. |
+| Posts without media | off | Also mirror the account's text-only posts, as text messages (`sendMessage`, up to 4096 characters, with the same prefix, source link and suffix as a caption). |
+
+A new source mirrors media posts only, as every source always has. Turning **Posts without
+media** on applies to posts that arrive from then on — ones the cursor has already passed are
+not fetched again. A post whose media exists but cannot be sent (an HLS-only video, say) is
+still skipped rather than published as bare text, which would misrepresent it.
+
+Text-only posts go through review exactly like the rest: the preview is the message itself,
+Edit allows up to 4096 characters, and Approve sends it to the channel. X already returns
+these posts in the timeline we pay for, so mirroring them costs nothing extra on the X side.
 
 ### How sources are identified
 

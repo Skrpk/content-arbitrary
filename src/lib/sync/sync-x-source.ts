@@ -82,6 +82,7 @@ export async function syncXSource(
       includeReplies: env.INCLUDE_REPLIES,
       includeReposts: env.INCLUDE_REPOSTS,
       includeQuotes: env.INCLUDE_QUOTES,
+      includeTextOnly: source.includeTextOnly,
       logger,
     });
 
@@ -89,7 +90,7 @@ export async function syncXSource(
 
     logger.info('sync.fetched', {
       checked: result.checked,
-      mediaPosts: result.posts.length,
+      posts: result.posts.length,
       sinceId: state?.lastSeenPostId ?? null,
       newestId: result.newestId,
     });
@@ -177,6 +178,7 @@ export async function syncXSource(
           fetchImpl: context.fetchImpl,
           postId: claim.row.id,
           destination: context.destination,
+          textOnly: source.includeTextOnly,
         });
 
         if (outcome.status === 'published') {

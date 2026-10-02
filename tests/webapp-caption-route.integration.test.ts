@@ -417,3 +417,70 @@ describeIfDb('the full-text preview of a long post', () => {
     expect(row.approvalPayload!.adminOverflowMessageId).toBeUndefined();
   });
 });
+
+describeIfDb('editing a text-only post', () => {
+  async function queueText(caption = 'Just words') {
+    const post = await insertAwaitingPost({ caption });
+    await db
+      .update(processedPosts)
+      .set({ approvalPayload: { method: 'sendMessage', caption, items: [], adminMediaMessageId: 30 } })
+      .where(eq(processedPosts.id, post.id));
+    return post;
+  }
+
+  it('allows a whole message, not a caption', async () => {
+    const post = await queueText();
+
+    const response = await withEnv(routeEnv, () =>
+      GET(getRequest(post.id, `tma ${initDataFor(REVIEWER_ID)}`)),
+    );
+    const body = (await response.json()) as { limit: number; mediaCount: number };
+
+    expect(body.limit).toBe(4096);
+    expect(body.mediaCount).toBe(0);
+  });
+
+  it('saves a text longer than a caption, and refreshes the preview message itself', async () => {
+    const post = await queueText();
+    const long = 'w'.repeat(TELEGRAM_CAPTION_LIMIT + 500);
+
+    const calls: { method: string; body: Record<string, unknown> }[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown, init?: RequestInit) => {
+        calls.push({
+          method: String(input).split('/').pop()!,
+          body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+        });
+        return telegramOk(true);
+      }),
+    );
+
+    let response: Response;
+    try {
+      response = await withEnv(routeEnv, () =>
+        POST(postRequest({ postId: post.id, caption: long }, `tma ${initDataFor(REVIEWER_ID)}`)),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(response.status).toBe(200);
+    // A text message has no caption to edit; its text is what changes.
+    expect(calls.map((call) => call.method)).toEqual(['editMessageText']);
+    expect(calls[0]!.body).toMatchObject({ message_id: 30, text: long });
+
+    const row = (await db.select().from(processedPosts).where(eq(processedPosts.id, post.id)))[0]!;
+    expect(row.caption).toBe(long);
+  });
+
+  it('refuses a text past the message limit', async () => {
+    const post = await queueText();
+
+    const response = await withEnv(routeEnv, () =>
+      POST(postRequest({ postId: post.id, caption: 'w'.repeat(4097) }, `tma ${initDataFor(REVIEWER_ID)}`)),
+    );
+
+    expect(response.status).toBe(422);
+  });
+});

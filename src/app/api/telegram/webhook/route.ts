@@ -17,7 +17,7 @@ import {
   publishApprovedPayload,
   settleReviewMessage,
 } from '@/lib/sync/approval';
-import { dispatchCommand, parseCommand } from '@/lib/telegram/commands';
+import { buildSettingsUrl, dispatchCommand, parseCommand } from '@/lib/telegram/commands';
 import { destinationFor, findWorkspaceByAdminChatId } from '@/lib/workspace';
 import { XClient } from '@/lib/x/client';
 import type { Logger } from '@/lib/logger';
@@ -138,7 +138,12 @@ export async function POST(request: Request): Promise<Response> {
 
   // Slash commands manage the source list. Same tenant lookup as the buttons.
   if (update.message) {
-    await handleCommandMessage(update.message, { db, client, logger });
+    await handleCommandMessage(update.message, {
+      db,
+      client,
+      logger,
+      settingsUrl: env.APP_BASE_URL ? buildSettingsUrl(env.APP_BASE_URL) : undefined,
+    });
     return ok();
   }
 
@@ -262,7 +267,8 @@ export async function POST(request: Request): Promise<Response> {
   const adminMessageId = claim.row.adminMessageId ?? query.message?.message_id;
 
   const stored = claim.row.approvalPayload;
-  if (!stored || stored.items.length === 0) {
+  // A text-only post has no media by design; any other post without it does.
+  if (!stored || (stored.method !== 'sendMessage' && stored.items.length === 0)) {
     const reason = 'approval payload is missing; re-run the sync for this post';
     postLogger.error('webhook.missing_payload', { xPostId: claim.row.xPostId });
     await releaseToApproval(db, { id: parsed.postId, errorMessage: reason });
@@ -333,7 +339,13 @@ export async function POST(request: Request): Promise<Response> {
  */
 async function handleCommandMessage(
   message: { chat: { id: number }; from?: { id: number }; text?: string },
-  context: { db: Database; client: TelegramClient; logger: Logger },
+  context: {
+    db: Database;
+    client: TelegramClient;
+    logger: Logger;
+    /** The source settings Mini App; no Settings button without one. */
+    settingsUrl?: string;
+  },
 ): Promise<void> {
   const { db, client, logger } = context;
 
@@ -367,9 +379,16 @@ async function handleCommandMessage(
       'sendMessage',
       {
         chat_id: chatId,
-        text: reply,
+        text: reply.text,
         parse_mode: TELEGRAM_PARSE_MODE,
         link_preview_options: { is_disabled: true },
+        ...(reply.offerSettings && context.settingsUrl
+          ? {
+              reply_markup: {
+                inline_keyboard: [[{ text: '⚙️ Settings', web_app: { url: context.settingsUrl } }]],
+              },
+            }
+          : {}),
       },
       z.object({ message_id: z.number() }),
     );

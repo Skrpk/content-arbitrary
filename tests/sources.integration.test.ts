@@ -33,6 +33,10 @@ import { createTestLogger, ensureTestWorkspace } from './helpers';
  * constraint and the command handlers that depend on it.
  */
 
+/** The reply's text, which is what most assertions here are about. */
+const replyText = async (...args: Parameters<typeof dispatchCommand>) =>
+  (await dispatchCommand(...args))?.text ?? null;
+
 const connectionString = process.env.TEST_DATABASE_URL;
 const describeIfDb = connectionString ? describe : describe.skip;
 
@@ -189,7 +193,7 @@ describeIfDb('sources repository', () => {
 
 describeIfDb('source commands', () => {
   it('adds a source from a bare handle', async () => {
-    const reply = await dispatchCommand(makeContext(), { command: 'addsource', args: 'karpathy' });
+    const reply = await replyText(makeContext(), { command: 'addsource', args: 'karpathy' });
 
     expect(reply).toContain('Source added');
     expect(reply).toContain('@karpathy');
@@ -197,6 +201,38 @@ describeIfDb('source commands', () => {
     const stored = await listSources(db);
     expect(stored).toHaveLength(1);
     expect(stored[0]!.externalId).toBe('33836629');
+  });
+
+  it('offers the settings button once a source exists, and not on a failed add', async () => {
+    expect(
+      (await dispatchCommand(makeContext(), { command: 'addsource', args: 'karpathy' }))?.offerSettings,
+    ).toBe(true);
+    expect(
+      (await dispatchCommand(makeContext(), { command: 'addsource', args: '@karpathy' }))?.offerSettings,
+    ).toBe(true);
+    expect(
+      (await dispatchCommand(makeContext(), { command: 'addsource', args: '' }))?.offerSettings,
+    ).toBeFalsy();
+    expect(
+      (await dispatchCommand(makeContext(), { command: 'sources', args: '' }))?.offerSettings,
+    ).toBe(true);
+  });
+
+  it('starts a new source on media posts only, and says how to change it', async () => {
+    const reply = await replyText(makeContext(), { command: 'addsource', args: 'karpathy' });
+
+    expect((await listSources(db))[0]!.includeTextOnly).toBe(false);
+    expect(reply).toContain('Settings');
+  });
+
+  it('marks a source that mirrors text posts in the list', async () => {
+    await dispatchCommand(makeContext(), { command: 'addsource', args: 'karpathy' });
+    const [source] = await listSources(db);
+    await db.update(sources).set({ includeTextOnly: true }).where(eq(sources.id, source!.id));
+
+    expect(await replyText(makeContext(), { command: 'sources', args: '' })).toContain(
+      '✅ @karpathy · text posts too',
+    );
   });
 
   it.each([['@karpathy'], ['https://x.com/karpathy'], ['x.com/karpathy']])(
@@ -209,21 +245,21 @@ describeIfDb('source commands', () => {
 
   it('reports a duplicate instead of adding it twice', async () => {
     await dispatchCommand(makeContext(), { command: 'addsource', args: '@karpathy' });
-    const reply = await dispatchCommand(makeContext(), { command: 'addsource', args: '@karpathy' });
+    const reply = await replyText(makeContext(), { command: 'addsource', args: '@karpathy' });
 
     expect(reply).toContain('already in your sources');
     expect(await countSources(db)).toBe(1);
   });
 
   it('explains an unknown account without throwing', async () => {
-    const reply = await dispatchCommand(makeContext(), { command: 'addsource', args: '@ghost' });
+    const reply = await replyText(makeContext(), { command: 'addsource', args: '@ghost' });
 
     expect(reply).toContain('Could not find');
     expect(await countSources(db)).toBe(0);
   });
 
   it('rejects an invalid handle before calling the X API', async () => {
-    const reply = await dispatchCommand(makeContext(), {
+    const reply = await replyText(makeContext(), {
       command: 'addsource',
       args: 'not a handle',
     });
@@ -233,7 +269,7 @@ describeIfDb('source commands', () => {
   });
 
   it('shows usage when the argument is missing', async () => {
-    const reply = await dispatchCommand(makeContext(), { command: 'addsource', args: '' });
+    const reply = await replyText(makeContext(), { command: 'addsource', args: '' });
     expect(reply).toContain('/addsource @username');
   });
 
@@ -242,14 +278,14 @@ describeIfDb('source commands', () => {
     await dispatchCommand(makeContext(), { command: 'addsource', args: 'sama' });
     await dispatchCommand(makeContext(), { command: 'pausesource', args: 'sama' });
 
-    const reply = await dispatchCommand(makeContext(), { command: 'sources', args: '' });
+    const reply = await replyText(makeContext(), { command: 'sources', args: '' });
 
     expect(reply).toContain('✅ @karpathy');
     expect(reply).toContain('⏸ @sama');
   });
 
   it('guides the admin when there are no sources', async () => {
-    const reply = await dispatchCommand(makeContext(), { command: 'sources', args: '' });
+    const reply = await replyText(makeContext(), { command: 'sources', args: '' });
 
     expect(reply).toContain('No sources yet');
     expect(reply).toContain('/addsource @username');
@@ -257,7 +293,7 @@ describeIfDb('source commands', () => {
 
   it('removes a source', async () => {
     await dispatchCommand(makeContext(), { command: 'addsource', args: 'karpathy' });
-    const reply = await dispatchCommand(makeContext(), {
+    const reply = await replyText(makeContext(), {
       command: 'removesource',
       args: '@karpathy',
     });
@@ -267,7 +303,7 @@ describeIfDb('source commands', () => {
   });
 
   it('says so when removing something that is not there', async () => {
-    const reply = await dispatchCommand(makeContext(), {
+    const reply = await replyText(makeContext(), {
       command: 'removesource',
       args: '@karpathy',
     });
@@ -288,7 +324,7 @@ describeIfDb('source commands', () => {
   it('is idempotent when pausing twice', async () => {
     await dispatchCommand(makeContext(), { command: 'addsource', args: 'karpathy' });
     await dispatchCommand(makeContext(), { command: 'pausesource', args: 'karpathy' });
-    const reply = await dispatchCommand(makeContext(), {
+    const reply = await replyText(makeContext(), {
       command: 'pausesource',
       args: 'karpathy',
     });
@@ -334,12 +370,12 @@ describeIfDb('source commands', () => {
   });
 
   it('returns help for /start', async () => {
-    const reply = await dispatchCommand(makeContext(), { command: 'start', args: '' });
+    const reply = await replyText(makeContext(), { command: 'start', args: '' });
     expect(reply).toContain('/addsource');
   });
 
   it('ignores an unknown command', async () => {
-    const reply = await dispatchCommand(makeContext(), { command: 'nonsense', args: '' });
+    const reply = await replyText(makeContext(), { command: 'nonsense', args: '' });
     expect(reply).toBeNull();
   });
 });

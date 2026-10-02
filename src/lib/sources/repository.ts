@@ -144,6 +144,31 @@ export async function setSourceEnabled(
   return rows[0] ?? null;
 }
 
+/** The per-source switches a reviewer may change. */
+export interface SourceSettings {
+  enabled?: boolean;
+  includeTextOnly?: boolean;
+}
+
+/**
+ * Change a source's settings, only within the given workspace.
+ *
+ * The id comes from a client, so the workspace scope is what keeps a reviewer
+ * to their own sources: another tenant's id matches nothing and returns null,
+ * exactly like an id that does not exist.
+ */
+export async function updateSourceSettings(
+  db: Database,
+  input: { id: number; workspaceId: number; settings: SourceSettings },
+): Promise<Source | null> {
+  const rows = await db
+    .update(sources)
+    .set({ ...input.settings, updatedAt: new Date() })
+    .where(and(eq(sources.id, input.id), eq(sources.workspaceId, input.workspaceId)))
+    .returning();
+  return rows[0] ?? null;
+}
+
 /** Refresh the cached handle after X reports a rename. */
 export async function updateSourceUsername(
   db: Database,

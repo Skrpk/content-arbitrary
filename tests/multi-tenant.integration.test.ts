@@ -35,6 +35,10 @@ import { createTestLogger, instantSleep, withEnv, ensureTestWorkspace } from './
  * busy is passed over without taking the run down with it.
  */
 
+/** The reply's text, which is what most assertions here are about. */
+const replyText = async (...args: Parameters<typeof dispatchCommand>) =>
+  (await dispatchCommand(...args))?.text ?? null;
+
 const connectionString = process.env.TEST_DATABASE_URL;
 const describeIfDb = connectionString ? describe : describe.skip;
 
@@ -412,11 +416,11 @@ describeIfDb('tenant isolation', () => {
       workspaceId,
     });
 
-    const replyA = await dispatchCommand(contextFor(DEFAULT_WORKSPACE_ID), {
+    const replyA = await replyText(contextFor(DEFAULT_WORKSPACE_ID), {
       command: 'sources',
       args: '',
     });
-    const replyB = await dispatchCommand(contextFor(TENANT_B), { command: 'sources', args: '' });
+    const replyB = await replyText(contextFor(TENANT_B), { command: 'sources', args: '' });
 
     expect(replyA).toContain('@alpha');
     expect(replyA).not.toContain('@beta');
@@ -427,7 +431,7 @@ describeIfDb('tenant isolation', () => {
   it('will not let a reviewer remove another tenant\'s source', async () => {
     await addSource(db, { platform: 'x', externalId: '111', username: 'alpha' });
 
-    const reply = await dispatchCommand(
+    const reply = await replyText(
       {
         db,
         xClient: new XClient({

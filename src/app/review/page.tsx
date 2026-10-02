@@ -2,7 +2,7 @@
 
 import Script from 'next/script';
 import { useCallback, useState } from 'react';
-import { postIdFromLocation, TELEGRAM_WEB_APP_SCRIPT, theme } from './telegram-webapp';
+import { postIdFromLocation, TELEGRAM_WEB_APP_SCRIPT, theme } from '@/lib/telegram/webapp-client';
 
 /**
  * The Edit Mini App.
@@ -157,7 +157,11 @@ export default function ReviewPage() {
                 {details.sourceUsername ? `@${details.sourceUsername}` : 'Post'}
               </div>
               <div style={{ color: theme.hint, fontSize: '0.8rem' }}>
-                {details.mediaCount === 1 ? '1 media item' : `${details.mediaCount} media items`}
+                {details.mediaCount === 0
+                  ? 'Text post'
+                  : details.mediaCount === 1
+                    ? '1 media item'
+                    : `${details.mediaCount} media items`}
                 {details.edited ? ' · edited' : ''}
               </div>
             </header>

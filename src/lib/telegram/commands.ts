@@ -24,6 +24,20 @@ import type { XClient } from '@/lib/x/client';
  * the single admin check in the webhook stays the only one.
  */
 
+export interface CommandReply {
+  text: string;
+  /**
+   * The reply concerns sources that exist, so it should carry the button that
+   * opens their settings. The webhook adds it when a Mini App is configured.
+   */
+  offerSettings?: boolean;
+}
+
+/** Absolute URL of the Mini App page with every source's settings. */
+export function buildSettingsUrl(baseUrl: string): string {
+  return `${baseUrl.replace(/\/+$/, '')}/settings`;
+}
+
 export interface ParsedCommand {
   command: string;
   args: string;
@@ -64,6 +78,8 @@ const HELP_TEXT = [
   '/removesource @username — stop watching and forget it',
   '/pausesource @username — keep it, but skip it on sync',
   '/resumesource @username — watch it again',
+  '',
+  'Per-source options, such as mirroring posts without media, are under ⚙️ Settings in /sources.',
 ].join('\n');
 
 /** Shared argument handling for the four commands that take a handle. */
@@ -84,31 +100,36 @@ async function resolveHandleArgument(
   return { ok: false, reply: `⚠️ ${reason}` };
 }
 
-export async function handleSources(context: CommandContext): Promise<string> {
+export async function handleSources(context: CommandContext): Promise<CommandReply> {
   const all = await listSources(context.db, context.workspaceId);
 
   if (all.length === 0) {
-    return [
+    return { text: [
       'No sources yet.',
       '',
       'Add the first one:',
       '<code>/addsource @username</code>',
-    ].join('\n');
+    ].join('\n') };
   }
 
   const lines = all.map(
-    (source) => `${source.enabled ? '✅' : '⏸'} @${escapeHtml(source.username)}`,
+    (source) =>
+      `${source.enabled ? '✅' : '⏸'} @${escapeHtml(source.username)}` +
+      (source.includeTextOnly ? ' · text posts too' : ''),
   );
 
   const paused = all.filter((source) => !source.enabled).length;
   const footer = paused > 0 ? ['', `${paused} paused — /resumesource to re-enable.`] : [];
 
-  return ['<b>Sources</b>', '', ...lines, ...footer].join('\n');
+  return { text: ['<b>Sources</b>', '', ...lines, ...footer].join('\n'), offerSettings: true };
 }
 
-export async function handleAddSource(context: CommandContext, args: string): Promise<string> {
+export async function handleAddSource(
+  context: CommandContext,
+  args: string,
+): Promise<CommandReply> {
   const resolved = await resolveHandleArgument(args, '/addsource @username');
-  if (!resolved.ok) return resolved.reply;
+  if (!resolved.ok) return { text: resolved.reply };
 
   let user: { id: string; username: string };
   try {
@@ -119,10 +140,11 @@ export async function handleAddSource(context: CommandContext, args: string): Pr
       username: resolved.username,
       error: describeError(error),
     });
-    return (
-      `⚠️ Could not find <b>@${escapeHtml(resolved.username)}</b> on X.\n\n` +
-      'The account may not exist, or it may be protected or suspended.'
-    );
+    return {
+      text:
+        `⚠️ Could not find <b>@${escapeHtml(resolved.username)}</b> on X.\n\n` +
+        'The account may not exist, or it may be protected or suspended.',
+    };
   }
 
   const result = await addSource(context.db, {
@@ -136,7 +158,10 @@ export async function handleAddSource(context: CommandContext, args: string): Pr
     const note = result.source.enabled
       ? ''
       : '\n\nIt is currently paused — /resumesource to watch it again.';
-    return `ℹ️ <b>@${escapeHtml(user.username)}</b> is already in your sources.${note}`;
+    return {
+      text: `ℹ️ <b>@${escapeHtml(user.username)}</b> is already in your sources.${note}`,
+      offerSettings: true,
+    };
   }
 
   context.logger.info('command.source_added', {
@@ -144,7 +169,12 @@ export async function handleAddSource(context: CommandContext, args: string): Pr
     username: user.username,
     externalId: user.id,
   });
-  return `✅ <b>Source added</b>\n\n@${escapeHtml(user.username)}`;
+  return {
+    text:
+      `✅ <b>Source added</b>\n\n@${escapeHtml(user.username)}\n\n` +
+      'Posts with photos or videos only. Use Settings to mirror text posts too.',
+    offerSettings: true,
+  };
 }
 
 /** Find a source by handle, preferring an exact match on what X currently reports. */
@@ -200,22 +230,22 @@ async function setEnabled(
 export async function dispatchCommand(
   context: CommandContext,
   parsed: ParsedCommand,
-): Promise<string | null> {
+): Promise<CommandReply | null> {
   switch (parsed.command) {
     case 'start':
     case 'help':
-      return HELP_TEXT;
+      return { text: HELP_TEXT };
     case 'sources':
       return handleSources(context);
     case 'addsource':
       return handleAddSource(context, parsed.args);
     case 'removesource':
     case 'deletesource':
-      return handleRemoveSource(context, parsed.args);
+      return { text: await handleRemoveSource(context, parsed.args) };
     case 'pausesource':
-      return setEnabled(context, parsed.args, false);
+      return { text: await setEnabled(context, parsed.args, false) };
     case 'resumesource':
-      return setEnabled(context, parsed.args, true);
+      return { text: await setEnabled(context, parsed.args, true) };
     default:
       return null;
   }

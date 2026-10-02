@@ -85,6 +85,14 @@ export const sources = pgTable(
     externalId: text('external_id').notNull(),
     username: text('username').notNull(),
     enabled: boolean('enabled').notNull().default(true),
+    /**
+     * Also mirror the account's posts that carry no media at all, as plain
+     * text messages. Off by default — the bot began as a media mirror, and an
+     * existing source keeps behaving exactly as it did. A post whose media
+     * exists but cannot be sent (an HLS-only video, say) is still skipped
+     * either way: publishing its text alone would misrepresent it.
+     */
+    includeTextOnly: boolean('include_text_only').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -340,7 +348,8 @@ export interface ApprovalMediaItem {
 }
 
 export interface ApprovalPayload {
-  method: 'sendPhoto' | 'sendVideo' | 'sendMediaGroup';
+  /** `sendMessage` for a text-only post, whose `items` are then empty. */
+  method: 'sendPhoto' | 'sendVideo' | 'sendMediaGroup' | 'sendMessage';
   /**
    * Kept in step with `processed_posts.caption`, which is what publishing
    * reads. Still written so that a rollback to code that predates the column
@@ -350,8 +359,9 @@ export interface ApprovalPayload {
   overflowMessage?: string;
   items: ApprovalMediaItem[];
   /**
-   * The media message in the reviewer's chat, so an edited caption can be shown
-   * on the preview they are looking at. Absent on posts queued before editing
+   * The previewed post in the reviewer's chat — the media message, or the
+   * text message of a text-only post — so an edited caption can be shown on
+   * the preview they are looking at. Absent on posts queued before editing
    * existed, which is why every use of it is optional.
    */
   adminMediaMessageId?: number;

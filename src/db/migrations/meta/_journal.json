@@ -64,6 +64,13 @@
       "when": 1790936662660,
       "tag": "0008_source_text_and_rejection_note",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790937938418,
+      "tag": "0009_source_text_only_posts",
+      "breakpoints": true
     }
   ]
 }

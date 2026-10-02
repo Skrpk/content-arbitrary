@@ -1,0 +1,81 @@
+import { z } from 'zod';
+import type { Source } from '@/db/schema';
+import { describeError } from '@/lib/errors';
+import { listSources, updateSourceSettings } from '@/lib/sources/repository';
+import { authorizeReviewer, json } from '@/lib/telegram/webapp-request';
+
+/**
+ * The settings Mini App's API: list the reviewer's sources and change their
+ * per-source switches.
+ *
+ * Guarded like the other Mini App endpoints — signed `initData` naming a
+ * workspace's reviewer — and every read and write is scoped to that
+ * workspace, so a source id from another tenant behaves as if it did not
+ * exist.
+ */
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const maxDuration = 30;
+
+const updateSchema = z
+  .object({
+    sourceId: z.number().int().positive(),
+    enabled: z.boolean().optional(),
+    includeTextOnly: z.boolean().optional(),
+  })
+  .strict()
+  .refine((body) => body.enabled !== undefined || body.includeTextOnly !== undefined, {
+    message: 'nothing to change',
+  });
+
+/** Only what the page shows; the X id and timestamps stay server-side. */
+const view = (source: Source) => ({
+  id: source.id,
+  username: source.username,
+  enabled: source.enabled,
+  includeTextOnly: source.includeTextOnly,
+});
+
+export async function GET(request: Request): Promise<Response> {
+  let auth: Awaited<ReturnType<typeof authorizeReviewer>>;
+  try {
+    auth = await authorizeReviewer(request);
+  } catch (error) {
+    return json({ error: describeError(error) }, 500);
+  }
+  if (!auth.ok) return auth.response;
+
+  const all = await listSources(auth.db, auth.workspace.id);
+  return json({ sources: all.map(view) });
+}
+
+export async function POST(request: Request): Promise<Response> {
+  let auth: Awaited<ReturnType<typeof authorizeReviewer>>;
+  try {
+    auth = await authorizeReviewer(request);
+  } catch (error) {
+    return json({ error: describeError(error) }, 500);
+  }
+  if (!auth.ok) return auth.response;
+
+  let body: z.infer<typeof updateSchema>;
+  try {
+    body = updateSchema.parse(await request.json());
+  } catch (error) {
+    auth.logger.warn('webapp.bad_request', { error: describeError(error) });
+    return json({ error: 'bad request' }, 400);
+  }
+
+  const { sourceId, ...settings } = body;
+  const updated = await updateSourceSettings(auth.db, {
+    id: sourceId,
+    workspaceId: auth.workspace.id,
+    settings,
+  });
+
+  if (!updated) return json({ error: 'No such source.' }, 404);
+
+  auth.logger.info('webapp.source_settings_changed', { sourceId, ...settings });
+  return json({ source: view(updated) });
+}

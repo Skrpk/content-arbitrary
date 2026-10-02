@@ -2,7 +2,12 @@ import { getEnv, type Env } from '@/lib/env';
 import { describeError, MediaUnsupportedError } from '@/lib/errors';
 import type { Logger } from '@/lib/logger';
 import type { TelegramClient } from '@/lib/telegram/client';
-import { formatCaption, formatMessageText, unescapeHtml } from '@/lib/telegram/format-caption';
+import {
+  formatCaption,
+  formatMessageText,
+  formatTextPost,
+  unescapeHtml,
+} from '@/lib/telegram/format-caption';
 import {
   photoDimensionsAreAcceptable,
   TELEGRAM_MEDIA_GROUP_MAX,
@@ -70,6 +75,11 @@ export async function processPost(
      * source, not to the installation.
      */
     destination: TelegramDestination;
+    /**
+     * The source mirrors posts without media, as text. Without it such a post
+     * is skipped, as it always was.
+     */
+    textOnly?: boolean;
   },
 ): Promise<ProcessOutcome> {
   const env = options.env ?? getEnv();
@@ -98,6 +108,10 @@ export async function processPost(
     prefix: env.CAPTION_PREFIX,
     suffix: env.CAPTION_SUFFIX,
   });
+
+  if (method === 'none' && options.textOnly && post.text !== '') {
+    return processTextPost(post, { ...options, env, logger });
+  }
 
   if (method === 'none') {
     return {
@@ -398,6 +412,104 @@ export async function processPost(
   };
 }
 
+/**
+ * Publish, or send for review, a post with no media as a text message.
+ *
+ * The same three outcomes as a media post — dry run, review, channel — minus
+ * everything about media. It is one message, so there is no overflow and no
+ * risk of a half-published album.
+ */
+async function processTextPost(
+  post: NormalizedPost,
+  options: {
+    client: TelegramClient;
+    logger: Logger;
+    env: Env;
+    sleep?: (ms: number) => Promise<void>;
+    postId?: number;
+    destination: TelegramDestination;
+  },
+): Promise<ProcessOutcome> {
+  const { env, logger } = options;
+  const method: TelegramMethod = 'sendMessage';
+  const text = formatTextPost({
+    text: post.text,
+    username: post.authorUsername,
+    postId: post.id,
+    includeSourceLink: env.INCLUDE_SOURCE_LINK,
+    prefix: env.CAPTION_PREFIX,
+    suffix: env.CAPTION_SUFFIX,
+  });
+
+  const base = { method, mediaCount: 0, caption: text, primaryMessageId: null };
+
+  if (env.DRY_RUN) {
+    logDryRun(logger, post, [], method, text, undefined, env.REQUIRE_APPROVAL);
+    return { ...base, status: 'dry-run', messages: [] };
+  }
+
+  try {
+    if (env.REQUIRE_APPROVAL) {
+      const review = await sendForApproval(
+        {
+          client: options.client,
+          chatId: options.destination.adminChatId!,
+          disableNotification: false,
+        },
+        {
+          postId: options.postId!,
+          xPostUrl: post.url,
+          sourceUsername: post.authorUsername,
+          method,
+          caption: text,
+          payloads: [],
+          editUrl: env.APP_BASE_URL ? buildEditUrl(env.APP_BASE_URL, options.postId!) : undefined,
+        },
+        { logger, sleep: options.sleep },
+      );
+
+      logger.info('approval.awaiting_decision', {
+        xPostId: post.id,
+        adminMessageId: review.adminMessageId,
+        textOnly: true,
+      });
+      return { ...base, status: 'awaiting-approval', messages: [], approval: review };
+    }
+
+    const sent = await sendText(
+      {
+        client: options.client,
+        chatId: options.destination.chatId,
+        disableNotification: options.destination.disableNotification,
+      },
+      text,
+    );
+
+    logger.info('telegram.published', { xPostId: post.id, method, telegramMessageIds: [sent.message_id] });
+    return {
+      ...base,
+      status: 'published',
+      messages: [{ messageId: sent.message_id, mediaIndex: null, kind: 'text' }],
+      primaryMessageId: sent.message_id,
+    };
+  } catch (error) {
+    const permanent = isPermanentTelegramError(error);
+    logger.error(env.REQUIRE_APPROVAL ? 'approval.review_send_failed' : 'telegram.upload_failed', {
+      xPostId: post.id,
+      method,
+      permanent,
+      error: describeError(error),
+    });
+    return {
+      ...base,
+      status: permanent ? 'skipped' : 'failed',
+      messages: [],
+      error: describeError(error),
+      permanent,
+    };
+  }
+}
+
 function isPermanentTelegramError(error: unknown): boolean {
   return (
     typeof error === 'object' &&
@@ -423,7 +535,7 @@ function logDryRun(
     videos > 0 ? `${videos} video${videos === 1 ? '' : 's'}` : null,
   ]
     .filter(Boolean)
-    .join(' + ');
+    .join(' + ') || 'none (text only)';
 
   logger.info('dry_run.post', {
     dryRun: true,

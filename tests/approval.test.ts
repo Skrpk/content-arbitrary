@@ -287,6 +287,27 @@ describe('mediaFileIdOf', () => {
   });
 });
 
+describe('publishing a text-only post', () => {
+  it('sends its text as one message, with no media and no follow-up', async () => {
+    const { fetchImpl, calls } = telegramRecorder();
+
+    const result = await publishApprovedPayload(
+      makeContext(fetchImpl, '-1001234567890'),
+      { method: 'sendMessage', caption: 'Edited words &amp; all', items: [] },
+      { sleep: instantSleep },
+    );
+
+    expect(calls.map((call) => call.method)).toEqual(['sendMessage']);
+    expect(calls[0]!.body.text).toBe('Edited words &amp; all');
+    expect(calls[0]!.body.chat_id).toBe('-1001234567890');
+    expect(result).toEqual({
+      messages: [{ messageId: 40, mediaIndex: null, kind: 'text' }],
+      primaryMessageId: 40,
+      method: 'sendMessage',
+    });
+  });
+});
+
 describe('sendForApproval', () => {
   it('sends a single photo with the buttons attached to it', async () => {
     const { fetchImpl, calls } = telegramRecorder();

@@ -815,3 +815,88 @@ describeIfDb('source text', () => {
     expect(after.sourceText).toBe('Bear by the lake');
   });
 });
+
+describeIfDb('text-only posts', () => {
+  const textPost = {
+    data: [
+      { id: '1750000000000000077', text: 'No pictures, just news &amp; views', author_id: '999' },
+    ],
+    includes: { users: [{ id: '999', username: 'Trail_Cams' }] },
+    meta: { result_count: 1, newest_id: '1750000000000000077' },
+  };
+
+  async function watch(includeTextOnly: boolean) {
+    await db.insert(sources).values({
+      externalId: '999',
+      username: 'Trail_Cams',
+      includeTextOnly,
+    });
+  }
+
+  it('are skipped for a source that mirrors media only, as before', async () => {
+    await watch(false);
+    const stack = makeStack();
+
+    const summary = await runSync(stack, [], textPost);
+
+    expect(summary.awaitingApproval).toBe(0);
+    expect(stack.sends).toHaveLength(0);
+    expect(await db.select().from(processedPosts)).toHaveLength(0);
+  });
+
+  it('go to review, then to the channel as text, for a source that mirrors them', async () => {
+    await watch(true);
+    const review = makeStack();
+
+    const summary = await runSync(review, [], textPost);
+
+    expect(summary.awaitingApproval).toBe(1);
+    // The post itself, then the control message with the buttons.
+    expect(review.sends).toEqual([
+      { method: 'sendMessage', chatId: ADMIN_CHAT },
+      { method: 'sendMessage', chatId: ADMIN_CHAT },
+    ]);
+
+    const row = (await db.select().from(processedPosts))[0]!;
+    expect(row.status).toBe('awaiting_approval');
+    expect(row.approvalPayload).toMatchObject({ method: 'sendMessage', items: [] });
+    expect(row.mediaCount).toBe(0);
+    expect(row.sourceText).toBe('No pictures, just news & views');
+    expect(row.originalCaption).toContain('No pictures, just news &amp; views');
+
+    const channel = makeStack();
+    const claim = await claimForDecision(db, row.id, DEFAULT_WORKSPACE_ID);
+    await publishApprovedPayload(
+      { client: channel.client, chatId: CHANNEL_CHAT, disableNotification: false },
+      claim.row!.approvalPayload!,
+      { logger: createTestLogger(), sleep: instantSleep },
+    );
+
+    expect(channel.sends).toEqual([{ method: 'sendMessage', chatId: CHANNEL_CHAT }]);
+  });
+
+  it('are published straight to the channel when approval is off', async () => {
+    await watch(true);
+    const stack = makeStack();
+
+    const summary = await withEnv({ ...approvalEnv, REQUIRE_APPROVAL: 'false' }, (env) =>
+      syncPosts({
+        db,
+        env,
+        xClient: makeXClient(textPost),
+        telegramClient: stack.client,
+        fetchImpl: stack.fetchImpl,
+        logger: createTestLogger(),
+        sleep: instantSleep,
+        skipLock: true,
+      }),
+    );
+
+    expect(summary.published).toBe(1);
+    expect(stack.sends).toEqual([{ method: 'sendMessage', chatId: CHANNEL_CHAT }]);
+    const row = (await db.select().from(processedPosts))[0]!;
+    expect(row.status).toBe('published');
+    expect(row.telegramMethod).toBe('sendMessage');
+    expect(row.caption).toContain('No pictures');
+  });
+});

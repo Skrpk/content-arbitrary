@@ -2,7 +2,7 @@
 
 import Script from 'next/script';
 import { useCallback, useState } from 'react';
-import { postIdFromLocation, TELEGRAM_WEB_APP_SCRIPT, theme } from '../telegram-webapp';
+import { postIdFromLocation, TELEGRAM_WEB_APP_SCRIPT, theme } from '@/lib/telegram/webapp-client';
 
 /**
  * The "Other" Mini App: reject a post and say why in your own words.

@@ -1,0 +1,1 @@
+ALTER TABLE "sources" ADD COLUMN "include_text_only" boolean DEFAULT false NOT NULL;
