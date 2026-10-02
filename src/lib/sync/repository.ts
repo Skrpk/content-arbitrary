@@ -7,6 +7,7 @@ import {
   telegramMessages,
   type ApprovalPayload,
   type PostStatus,
+  type RejectionReason,
 } from '@/db/schema';
 
 /**
@@ -59,6 +60,8 @@ export async function claimPost(
     /** Which source produced it; null for rows that predate source tracking. */
     sourceId?: number | null;
     workspaceId?: number;
+    /** The author's full text, kept for analysis whatever becomes of the post. */
+    sourceText?: string | null;
   },
 ): Promise<ClaimResult> {
   const staleBefore = new Date(Date.now() - PROCESSING_LEASE_MS);
@@ -73,6 +76,7 @@ export async function claimPost(
       xPostUrl: input.xPostUrl,
       xAuthorUsername: input.xAuthorUsername,
       xCreatedAt: input.xCreatedAt,
+      sourceText: input.sourceText ?? null,
       status: 'processing',
       lockedAt: new Date(),
     })
@@ -83,6 +87,9 @@ export async function claimPost(
       set: {
         status: 'processing',
         sourceId: input.sourceId ?? null,
+        // Filled in once, for a row first seen before the column existed;
+        // otherwise what was recorded the first time stands.
+        sourceText: rawSql`coalesce(${processedPosts.sourceText}, ${input.sourceText ?? null})`,
         lockedAt: new Date(),
         updatedAt: new Date(),
       },
@@ -126,6 +133,34 @@ export async function claimPost(
   return { claimed: false, row: current, reason: 'in-flight' };
 }
 
+/**
+ * Copy the caption out of the review payload before a decision drops it.
+ *
+ * A no-op for posts queued by this code, which already have both columns. It
+ * exists for posts queued by the previous deploy in the window between the
+ * migration and the new code going live: without it their text would vanish
+ * along with the payload. Postgres evaluates SET against the row as it was, so
+ * this reads the payload even though the same UPDATE clears it.
+ */
+const keepCaptionsFromPayload = {
+  originalCaption: rawSql`coalesce(${processedPosts.originalCaption}, ${processedPosts.approvalPayload}->>'caption')`,
+  caption: rawSql`coalesce(${processedPosts.caption}, ${processedPosts.approvalPayload}->>'caption')`,
+};
+
+/** A post's status, as seen from one tenant; undefined for another tenant's post. */
+export async function findStatusInWorkspace(
+  db: Database,
+  input: { id: number; workspaceId: number },
+): Promise<PostStatus | undefined> {
+  const rows = await db
+    .select({ status: processedPosts.status })
+    .from(processedPosts)
+    .where(and(eq(processedPosts.id, input.id), eq(processedPosts.workspaceId, input.workspaceId)))
+    .limit(1);
+
+  return rows[0]?.status;
+}
+
 export async function markPublished(
   db: Database,
   input: {
@@ -135,6 +170,13 @@ export async function markPublished(
     telegramMethod: string;
     mediaCount: number;
     messages: { messageId: number; mediaIndex: number | null; kind: string }[];
+    /** When the reviewer approved it; omitted for a post published with no review. */
+    reviewedAt?: Date;
+    /**
+     * The caption a post published with no review went out with. A reviewed
+     * post already carries its captions, and they take precedence.
+     */
+    caption?: string;
   },
 ): Promise<void> {
   await db.transaction(async (tx) => {
@@ -147,6 +189,9 @@ export async function markPublished(
         telegramMethod: input.telegramMethod,
         mediaCount: input.mediaCount,
         errorMessage: null,
+        originalCaption: rawSql`coalesce(${processedPosts.originalCaption}, ${processedPosts.approvalPayload}->>'caption', ${input.caption ?? null})`,
+        caption: rawSql`coalesce(${processedPosts.caption}, ${processedPosts.approvalPayload}->>'caption', ${input.caption ?? null})`,
+        ...(input.reviewedAt ? { reviewedAt: input.reviewedAt } : {}),
         approvalPayload: null,
         processedAt: new Date(),
         updatedAt: new Date(),
@@ -168,7 +213,13 @@ export async function markPublished(
   });
 }
 
-/** Park a post in the reviewer's queue, keeping everything needed to publish it. */
+/**
+ * Park a post in the reviewer's queue, keeping everything needed to publish it.
+ *
+ * The captions are only ever filled in, never replaced: should a post somehow
+ * be queued a second time, its original stays the one first reviewed and a
+ * reviewer's edit is not thrown away.
+ */
 export async function markAwaitingApproval(
   db: Database,
   input: {
@@ -183,6 +234,8 @@ export async function markAwaitingApproval(
     .set({
       status: 'awaiting_approval',
       approvalPayload: input.payload,
+      originalCaption: rawSql`coalesce(${processedPosts.originalCaption}, ${input.payload.caption})`,
+      caption: rawSql`coalesce(${processedPosts.caption}, ${input.payload.caption})`,
       adminChatId: input.adminChatId,
       adminMessageId: input.adminMessageId,
       telegramMethod: input.payload.method,
@@ -225,13 +278,8 @@ export async function claimForDecision(
   const row = rows[0];
   if (row) return { claimed: true, row };
 
-  const existing = await db
-    .select()
-    .from(processedPosts)
-    .where(eq(processedPosts.id, postId))
-    .limit(1);
-
-  return { claimed: false, currentStatus: existing[0]?.status };
+  // Scoped like the claim, so a foreign id does not reveal how that post ended.
+  return { claimed: false, currentStatus: await findStatusInWorkspace(db, { id: postId, workspaceId }) };
 }
 
 /**
@@ -269,34 +317,42 @@ export async function findPostAwaitingReview(
  *
  * The overflow follow-up is dropped. It held the untruncated original, which a
  * hand-written caption contradicts rather than completes.
+ *
+ * `original_caption` is never written here — every edit, however many, is
+ * measured against what was first reviewed. The only exception fills it in for
+ * a post queued before the column existed, from the payload's caption as it
+ * stood before this edit.
  */
 export async function updateApprovalCaption(
   db: Database,
   input: { id: number; workspaceId: number; caption: string },
-): Promise<{ updated: boolean; currentStatus?: PostStatus }> {
+): Promise<{
+  updated: boolean;
+  currentStatus?: PostStatus;
+  /** The reviewer's preview of the follow-up this edit dropped, if there was one. */
+  droppedOverflowPreviewId?: number;
+}> {
   const existing = await findPostAwaitingReview(db, input);
   if (!existing || !existing.approvalPayload) {
-    const rows = await db
-      .select({ status: processedPosts.status })
-      .from(processedPosts)
-      .where(
-        and(eq(processedPosts.id, input.id), eq(processedPosts.workspaceId, input.workspaceId)),
-      )
-      .limit(1);
-
-    return { updated: false, currentStatus: rows[0]?.status };
+    return { updated: false, currentStatus: await findStatusInWorkspace(db, input) };
   }
 
   const payload: ApprovalPayload = {
     ...existing.approvalPayload,
     caption: input.caption,
     overflowMessage: undefined,
-    captionEditedAt: new Date().toISOString(),
+    adminOverflowMessageId: undefined,
   };
 
   const rows = await db
     .update(processedPosts)
-    .set({ approvalPayload: payload, updatedAt: new Date() })
+    .set({
+      approvalPayload: payload,
+      originalCaption: rawSql`coalesce(${processedPosts.originalCaption}, ${existing.approvalPayload.caption})`,
+      caption: input.caption,
+      captionEditedAt: new Date(),
+      updatedAt: new Date(),
+    })
     .where(
       and(
         eq(processedPosts.id, input.id),
@@ -307,7 +363,7 @@ export async function updateApprovalCaption(
     .returning({ id: processedPosts.id });
 
   return rows.length > 0
-    ? { updated: true }
+    ? { updated: true, droppedOverflowPreviewId: existing.approvalPayload.adminOverflowMessageId }
     : { updated: false, currentStatus: existing.status };
 }
 
@@ -327,11 +383,31 @@ export async function releaseToApproval(
     .where(eq(processedPosts.id, input.id));
 }
 
-export async function markRejected(db: Database, postId: number): Promise<void> {
-  await db
+/**
+ * Turn a post down, recording why.
+ *
+ * Settles the post in one guarded UPDATE straight from `awaiting_approval`,
+ * with no intermediate state: a second tap, a stale button, or a reason chosen
+ * after Approve already won all find the status changed and write nothing, so
+ * a recorded decision is never overwritten.
+ */
+export async function rejectWithReason(
+  db: Database,
+  input: {
+    id: number;
+    workspaceId: number;
+    reason: RejectionReason;
+    /** The reviewer's own words; plain text, empty treated as none. */
+    note?: string | null;
+  },
+): Promise<{ rejected: boolean; row?: typeof processedPosts.$inferSelect; currentStatus?: PostStatus }> {
+  const rows = await db
     .update(processedPosts)
     .set({
       status: 'rejected',
+      rejectionReason: input.reason,
+      rejectionNote: input.note?.trim() || null,
+      ...keepCaptionsFromPayload,
       // The payload only exists to publish with; drop it once we never will.
       approvalPayload: null,
       reviewedAt: new Date(),
@@ -339,7 +415,19 @@ export async function markRejected(db: Database, postId: number): Promise<void> 
       lockedAt: null,
       updatedAt: new Date(),
     })
-    .where(eq(processedPosts.id, postId));
+    .where(
+      and(
+        eq(processedPosts.id, input.id),
+        eq(processedPosts.workspaceId, input.workspaceId),
+        eq(processedPosts.status, 'awaiting_approval'),
+      ),
+    )
+    .returning();
+
+  const row = rows[0];
+  if (row) return { rejected: true, row };
+
+  return { rejected: false, currentStatus: await findStatusInWorkspace(db, input) };
 }
 
 export async function markFailed(

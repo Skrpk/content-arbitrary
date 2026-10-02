@@ -55,6 +55,16 @@ export const xPostSchema = z.object({
     .optional(),
   referenced_tweets: z.array(xReferencedPostSchema).optional(),
   in_reply_to_user_id: z.string().optional(),
+  /**
+   * The full text of a long-form post (over 280 characters), whose `text` is
+   * cut short. Absent on ordinary posts.
+   */
+  note_tweet: z
+    .object({
+      text: z.string(),
+      entities: z.object({ urls: z.array(xUrlEntitySchema).optional() }).optional(),
+    })
+    .optional(),
 });
 
 export const xUserSchema = z.object({

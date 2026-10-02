@@ -35,7 +35,10 @@ export interface NormalizedPost {
   url: string;
   authorUsername: string;
   createdAt: Date | null;
-  /** Post text with t.co noise already resolved/removed. */
+  /**
+   * The author's whole text — the full text of a long-form post, not X's
+   * 280-character cut — with t.co noise already resolved/removed.
+   */
   text: string;
   media: NormalizedMedia[];
   isReply: boolean;

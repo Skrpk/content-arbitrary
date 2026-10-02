@@ -1,17 +1,10 @@
 import { z } from 'zod';
-import { getDb } from '@/lib/db';
-import { getEnv } from '@/lib/env';
 import { describeError } from '@/lib/errors';
-import { createLogger } from '@/lib/logger';
 import { TelegramClient } from '@/lib/telegram/client';
 import { TELEGRAM_PARSE_MODE, escapeHtml, unescapeHtml } from '@/lib/telegram/format-caption';
 import { TELEGRAM_CAPTION_LIMIT } from '@/lib/telegram/limits';
-import {
-  initDataFromAuthorizationHeader,
-  validateInitData,
-} from '@/lib/telegram/webapp-auth';
+import { authorizeReviewer, json } from '@/lib/telegram/webapp-request';
 import { findPostAwaitingReview, updateApprovalCaption } from '@/lib/sync/repository';
-import { findWorkspaceByAdminChatId } from '@/lib/workspace';
 
 /**
  * The Mini App's API: read the caption a post will be published with, and
@@ -40,48 +33,10 @@ const saveSchema = z.object({
   caption: z.string(),
 });
 
-const json = (body: unknown, status = 200) =>
-  Response.json(body, { status, headers: { 'cache-control': 'no-store' } });
-
-/**
- * Everything that must be true before a request may touch a post, resolved
- * once so GET and POST cannot drift apart on it.
- */
-async function authorize(request: Request) {
-  const logger = createLogger({ app: 'content-arbitrary', surface: 'webapp' });
-  const env = getEnv();
-
-  const initData = initDataFromAuthorizationHeader(request.headers.get('authorization'));
-  const verdict = validateInitData(initData, env.TELEGRAM_BOT_TOKEN);
-
-  if (!verdict.ok) {
-    // The reason is logged but never returned: a caller learning *why* their
-    // forgery failed is a step towards one that works.
-    logger.warn('webapp.init_data_rejected', { reason: verdict.reason });
-    return { ok: false as const, response: json({ error: 'unauthorized' }, 401) };
-  }
-
-  const db = getDb();
-  const workspace = await findWorkspaceByAdminChatId(db, verdict.user.id);
-
-  if (!workspace) {
-    logger.warn('webapp.not_a_reviewer', { telegramUserId: verdict.user.id });
-    return { ok: false as const, response: json({ error: 'unauthorized' }, 401) };
-  }
-
-  return {
-    ok: true as const,
-    db,
-    env,
-    workspace,
-    logger: logger.child({ workspaceId: workspace.id, telegramUserId: verdict.user.id }),
-  };
-}
-
 export async function GET(request: Request): Promise<Response> {
-  let auth: Awaited<ReturnType<typeof authorize>>;
+  let auth: Awaited<ReturnType<typeof authorizeReviewer>>;
   try {
-    auth = await authorize(request);
+    auth = await authorizeReviewer(request);
   } catch (error) {
     return json({ error: describeError(error) }, 500);
   }
@@ -102,18 +57,19 @@ export async function GET(request: Request): Promise<Response> {
     sourceUsername: post.xAuthorUsername,
     xPostUrl: post.xPostUrl,
     mediaCount: post.approvalPayload.items.length,
-    // The editor works in plain text; the stored caption is escaped.
-    caption: unescapeHtml(post.approvalPayload.caption),
+    // The editor works in plain text; the stored caption is escaped. The
+    // fallback covers a post queued before the caption column existed.
+    caption: unescapeHtml(post.caption ?? post.approvalPayload.caption),
     limit: TELEGRAM_CAPTION_LIMIT,
     hasOverflowMessage: Boolean(post.approvalPayload.overflowMessage),
-    edited: Boolean(post.approvalPayload.captionEditedAt),
+    edited: post.captionEditedAt !== null,
   });
 }
 
 export async function POST(request: Request): Promise<Response> {
-  let auth: Awaited<ReturnType<typeof authorize>>;
+  let auth: Awaited<ReturnType<typeof authorizeReviewer>>;
   try {
-    auth = await authorize(request);
+    auth = await authorizeReviewer(request);
   } catch (error) {
     return json({ error: describeError(error) }, 500);
   }
@@ -170,11 +126,12 @@ export async function POST(request: Request): Promise<Response> {
     workspaceId: auth.workspace.id,
   });
   const previewMessageId = post?.approvalPayload?.adminMediaMessageId;
+  const client = new TelegramClient({ logger: auth.logger });
   let previewUpdated = false;
 
   if (post?.adminChatId && previewMessageId) {
     try {
-      await new TelegramClient({ logger: auth.logger }).editMessageCaption(
+      await client.editMessageCaption(
         post.adminChatId,
         previewMessageId,
         escapeHtml(caption),
@@ -184,6 +141,21 @@ export async function POST(request: Request): Promise<Response> {
     } catch (error) {
       auth.logger.warn('webapp.preview_update_failed', { error: describeError(error) });
     }
+  }
+
+  // The full-text follow-up will no longer be published; its preview must not
+  // go on suggesting otherwise.
+  if (post?.adminChatId && result.droppedOverflowPreviewId) {
+    await client
+      .editMessageText(
+        post.adminChatId,
+        result.droppedOverflowPreviewId,
+        '✂️ This full text will not be published: your edited caption replaces it.',
+        TELEGRAM_PARSE_MODE,
+      )
+      .catch((error: unknown) => {
+        auth.logger.warn('webapp.overflow_preview_update_failed', { error: describeError(error) });
+      });
   }
 
   return json({ ok: true, caption, previewUpdated });

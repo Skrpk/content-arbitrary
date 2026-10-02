@@ -2,48 +2,38 @@
 
 import Script from 'next/script';
 import { useCallback, useState } from 'react';
-import { postIdFromLocation, TELEGRAM_WEB_APP_SCRIPT, theme } from './telegram-webapp';
+import { postIdFromLocation, TELEGRAM_WEB_APP_SCRIPT, theme } from '../telegram-webapp';
 
 /**
- * The Edit Mini App.
+ * The "Other" Mini App: reject a post and say why in your own words.
  *
- * Opened from the Edit button under a post awaiting review. Telegram hands the
- * page a signed `initData` string; every request below carries it in an
- * `Authorization: tma …` header, and the server decides from that alone who is
- * asking and what they may touch. Nothing here is trusted — the page is public,
- * and the post id in the URL means nothing without a valid signature.
+ * Opened from the Other button in the list of rejection reasons. Like the
+ * editor, it proves who is asking with Telegram's signed `initData` on every
+ * request; the post id in the URL is not trusted on its own.
  */
 
-interface PostDetails {
+interface PostContext {
   postId: number;
   sourceUsername: string | null;
-  xPostUrl: string;
-  mediaCount: number;
   caption: string;
-  limit: number;
-  hasOverflowMessage: boolean;
-  edited: boolean;
+  noteLimit: number;
 }
 
 type Phase = 'waiting-for-telegram' | 'loading' | 'ready' | 'saving' | 'saved' | 'error';
 
-export default function ReviewPage() {
+export default function RejectPage() {
   const [phase, setPhase] = useState<Phase>('waiting-for-telegram');
   const [message, setMessage] = useState<string | null>(null);
-  const [details, setDetails] = useState<PostDetails | null>(null);
-  const [caption, setCaption] = useState('');
+  const [context, setContext] = useState<PostContext | null>(null);
+  const [note, setNote] = useState('');
 
-  /**
-   * Started from the Telegram script's own ready callback rather than an
-   * effect: the page has nothing to do until that script exists, and the
-   * callback is the moment it does.
-   */
+  /** Started from the Telegram script's ready callback, as in the editor. */
   const load = useCallback(async () => {
     const app = window.Telegram?.WebApp;
 
     if (!app) {
       setPhase('error');
-      setMessage('Telegram did not load. Open this from the Edit button in the bot chat.');
+      setMessage('Telegram did not load. Open this from the Other button in the bot chat.');
       return;
     }
 
@@ -52,29 +42,28 @@ export default function ReviewPage() {
 
     if (!app.initData) {
       setPhase('error');
-      setMessage('This page only works when opened from the Edit button in Telegram.');
+      setMessage('This page only works when opened from the Other button in Telegram.');
       return;
     }
 
     const postId = postIdFromLocation();
     if (postId === null) {
       setPhase('error');
-      setMessage('No post to edit.');
+      setMessage('No post to reject.');
       return;
     }
 
     setPhase('loading');
 
     try {
-      const response = await fetch(`/api/telegram/webapp/caption?post=${postId}`, {
+      const response = await fetch(`/api/telegram/webapp/reject?post=${postId}`, {
         headers: { Authorization: `tma ${app.initData}` },
       });
 
-      const body = (await response.json()) as PostDetails & { error?: string };
+      const body = (await response.json()) as PostContext & { error?: string };
       if (!response.ok) throw new Error(body.error ?? `Request failed (${response.status})`);
 
-      setDetails(body);
-      setCaption(body.caption);
+      setContext(body);
       setPhase('ready');
     } catch (error: unknown) {
       setPhase('error');
@@ -82,46 +71,40 @@ export default function ReviewPage() {
     }
   }, []);
 
-  const limit = details?.limit ?? 1024;
-  const trimmed = caption.trim();
+  const limit = context?.noteLimit ?? 500;
+  const trimmed = note.trim();
   const tooLong = trimmed.length > limit;
-  const empty = trimmed === '';
-  const unchanged = details !== null && trimmed === details.caption.trim();
 
-  const save = useCallback(async () => {
+  const submit = useCallback(async () => {
     const app = window.Telegram?.WebApp;
-    if (!details || !app || tooLong || empty) return;
+    if (!context || !app || tooLong) return;
 
     setPhase('saving');
     setMessage(null);
 
     try {
-      const response = await fetch('/api/telegram/webapp/caption', {
+      const response = await fetch('/api/telegram/webapp/reject', {
         method: 'POST',
         headers: {
           Authorization: `tma ${app.initData}`,
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ postId: details.postId, caption: trimmed }),
+        body: JSON.stringify({ postId: context.postId, note: trimmed }),
       });
 
-      const body = (await response.json()) as { error?: string; previewUpdated?: boolean };
-      if (!response.ok) throw new Error(body.error ?? `Save failed (${response.status})`);
+      const body = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? `Request failed (${response.status})`);
 
       setPhase('saved');
-      setMessage(
-        body.previewUpdated
-          ? 'Saved. The preview in the chat now shows your text.'
-          : 'Saved. Approve in the chat to publish it.',
-      );
-
-      // Give the confirmation a moment to be read, then hand control back.
+      setMessage('Rejected. It will not be published.');
       setTimeout(() => app.close(), 1200);
     } catch (error: unknown) {
       setPhase('ready');
-      setMessage(error instanceof Error ? error.message : 'Could not save.');
+      setMessage(error instanceof Error ? error.message : 'Could not reject.');
     }
-  }, [details, empty, tooLong, trimmed]);
+  }, [context, tooLong, trimmed]);
+
+  const busy = phase === 'saving' || phase === 'saved';
 
   return (
     <>
@@ -146,27 +129,38 @@ export default function ReviewPage() {
           <p style={{ color: theme.hint }}>Loading…</p>
         ) : null}
 
-        {phase === 'error' ? (
-          <p style={{ color: theme.hint }}>{message}</p>
-        ) : null}
+        {phase === 'error' ? <p style={{ color: theme.hint }}>{message}</p> : null}
 
-        {details && phase !== 'error' ? (
+        {context && phase !== 'error' ? (
           <>
             <header style={{ marginBottom: '0.75rem' }}>
-              <div style={{ fontSize: '0.95rem', fontWeight: 600 }}>
-                {details.sourceUsername ? `@${details.sourceUsername}` : 'Post'}
-              </div>
+              <div style={{ fontSize: '0.95rem', fontWeight: 600 }}>Why does it not fit?</div>
               <div style={{ color: theme.hint, fontSize: '0.8rem' }}>
-                {details.mediaCount === 1 ? '1 media item' : `${details.mediaCount} media items`}
-                {details.edited ? ' · edited' : ''}
+                {context.sourceUsername ? `@${context.sourceUsername}` : 'Post'}
               </div>
             </header>
 
+            {context.caption ? (
+              <p
+                style={{
+                  color: theme.hint,
+                  fontSize: '0.85rem',
+                  whiteSpace: 'pre-wrap',
+                  maxHeight: '8.5rem',
+                  overflow: 'hidden',
+                  margin: '0 0 0.75rem',
+                }}
+              >
+                {context.caption}
+              </p>
+            ) : null}
+
             <textarea
-              value={caption}
-              onChange={(event) => setCaption(event.target.value)}
-              disabled={phase === 'saving' || phase === 'saved'}
-              rows={12}
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              disabled={busy}
+              rows={5}
+              placeholder="In your own words (optional)"
               spellCheck
               style={{
                 width: '100%',
@@ -185,25 +179,18 @@ export default function ReviewPage() {
 
             <div
               style={{
-                display: 'flex',
-                justifyContent: 'space-between',
                 fontSize: '0.8rem',
                 color: tooLong ? '#e53935' : theme.hint,
                 margin: '0.4rem 0 0.9rem',
               }}
             >
-              <span>
-                {trimmed.length} / {limit}
-              </span>
-              {details.hasOverflowMessage ? (
-                <span>The original was long; the follow-up message will be dropped.</span>
-              ) : null}
+              {trimmed.length} / {limit}
             </div>
 
             <button
               type="button"
-              onClick={save}
-              disabled={phase === 'saving' || phase === 'saved' || tooLong || empty || unchanged}
+              onClick={submit}
+              disabled={busy || tooLong}
               style={{
                 width: '100%',
                 padding: '0.85rem',
@@ -214,10 +201,10 @@ export default function ReviewPage() {
                 background: theme.button,
                 border: 'none',
                 borderRadius: '0.5rem',
-                opacity: phase === 'saving' || tooLong || empty || unchanged ? 0.5 : 1,
+                opacity: busy || tooLong ? 0.5 : 1,
               }}
             >
-              {phase === 'saving' ? 'Saving…' : phase === 'saved' ? 'Saved' : 'Save'}
+              {phase === 'saving' ? 'Rejecting…' : phase === 'saved' ? 'Rejected' : 'Reject'}
             </button>
 
             {message ? (
@@ -227,7 +214,7 @@ export default function ReviewPage() {
             ) : null}
 
             <p style={{ color: theme.hint, fontSize: '0.8rem', marginTop: '1rem' }}>
-              Saving only changes the text. Approve or Reject in the chat as usual.
+              Closing this without pressing Reject changes nothing.
             </p>
           </>
         ) : null}

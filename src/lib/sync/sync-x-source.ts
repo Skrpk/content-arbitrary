@@ -154,6 +154,7 @@ export async function syncXSource(
         maxRetryAttempts: env.MAX_RETRY_ATTEMPTS,
         sourceId: source.id,
         workspaceId: source.workspaceId,
+        sourceText: post.text,
       });
 
       if (!claim.claimed || !claim.row) {
@@ -186,6 +187,7 @@ export async function syncXSource(
             telegramMethod: outcome.method,
             mediaCount: outcome.mediaCount,
             messages: outcome.messages,
+            caption: outcome.caption,
           });
           settle(post.id);
           summary.published += 1;

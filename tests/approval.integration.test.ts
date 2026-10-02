@@ -1,3 +1,5 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { eq } from 'drizzle-orm';
@@ -15,8 +17,9 @@ import {
 import {
   claimForDecision,
   findPostAwaitingReview,
+  markAwaitingApproval,
   markPublished,
-  markRejected,
+  rejectWithReason,
   updateApprovalCaption,
 } from '@/lib/sync/repository';
 import { DEFAULT_WORKSPACE_ID } from '@/db/schema';
@@ -155,12 +158,16 @@ beforeEach(async () => {
   await ensureTestWorkspace(db);
 });
 
-async function runSync(stack: ReturnType<typeof makeStack>, mediaKeys = ['3_1', '3_2']) {
+async function runSync(
+  stack: ReturnType<typeof makeStack>,
+  mediaKeys = ['3_1', '3_2'],
+  payload: unknown = timelinePayload(mediaKeys),
+) {
   return withEnv(approvalEnv, (env) =>
     syncPosts({
       db,
       env,
-      xClient: makeXClient(timelinePayload(mediaKeys)),
+      xClient: makeXClient(payload),
       telegramClient: stack.client,
       fetchImpl: stack.fetchImpl,
       logger: createTestLogger(),
@@ -212,6 +219,9 @@ describeIfDb('approval journey', () => {
       telegramMethod: result.method,
       mediaCount: claim.row!.approvalPayload!.items.length,
       messages: result.messages,
+      reviewedAt: new Date(),
+      // Ignored: a reviewed post already has its captions.
+      caption: 'not this',
     });
 
     // Publishing re-sends by file_id: exactly one call, straight to the channel,
@@ -221,6 +231,8 @@ describeIfDb('approval journey', () => {
     const finalRow = (await db.select().from(processedPosts).where(eq(processedPosts.id, row.id)))[0];
     expect(finalRow?.status).toBe('published');
     expect(finalRow?.approvalPayload).toBeNull();
+    expect(finalRow?.reviewedAt).toBeInstanceOf(Date);
+    expect(finalRow?.caption).toBe(row.caption);
     expect(await db.select().from(telegramMessages)).toHaveLength(2);
   });
 
@@ -251,8 +263,7 @@ describeIfDb('approval journey', () => {
     const row = (await db.select().from(processedPosts))[0]!;
     stack.sends.length = 0;
 
-    await claimForDecision(db, row.id);
-    await markRejected(db, row.id);
+    await rejectWithReason(db, { id: row.id, workspaceId: DEFAULT_WORKSPACE_ID, reason: 'other' });
 
     expect(stack.sends).toHaveLength(0);
 
@@ -308,6 +319,13 @@ describeIfDb('approval journey', () => {
     expect(summary.published).toBe(1);
     expect(summary.awaitingApproval).toBe(0);
     expect(stack.sends.every((send) => send.chatId === CHANNEL_CHAT)).toBe(true);
+
+    // No review, so no review time — but the text that went out is on record.
+    const row = (await db.select().from(processedPosts))[0]!;
+    expect(row.reviewedAt).toBeNull();
+    expect(row.originalCaption).toContain('Bear by the lake');
+    expect(row.caption).toBe(row.originalCaption);
+    expect(row.sourceText).toBe('Bear by the lake');
   });
 });
 
@@ -372,7 +390,7 @@ describeIfDb('editing the caption before approval', () => {
     // re-deriving them would mean downloading from X again.
     expect(after!.approvalPayload!.items.map((item) => item.fileId)).toEqual(fileIds);
     expect(after!.approvalPayload!.method).toBe('sendPhoto');
-    expect(after!.approvalPayload!.captionEditedAt).toBeTruthy();
+    expect(after!.captionEditedAt).toBeInstanceOf(Date);
   });
 
   it('records the preview message so the chat can be refreshed', async () => {
@@ -430,8 +448,7 @@ describeIfDb('editing the caption before approval', () => {
   it('refuses to edit a post that was rejected', async () => {
     const { row } = await queueOne();
 
-    await claimForDecision(db, row.id, DEFAULT_WORKSPACE_ID);
-    await markRejected(db, row.id);
+    await rejectWithReason(db, { id: row.id, workspaceId: DEFAULT_WORKSPACE_ID, reason: 'other' });
 
     const result = await updateApprovalCaption(db, {
       id: row.id,
@@ -465,5 +482,336 @@ describeIfDb('editing the caption before approval', () => {
     expect(
       await findPostAwaitingReview(db, { id: 987654, workspaceId: DEFAULT_WORKSPACE_ID }),
     ).toBeNull();
+  });
+});
+
+describeIfDb('original and current caption', () => {
+  async function queueOne() {
+    const stack = makeStack();
+    await runSync(stack, ['3_1']);
+    return (await db.select().from(processedPosts))[0]!;
+  }
+
+  async function reload(id: number) {
+    return (await db.select().from(processedPosts).where(eq(processedPosts.id, id)))[0]!;
+  }
+
+  const edit = (id: number, caption: string) =>
+    updateApprovalCaption(db, { id, workspaceId: DEFAULT_WORKSPACE_ID, caption });
+
+  it('starts a new review item with both captions equal to what was sent', async () => {
+    const row = await queueOne();
+
+    expect(row.originalCaption).toContain('Bear by the lake');
+    expect(row.originalCaption).toBe(row.approvalPayload!.caption);
+    expect(row.caption).toBe(row.originalCaption);
+    expect(row.captionEditedAt).toBeNull();
+  });
+
+  it('changes only the current caption on edit', async () => {
+    const row = await queueOne();
+    const original = row.originalCaption;
+
+    await edit(row.id, 'B');
+    const after = await reload(row.id);
+
+    expect(after.originalCaption).toBe(original);
+    expect(after.caption).toBe('B');
+    expect(after.captionEditedAt).toBeInstanceOf(Date);
+  });
+
+  it('keeps the first original through any number of edits', async () => {
+    const row = await queueOne();
+    const original = row.originalCaption;
+
+    await edit(row.id, 'B');
+    const first = (await reload(row.id)).captionEditedAt!;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await edit(row.id, 'C');
+    const after = await reload(row.id);
+
+    expect(after.originalCaption).toBe(original);
+    expect(after.caption).toBe('C');
+    // The time of the latest save, not the first.
+    expect(after.captionEditedAt!.getTime()).toBeGreaterThan(first.getTime());
+  });
+
+  it('keeps both captions after publishing drops the payload', async () => {
+    const row = await queueOne();
+    await edit(row.id, 'C');
+
+    await claimForDecision(db, row.id, DEFAULT_WORKSPACE_ID);
+    await markPublished(db, {
+      id: row.id,
+      telegramChatId: CHANNEL_CHAT,
+      primaryMessageId: 30,
+      telegramMethod: 'sendPhoto',
+      mediaCount: 1,
+      messages: [],
+    });
+    const after = await reload(row.id);
+
+    expect(after.approvalPayload).toBeNull();
+    expect(after.originalCaption).toBe(row.originalCaption);
+    expect(after.caption).toBe('C');
+  });
+
+  it('keeps both captions after a rejection', async () => {
+    const row = await queueOne();
+
+    await rejectWithReason(db, { id: row.id, workspaceId: DEFAULT_WORKSPACE_ID, reason: 'too_minor' });
+    const after = await reload(row.id);
+
+    expect(after.approvalPayload).toBeNull();
+    expect(after.originalCaption).toBe(row.originalCaption);
+    expect(after.caption).toBe(row.originalCaption);
+  });
+
+  it('stores an empty caption for a media-only post as an empty string, not null', async () => {
+    const row = await queueOne();
+    // Reset to a fresh queue entry whose caption is empty, as for a post with
+    // no text and the source link turned off.
+    await db
+      .update(processedPosts)
+      .set({ status: 'processing', originalCaption: null, caption: null, approvalPayload: null })
+      .where(eq(processedPosts.id, row.id));
+
+    await markAwaitingApproval(db, {
+      id: row.id,
+      payload: { method: 'sendPhoto', caption: '', items: [{ kind: 'photo', fileId: 'ONE' }] },
+      adminChatId: ADMIN_CHAT,
+      adminMessageId: 12,
+    });
+    const after = await reload(row.id);
+
+    expect(after.originalCaption).toBe('');
+    expect(after.caption).toBe('');
+  });
+
+  it('never overwrites the original if a post is queued for review again', async () => {
+    const row = await queueOne();
+    await edit(row.id, 'B');
+
+    await db.update(processedPosts).set({ status: 'processing' }).where(eq(processedPosts.id, row.id));
+    await markAwaitingApproval(db, {
+      id: row.id,
+      payload: { ...row.approvalPayload!, caption: 'a fresh render' },
+      adminChatId: ADMIN_CHAT,
+      adminMessageId: 13,
+    });
+    const after = await reload(row.id);
+
+    expect(after.originalCaption).toBe(row.originalCaption);
+    expect(after.caption).toBe('B');
+  });
+
+  /**
+   * A post queued by the previous deploy, after the migration ran but before
+   * the new code went live, has a payload and no caption columns. Each way out
+   * of review must still leave its text behind.
+   */
+  describe('a post queued before the caption columns existed', () => {
+    async function queueLegacy(caption = 'A') {
+      const row = await queueOne();
+      await db
+        .update(processedPosts)
+        .set({
+          originalCaption: null,
+          caption: null,
+          approvalPayload: { ...row.approvalPayload!, caption },
+        })
+        .where(eq(processedPosts.id, row.id));
+      return row.id;
+    }
+
+    it('keeps the old text as the original when edited', async () => {
+      const id = await queueLegacy('A');
+      await edit(id, 'B');
+      const after = await reload(id);
+
+      expect(after.originalCaption).toBe('A');
+      expect(after.caption).toBe('B');
+    });
+
+    it('keeps its text when published', async () => {
+      const id = await queueLegacy('A');
+      await claimForDecision(db, id, DEFAULT_WORKSPACE_ID);
+      await markPublished(db, {
+        id,
+        telegramChatId: CHANNEL_CHAT,
+        primaryMessageId: 30,
+        telegramMethod: 'sendPhoto',
+        mediaCount: 1,
+        messages: [],
+      });
+      const after = await reload(id);
+
+      expect(after.originalCaption).toBe('A');
+      expect(after.caption).toBe('A');
+    });
+
+    it('keeps its text when rejected', async () => {
+      const id = await queueLegacy('A');
+      await rejectWithReason(db, { id, workspaceId: DEFAULT_WORKSPACE_ID, reason: 'other' });
+      const after = await reload(id);
+
+      expect(after.originalCaption).toBe('A');
+      expect(after.caption).toBe('A');
+    });
+  });
+});
+
+describeIfDb('caption backfill migration', () => {
+  /** Runs the real migration file, so the test cannot drift from what ships. */
+  async function runBackfill() {
+    const folder = path.join(process.cwd(), 'src/db/migrations');
+    const file = readdirSync(folder).find((name) => name.endsWith('_backfill_review_captions.sql'));
+    expect(file).toBeDefined();
+    await sql.unsafe(readFileSync(path.join(folder, file!), 'utf8'));
+  }
+
+  async function insertLegacy(values: Partial<typeof processedPosts.$inferInsert>) {
+    const rows = await db
+      .insert(processedPosts)
+      .values({
+        xPostId: String(Math.floor(Math.random() * 1e12)),
+        xPostUrl: 'https://x.com/a/status/1',
+        status: 'awaiting_approval',
+        ...values,
+      })
+      .returning();
+    return rows[0]!.id;
+  }
+
+  const legacyPayload = (caption: string, extra?: Record<string, unknown>) =>
+    ({ method: 'sendPhoto', caption, items: [{ kind: 'photo', fileId: 'F' }], ...extra }) as never;
+
+  async function reload(id: number) {
+    return (await db.select().from(processedPosts).where(eq(processedPosts.id, id)))[0]!;
+  }
+
+  it('gives an existing caption to both columns', async () => {
+    const id = await insertLegacy({ approvalPayload: legacyPayload('A') });
+    await runBackfill();
+    const row = await reload(id);
+
+    expect(row.originalCaption).toBe('A');
+    expect(row.caption).toBe('A');
+    expect(row.captionEditedAt).toBeNull();
+  });
+
+  it('carries an earlier edit time across, marking an original it could not recover', async () => {
+    const id = await insertLegacy({
+      approvalPayload: legacyPayload('Edited', { captionEditedAt: '2026-09-30T10:00:00.000Z' }),
+    });
+    await runBackfill();
+    const row = await reload(id);
+
+    expect(row.originalCaption).toBe('Edited');
+    expect(row.caption).toBe('Edited');
+    expect(row.captionEditedAt?.toISOString()).toBe('2026-09-30T10:00:00.000Z');
+  });
+
+  it('keeps an empty media-only caption as an empty string', async () => {
+    const id = await insertLegacy({ approvalPayload: legacyPayload('') });
+    await runBackfill();
+    const row = await reload(id);
+
+    expect(row.originalCaption).toBe('');
+    expect(row.caption).toBe('');
+  });
+
+  it('leaves settled rows, whose payload is gone, untouched', async () => {
+    const id = await insertLegacy({ status: 'published', approvalPayload: null });
+    await runBackfill();
+    const row = await reload(id);
+
+    expect(row.originalCaption).toBeNull();
+    expect(row.caption).toBeNull();
+  });
+
+  it('is safe to run twice and never overwrites a recorded original', async () => {
+    const id = await insertLegacy({ approvalPayload: legacyPayload('A') });
+    await runBackfill();
+    await db
+      .update(processedPosts)
+      .set({ caption: 'B', approvalPayload: legacyPayload('B') })
+      .where(eq(processedPosts.id, id));
+    await runBackfill();
+    const row = await reload(id);
+
+    expect(row.originalCaption).toBe('A');
+    expect(row.caption).toBe('B');
+  });
+});
+
+describeIfDb('source text', () => {
+  it('records and captions the whole text of a long-form post, not the 280-character cut', async () => {
+    const full = `${'A long thought. '.repeat(30)}The end.`;
+    const payload = timelinePayload(['3_1']) as ReturnType<typeof timelinePayload> & {
+      data: Record<string, unknown>[];
+    };
+    payload.data[0]!.text = 'A long thought. A long thought…';
+    payload.data[0]!.note_tweet = { text: full };
+
+    await runSync(makeStack(), ['3_1'], payload);
+    const row = (await db.select().from(processedPosts))[0]!;
+
+    expect(row.sourceText).toBe(full.trim());
+    expect(row.sourceText!.length).toBeGreaterThan(280);
+    expect(row.caption).toContain(full.trim());
+    expect(row.caption).not.toContain('A long thought…');
+  });
+
+  /**
+   * A long-form post past the caption limit goes out as media with a
+   * shortened caption, followed by the whole text as its own message.
+   */
+  it('publishes a long-form post past the caption limit as caption plus the full text', async () => {
+    const full = `${'Sentence number something. '.repeat(60)}The very end.`;
+    const payload = timelinePayload(['3_1']) as ReturnType<typeof timelinePayload> & {
+      data: Record<string, unknown>[];
+    };
+    payload.data[0]!.text = 'Sentence number something…';
+    payload.data[0]!.note_tweet = { text: full };
+
+    const review = makeStack();
+    await runSync(review, ['3_1'], payload);
+    const row = (await db.select().from(processedPosts))[0]!;
+    expect(row.caption!.length).toBeLessThanOrEqual(1024);
+    expect(row.approvalPayload!.overflowMessage).toContain('The very end.');
+    // The reviewer sees the follow-up too, before deciding.
+    expect(review.sends).toEqual([
+      { method: 'sendPhoto', chatId: ADMIN_CHAT },
+      { method: 'sendMessage', chatId: ADMIN_CHAT },
+      { method: 'sendMessage', chatId: ADMIN_CHAT },
+    ]);
+    expect(row.approvalPayload!.adminOverflowMessageId).toBeDefined();
+
+    const channel = makeStack();
+    const texts: string[] = [];
+    const claim = await claimForDecision(db, row.id, DEFAULT_WORKSPACE_ID);
+    await publishApprovedPayload(
+      { client: channel.client, chatId: CHANNEL_CHAT, disableNotification: false },
+      claim.row!.approvalPayload!,
+      { logger: createTestLogger(), sleep: instantSleep },
+    );
+    for (const call of (channel.fetchImpl as unknown as { mock: { calls: unknown[][] } }).mock.calls) {
+      const body = (call[1] as RequestInit | undefined)?.body;
+      if (typeof body === 'string') texts.push(String((JSON.parse(body) as { text?: string }).text ?? ''));
+    }
+
+    expect(channel.sends.map((send) => send.method)).toEqual(['sendPhoto', 'sendMessage']);
+    expect(texts.some((text) => text.includes('The very end.'))).toBe(true);
+  });
+
+  it('keeps the source text after the post is rejected', async () => {
+    await runSync(makeStack(), ['3_1']);
+    const row = (await db.select().from(processedPosts))[0]!;
+
+    await rejectWithReason(db, { id: row.id, workspaceId: DEFAULT_WORKSPACE_ID, reason: 'weak_source' });
+    const after = (await db.select().from(processedPosts).where(eq(processedPosts.id, row.id)))[0]!;
+
+    expect(after.sourceText).toBe('Bear by the lake');
   });
 });

@@ -193,3 +193,37 @@ describe('getUserByUsername', () => {
     );
   });
 });
+
+describe('requested fields', () => {
+  it('asks for note_tweet, without which a long post arrives cut at 280 characters', async () => {
+    const fetchImpl = vi.fn(async () => json({ meta: { result_count: 0 } }));
+    await makeClient(fetchImpl as unknown as typeof fetch).getUserTimeline({
+      userId: '999',
+      maxResults: 5,
+      excludeReplies: true,
+      excludeReposts: true,
+    });
+
+    const url = new URL(String((fetchImpl.mock.calls[0] as unknown[])[0]));
+    expect(url.searchParams.get('tweet.fields')?.split(',')).toContain('note_tweet');
+  });
+
+  it('parses a long-form post with its note_tweet', () => {
+    const parsed = xTimelineResponseSchema.safeParse({
+      data: [
+        {
+          id: '1',
+          text: 'The first 280 characters…',
+          note_tweet: {
+            text: 'The whole long post.',
+            entities: { urls: [{ start: 0, end: 1, url: 'https://t.co/x' }] },
+          },
+        },
+      ],
+      meta: { result_count: 1 },
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data!.data![0]!.note_tweet?.text).toBe('The whole long post.');
+  });
+});

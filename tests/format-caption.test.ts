@@ -159,6 +159,33 @@ describe('formatCaption', () => {
     expect(result.overflowMessage!.length).toBeLessThanOrEqual(TELEGRAM_MESSAGE_TEXT_LIMIT);
   });
 
+  it('carries the whole text in the overflow message when it fits one', () => {
+    const long = 'word '.repeat(400).trim();
+    const result = formatCaption({ ...base, text: long });
+
+    expect(result.overflowMessage).toBe(
+      `${long}\n\nSource: https://x.com/someaccount/status/1234567890123456789`,
+    );
+  });
+
+  /**
+   * A long-form X post can run past even a text message's limit. The overflow
+   * is then shortened like the caption: the prose gives way, the framing stays.
+   */
+  it('keeps the source link and suffix on an overflow longer than a message may be', () => {
+    const result = formatCaption({
+      ...base,
+      text: 'word '.repeat(2000).trim(),
+      suffix: 'підпишись @wilds_cam',
+    });
+
+    const overflow = result.overflowMessage!;
+    expect(overflow.length).toBeLessThanOrEqual(TELEGRAM_MESSAGE_TEXT_LIMIT);
+    expect(overflow).toContain('word…');
+    expect(overflow).toContain('Source: https://x.com/someaccount/status/1234567890123456789');
+    expect(overflow.endsWith('підпишись @wilds_cam')).toBe(true);
+  });
+
   it('keeps a call-to-action suffix on a long post', () => {
     // The suffix is operator-configured framing, not prose: losing it on long
     // posts would silently defeat the reason it was set.

@@ -3,13 +3,20 @@ import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { eq } from 'drizzle-orm';
 import postgres from 'postgres';
 import * as schema from '@/db/schema';
-import { processedPosts, sources, syncState, telegramMessages, workspaces } from '@/db/schema';
+import {
+  DEFAULT_WORKSPACE_ID,
+  processedPosts,
+  sources,
+  syncState,
+  telegramMessages,
+  workspaces,
+} from '@/db/schema';
 import {
   claimForDecision,
   claimPost,
   findTerminalPostIds,
   markAwaitingApproval,
-  markRejected,
+  rejectWithReason,
   releaseToApproval,
   getStatusCounts,
   getSyncState,
@@ -96,6 +103,37 @@ describeIfDb('duplicate protection', () => {
     const again = await claimPost(db, basePost);
     expect(again.claimed).toBe(false);
     expect(again.reason).toBe('already-published');
+  });
+
+  it('records the source text when it first sees a post, and never rewrites it', async () => {
+    const first = await claimPost(db, { ...basePost, sourceText: 'As first seen' });
+    expect(first.row?.sourceText).toBe('As first seen');
+
+    // A retry after a failure claims the same row again.
+    await markFailed(db, {
+      id: first.row!.id,
+      errorMessage: 'Telegram 503',
+      permanent: false,
+      maxRetryAttempts: 5,
+    });
+    const retry = await claimPost(db, { ...basePost, sourceText: 'Something else' });
+
+    expect(retry.claimed).toBe(true);
+    expect(retry.row?.sourceText).toBe('As first seen');
+  });
+
+  it('fills in the source text of a row first seen before the column existed', async () => {
+    const first = await claimPost(db, basePost);
+    expect(first.row?.sourceText).toBeNull();
+    await markFailed(db, {
+      id: first.row!.id,
+      errorMessage: 'Telegram 503',
+      permanent: false,
+      maxRetryAttempts: 5,
+    });
+
+    const retry = await claimPost(db, { ...basePost, sourceText: 'Now known' });
+    expect(retry.row?.sourceText).toBe('Now known');
   });
 
   it('enforces uniqueness of x_post_id per workspace at the database level', async () => {
@@ -454,8 +492,7 @@ describeIfDb('approval workflow', () => {
 
   it('records a rejection and never publishes it', async () => {
     const id = await parkForReview();
-    await claimForDecision(db, id);
-    await markRejected(db, id);
+    await rejectWithReason(db, { id, workspaceId: DEFAULT_WORKSPACE_ID, reason: 'other' });
 
     const row = (await db.select().from(processedPosts).where(eq(processedPosts.id, id)))[0];
     expect(row?.status).toBe('rejected');
@@ -465,8 +502,7 @@ describeIfDb('approval workflow', () => {
 
   it('never re-syncs a rejected post', async () => {
     const id = await parkForReview();
-    await claimForDecision(db, id);
-    await markRejected(db, id);
+    await rejectWithReason(db, { id, workspaceId: DEFAULT_WORKSPACE_ID, reason: 'other' });
 
     const again = await claimPost(db, basePost);
     expect(again.claimed).toBe(false);

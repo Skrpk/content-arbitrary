@@ -669,8 +669,30 @@ the channel only sees it once you press Approve.
 ```
 X ──► cron ──► your private chat  ──[Approve]──►  channel
                       │
-                      └──[Reject]──►  recorded, never published
+                      └──[Reject]──► pick a reason ──►  recorded, never published
 ```
+
+Reject does not settle the post by itself: it swaps the buttons for a short list of reasons —
+*Not interesting*, *Off-topic*, *Already covered*, *Too minor*, *Weak source*, *Other* — and the
+post is rejected when you pick one. **↩️ Back** returns to Approve / Reject if Reject was a
+misclick. The reason is stored in `processed_posts.rejection_reason` under a stable value
+(`not_interesting`, `wrong_topic`, `already_covered`, `too_minor`, `weak_source`, `other`);
+the button wording may change, those values do not.
+
+With `APP_BASE_URL` set, **••• Other** opens a small Mini App where you can say why in your own
+words; the post is rejected when you press Reject there, and the text is kept in
+`rejection_note`. Closing it without pressing Reject changes nothing. Without `APP_BASE_URL`,
+Other rejects straight away like the other reasons.
+
+What is recorded for every post, for later analysis:
+
+| Column | Holds |
+|---|---|
+| `source_text` | The author's whole text as X gave it — the full text of a long-form post, links resolved, plain text, before any prefix, suffix, source link or truncation. Written when the post is first seen, whatever happens to it next. |
+| `original_caption` / `caption` | The caption first sent for review, and the one published (they differ only after an edit). For a post published with no review, both hold what went out. |
+| `caption_edited_at` | When the caption was last saved in the editor. |
+| `reviewed_at` | When you pressed Approve or chose a reject reason; empty for posts published with no review. |
+| `rejection_reason` / `rejection_note` | Why it was rejected, and your own words for Other. |
 
 ### How it works
 
@@ -744,7 +766,11 @@ What editing does and does not touch:
   untruncated text is **dropped** on edit: a hand-written caption replaces the original rather
   than summarising it. The editor says so when that applies;
 - a post that has already been published or rejected cannot be edited. Approve and Edit race
-  safely — whichever lands first wins, and the other is refused.
+  safely — whichever lands first wins, and the other is refused;
+- the text first sent for review is kept in `original_caption` and never changes, however many
+  times you edit; `caption` holds the current text and is what gets published, and
+  `caption_edited_at` the time of the last save. Both survive the decision, so what was
+  published can always be compared with what came in.
 
 Setup is one variable:
 
@@ -826,6 +852,16 @@ These are read from the official documentation and live in
 | Upload via multipart | 10 MB photo / 50 MB other |
 | Upload via URL | 5 MB photo / 20 MB other |
 | Photo dimensions | width + height ≤ 10000, ratio ≤ 20 |
+
+**Long posts.** The text comes from X's `note_tweet` field where there is one, so a long-form
+post (over 280 characters) is mirrored whole rather than as X's 280-character cut. A text that
+does not fit the 1024-character caption goes out as media with a shortened caption, followed
+by the whole text as its own message. A text longer than even that message may be (4096) is
+shortened there too, with an ellipsis; in both, only the author's text is cut — `CAPTION_PREFIX`,
+the source link and `CAPTION_SUFFIX` are always kept. With approval on, the reviewer's preview
+shows that follow-up message too, exactly as it will be sent, between the media and the
+buttons. Editing the caption drops the follow-up, and its preview is then marked as not to be
+published.
 
 ---
 

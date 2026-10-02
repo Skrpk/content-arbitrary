@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
@@ -15,7 +15,7 @@ import {
 } from '@/db/schema';
 import { GET, POST } from '@/app/api/telegram/webapp/caption/route';
 import { TELEGRAM_CAPTION_LIMIT } from '@/lib/telegram/limits';
-import { withEnv, ensureTestWorkspace } from './helpers';
+import { withEnv, ensureTestWorkspace, telegramOk } from './helpers';
 
 /**
  * The Mini App endpoint end to end: a signed request, a tenant lookup and a
@@ -238,7 +238,8 @@ describeIfDb('POST /api/telegram/webapp/caption', () => {
     expect(row.approvalPayload!.caption).toBe(
       'Rewritten &lt;b&gt;by hand&lt;/b&gt; &amp; proud',
     );
-    expect(row.approvalPayload!.captionEditedAt).toBeTruthy();
+    expect(row.caption).toBe(row.approvalPayload!.caption);
+    expect(row.captionEditedAt).toBeInstanceOf(Date);
   });
 
   it('round-trips what it saved', async () => {
@@ -375,5 +376,44 @@ describeIfDb('POST /api/telegram/webapp/caption', () => {
     );
 
     expect(response.status).toBe(401);
+  });
+});
+
+describeIfDb('the full-text preview of a long post', () => {
+  it('is marked as not to be published once an edit replaces it', async () => {
+    const post = await insertAwaitingPost({ overflowMessage: 'The whole long text.' });
+    await db
+      .update(processedPosts)
+      .set({ approvalPayload: { ...post.approvalPayload!, adminOverflowMessageId: 31 } })
+      .where(eq(processedPosts.id, post.id));
+
+    const calls: { method: string; body: Record<string, unknown> }[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown, init?: RequestInit) => {
+        calls.push({
+          method: String(input).split('/').pop()!,
+          body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+        });
+        return telegramOk(true);
+      }),
+    );
+
+    try {
+      const response = await withEnv(routeEnv, () =>
+        POST(postRequest({ postId: post.id, caption: 'Mine' }, `tma ${initDataFor(REVIEWER_ID)}`)),
+      );
+      expect(response.status).toBe(200);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    const edit = calls.find((call) => call.method === 'editMessageText');
+    expect(edit?.body.message_id).toBe(31);
+    expect(edit?.body.text).toContain('will not be published');
+
+    const row = (await db.select().from(processedPosts).where(eq(processedPosts.id, post.id)))[0]!;
+    expect(row.approvalPayload!.overflowMessage).toBeUndefined();
+    expect(row.approvalPayload!.adminOverflowMessageId).toBeUndefined();
   });
 });

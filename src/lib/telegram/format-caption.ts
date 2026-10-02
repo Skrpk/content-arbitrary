@@ -128,7 +128,8 @@ export function truncateForDisplay(text: string, limit: number): string {
  * If the full text fits within Telegram's 1024-character caption limit it is
  * used as-is. If it does not, the media carries a shortened caption and the
  * complete text is returned as `overflowMessage` to be sent immediately after,
- * so nothing the author wrote is lost.
+ * so nothing the author wrote is lost — unless it is longer than even a text
+ * message may be, in which case that too is shortened the same way.
  */
 export function formatCaption(options: CaptionOptions): CaptionResult {
   const plain = composePlainText(options);
@@ -136,6 +137,19 @@ export function formatCaption(options: CaptionOptions): CaptionResult {
   if (plain.length <= TELEGRAM_CAPTION_LIMIT) {
     return { caption: escapeHtml(plain), truncated: false };
   }
+
+  return {
+    caption: escapeHtml(fitToLimit(options, plain, TELEGRAM_CAPTION_LIMIT)),
+    overflowMessage: escapeHtml(fitToLimit(options, plain, TELEGRAM_MESSAGE_TEXT_LIMIT)),
+    truncated: true,
+  };
+}
+
+/**
+ * The composed text, shortened to `limit` if it must be.
+ */
+function fitToLimit(options: CaptionOptions, plain: string, limit: number): string {
+  if (plain.length <= limit) return plain;
 
   /**
    * Only the author's prose is shortened. The prefix, suffix and source line
@@ -156,20 +170,13 @@ export function formatCaption(options: CaptionOptions): CaptionResult {
     0,
   );
 
-  const shortText = truncateForDisplay(
-    options.text.trim(),
-    Math.max(0, TELEGRAM_CAPTION_LIMIT - reserved),
-  );
+  const shortText = truncateForDisplay(options.text.trim(), Math.max(0, limit - reserved));
 
-  const captionPlain = [prefix, shortText, sourceLine, suffix]
+  const shortened = [prefix, shortText, sourceLine, suffix]
     .filter((part) => part !== '')
     .join(separator);
 
-  return {
-    caption: escapeHtml(truncateToLength(captionPlain, TELEGRAM_CAPTION_LIMIT)),
-    overflowMessage: escapeHtml(truncateToLength(plain, TELEGRAM_MESSAGE_TEXT_LIMIT)),
-    truncated: true,
-  };
+  return truncateToLength(shortened, limit);
 }
 
 /** Format a standalone text message, clamped to the 4096-character limit. */

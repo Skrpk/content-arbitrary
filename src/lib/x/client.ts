@@ -30,7 +30,17 @@ export interface TimelineQuery {
 }
 
 /** Fields we request. Requesting less is cheaper and faster. */
-const POST_FIELDS = ['id', 'text', 'created_at', 'attachments', 'entities', 'referenced_tweets', 'author_id'];
+const POST_FIELDS = [
+  'id',
+  'text',
+  'created_at',
+  'attachments',
+  'entities',
+  'referenced_tweets',
+  'author_id',
+  // Without it a long-form post arrives cut at 280 characters.
+  'note_tweet',
+];
 const MEDIA_FIELDS = ['media_key', 'type', 'url', 'preview_image_url', 'width', 'height', 'duration_ms', 'variants', 'alt_text'];
 const EXPANSIONS = ['attachments.media_keys', 'author_id'];
 

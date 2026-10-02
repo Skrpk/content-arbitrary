@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { getEnv } from '@/lib/env';
 import { TelegramApiError } from '@/lib/errors';
 import type { Logger } from '@/lib/logger';
+import type { InlineKeyboardMarkup } from '@/lib/telegram/send-media';
 import { withRetry } from '@/lib/sync/retry';
 
 /**
@@ -276,11 +277,18 @@ export class TelegramClient {
     );
   }
 
-  /** Strips the buttons off a reviewed message so it cannot be actioned twice. */
-  editMessageReplyMarkup(chatId: string, messageId: number) {
+  /**
+   * Replaces a message's buttons — by default with none, which strips them off
+   * a reviewed message so it cannot be actioned twice.
+   */
+  editMessageReplyMarkup(
+    chatId: string,
+    messageId: number,
+    replyMarkup: InlineKeyboardMarkup = { inline_keyboard: [] },
+  ) {
     return this.call(
       'editMessageReplyMarkup',
-      { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } },
+      { chat_id: chatId, message_id: messageId, reply_markup: replyMarkup },
       z.union([telegramMessageSchema, z.boolean()]),
     );
   }

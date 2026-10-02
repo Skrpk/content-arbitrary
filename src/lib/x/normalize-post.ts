@@ -190,7 +190,11 @@ export function normalizePost(
       url: `https://x.com/${authorUsername}/status/${post.id}`,
       authorUsername,
       createdAt: post.created_at ? new Date(post.created_at) : null,
-      text: cleanPostText(post.text, post.entities?.urls ?? []),
+      // A long-form post's `text` is X's 280-character cut; the whole text is
+      // in `note_tweet`, with entities of its own.
+      text: post.note_tweet
+        ? cleanPostText(post.note_tweet.text, post.note_tweet.entities?.urls ?? [])
+        : cleanPostText(post.text, post.entities?.urls ?? []),
       media,
       isReply:
         referenced.some((reference) => reference.type === 'replied_to') ||

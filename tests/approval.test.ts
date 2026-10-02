@@ -3,13 +3,17 @@ import {
   buildApprovalKeyboard,
   buildEditUrl,
   buildCallbackData,
+  buildRejectReasonCallbackData,
+  buildRejectNoteUrl,
+  buildRejectReasonKeyboard,
+  formatRejectionNotice,
   parseCallbackData,
   publishApprovedPayload,
   sendForApproval,
 } from '@/lib/sync/approval';
 import { TelegramClient, mediaFileIdOf, telegramMessageSchema } from '@/lib/telegram/client';
 import type { MediaPayload, SendContext } from '@/lib/telegram/send-media';
-import type { ApprovalPayload } from '@/db/schema';
+import { REJECTION_REASONS, type ApprovalPayload } from '@/db/schema';
 import type { NormalizedMedia } from '@/types';
 import { createTestLogger, instantSleep, telegramOk } from './helpers';
 
@@ -160,6 +164,98 @@ describe('callback data', () => {
   });
 });
 
+describe('rejection reasons', () => {
+  /**
+   * These strings are stored and will be grouped on. A rename would split one
+   * reason's history in two, so this list changing should be a deliberate act.
+   */
+  it('keeps the stored values stable', () => {
+    expect(REJECTION_REASONS).toEqual([
+      'not_interesting',
+      'wrong_topic',
+      'already_covered',
+      'too_minor',
+      'weak_source',
+      'other',
+    ]);
+  });
+
+  it.each(REJECTION_REASONS)('round-trips the %s reason', (reason) => {
+    const data = buildRejectReasonCallbackData(4321, reason);
+    expect(Buffer.byteLength(data, 'utf8')).toBeLessThanOrEqual(64);
+    expect(parseCallbackData(data)).toEqual({ action: 'reject_reason', postId: 4321, reason });
+  });
+
+  it('round-trips Back', () => {
+    expect(parseCallbackData(buildCallbackData('reject_back', 7))).toEqual({
+      action: 'reject_back',
+      postId: 7,
+    });
+  });
+
+  it.each([
+    ['rr:12:bogus', 'unknown reason'],
+    ['rr:12:', 'empty reason'],
+    ['rr:12', 'no reason at all'],
+    ['rr:12:Already_Covered', 'wrong case'],
+    ['rr:0:other', 'zero id'],
+    ['ap:12:other', 'a reason on Approve'],
+    ['rj:12:other', 'a reason on the Reject that only opens the list'],
+  ])('refuses %s (%s)', (data) => {
+    expect(parseCallbackData(data)).toBeNull();
+  });
+
+  it('offers every reason once, plus a way back', () => {
+    const keyboard = buildRejectReasonKeyboard(99);
+    const buttons = keyboard.inline_keyboard.flat();
+    const data = buttons.map((button) => ('callback_data' in button ? button.callback_data : null));
+
+    expect(data).toEqual([
+      ...REJECTION_REASONS.map((reason) => `rr:99:${reason}`),
+      'rb:99',
+    ]);
+    // Nothing on this keyboard settles the post except a reason.
+    expect(data).not.toContain('ap:99');
+  });
+
+  it('makes Other open the Mini App when there is one, and leaves the rest as buttons', () => {
+    const otherUrl = buildRejectNoteUrl('https://example.vercel.app/', 99);
+    expect(otherUrl).toBe('https://example.vercel.app/review/reject?post=99');
+
+    const buttons = buildRejectReasonKeyboard(99, { otherUrl }).inline_keyboard.flat();
+    const other = buttons.find((button) => button.text === '••• Other');
+
+    expect(other).toEqual({ text: '••• Other', web_app: { url: otherUrl } });
+    expect(buttons.filter((button) => 'web_app' in button)).toHaveLength(1);
+    expect(buttons).toContainEqual({ text: '♻️ Already covered', callback_data: 'rr:99:already_covered' });
+  });
+
+  it('shows the reviewer\'s own words in the notice, escaped', () => {
+    const notice = formatRejectionNotice({
+      reason: 'other',
+      note: '  <b>old</b> & stale  ',
+      xPostUrl: 'https://x.com/a/status/1',
+    });
+
+    expect(notice).toBe(
+      '🚫 Rejected\nReason: ••• Other\n“&lt;b&gt;old&lt;/b&gt; &amp; stale”\nhttps://x.com/a/status/1',
+    );
+    expect(formatRejectionNotice({ reason: 'too_minor', xPostUrl: 'u' })).toBe(
+      '🚫 Rejected\nReason: 🤏 Too minor\nu',
+    );
+  });
+
+  it('keeps every button within the callback_data limit for the largest id', () => {
+    const buttons = buildRejectReasonKeyboard(999_999_999_999).inline_keyboard.flat();
+    for (const button of buttons) {
+      expect('callback_data' in button).toBe(true);
+      if ('callback_data' in button) {
+        expect(Buffer.byteLength(button.callback_data, 'utf8')).toBeLessThanOrEqual(64);
+      }
+    }
+  });
+});
+
 describe('mediaFileIdOf', () => {
   it('takes the largest photo rendition', () => {
     const message = telegramMessageSchema.parse({
@@ -220,6 +316,83 @@ describe('sendForApproval', () => {
     const markup = calls[1]!.body.reply_markup as { inline_keyboard: unknown[][] };
     expect(markup.inline_keyboard[0]).toHaveLength(2);
     expect(calls[1]!.body.text).toContain('Source: @karpathy');
+  });
+
+  it('previews the full-text follow-up of a long post, between the media and the buttons', async () => {
+    const { fetchImpl, calls } = telegramRecorder((method, call) =>
+      method === 'sendPhoto'
+        ? { message_id: 30, chat: { id: 555001 }, photo: [{ file_id: 'LARGE', file_size: 900 }] }
+        : { message_id: 40 + call, chat: { id: 555001 } },
+    );
+
+    const result = await sendForApproval(
+      makeContext(fetchImpl),
+      {
+        postId: 42,
+        xPostUrl: 'https://x.com/a/status/1',
+        sourceUsername: 'karpathy',
+        method: 'sendPhoto',
+        caption: 'Short version…',
+        overflowMessage: 'The whole long text &amp; more.',
+        payloads: [urlPayload(photo)],
+      },
+      { logger: createTestLogger(), sleep: instantSleep },
+    );
+
+    expect(calls.map((c) => c.method)).toEqual(['sendPhoto', 'sendMessage', 'sendMessage']);
+
+    // Exactly what the channel will receive as the second message, under the media.
+    const overflow = calls[1]!.body;
+    expect(overflow.text).toBe('The whole long text &amp; more.');
+    expect(overflow.reply_markup).toBeUndefined();
+    expect(overflow.reply_parameters).toMatchObject({ message_id: 30 });
+
+    // The buttons stay on the last message, which is what a decision edits.
+    expect(calls[2]!.body.reply_markup).toBeDefined();
+    expect(result.adminMessageId).toBe(43);
+    expect(result.payload.adminOverflowMessageId).toBe(42);
+    expect(result.payload.overflowMessage).toBe('The whole long text &amp; more.');
+  });
+
+  it('still queues the post for review when the full-text preview fails', async () => {
+    const methods: string[] = [];
+    const fetchImpl = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const method = String(input).split('/').pop()!;
+      const body = JSON.parse(String(init?.body ?? '{}')) as { reply_markup?: unknown };
+      methods.push(method);
+      if (method === 'sendPhoto') {
+        return telegramOk({ message_id: 30, chat: { id: 1 }, photo: [{ file_id: 'LARGE', file_size: 9 }] });
+      }
+      if (!body.reply_markup) {
+        return new Response(
+          JSON.stringify({ ok: false, error_code: 400, description: 'Bad Request: message is too long' }),
+          { status: 400, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return telegramOk({ message_id: 40, chat: { id: 1 } });
+    });
+    const logger = createTestLogger();
+
+    const result = await sendForApproval(
+      makeContext(fetchImpl as unknown as typeof fetch),
+      {
+        postId: 42,
+        xPostUrl: 'https://x.com/a/status/1',
+        sourceUsername: 'karpathy',
+        method: 'sendPhoto',
+        caption: 'Short…',
+        overflowMessage: 'Long',
+        payloads: [urlPayload(photo)],
+      },
+      { logger, sleep: instantSleep },
+    );
+
+    expect(methods).toEqual(['sendPhoto', 'sendMessage', 'sendMessage']);
+    expect(result.adminMessageId).toBe(40);
+    expect(result.payload.adminOverflowMessageId).toBeUndefined();
+    // The follow-up itself is still published on Approve.
+    expect(result.payload.overflowMessage).toBe('Long');
+    expect(logger.entries.some((entry) => entry.event === 'approval.overflow_preview_failed')).toBe(true);
   });
 
   it('captures a video file_id', async () => {

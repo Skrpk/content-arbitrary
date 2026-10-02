@@ -1,7 +1,13 @@
-import type { ApprovalMediaItem, ApprovalPayload } from '@/db/schema';
+import {
+  isRejectionReason,
+  REJECTION_REASONS,
+  type ApprovalMediaItem,
+  type ApprovalPayload,
+  type RejectionReason,
+} from '@/db/schema';
 import type { Logger } from '@/lib/logger';
-import { mediaFileIdOf, type TelegramMessage } from '@/lib/telegram/client';
-import { formatMessageText } from '@/lib/telegram/format-caption';
+import { mediaFileIdOf, type TelegramClient, type TelegramMessage } from '@/lib/telegram/client';
+import { escapeHtml, formatMessageText, TELEGRAM_PARSE_MODE } from '@/lib/telegram/format-caption';
 import { TELEGRAM_MIN_DELAY_BETWEEN_SENDS_MS } from '@/lib/telegram/limits';
 import {
   sendMediaGroup,
@@ -28,25 +34,73 @@ import type { TelegramMethod } from '@/types';
  * X media URLs may have rotated by then.
  */
 
-export type ApprovalAction = 'approve' | 'reject';
+/**
+ * What a button press asks for.
+ *
+ * Reject does not settle anything: it only swaps the buttons for the list of
+ * reasons, and the post is rejected when one of those is chosen. `reject_back`
+ * undoes a mis-tapped Reject by bringing the original buttons back.
+ */
+export type ApprovalAction = 'approve' | 'reject' | 'reject_back';
+
+export type ApprovalCallback =
+  | { action: ApprovalAction; postId: number }
+  | { action: 'reject_reason'; postId: number; reason: RejectionReason };
+
+const ACTION_CODES: Record<ApprovalAction, string> = {
+  approve: 'ap',
+  reject: 'rj',
+  reject_back: 'rb',
+};
+
+const ACTIONS_BY_CODE = Object.fromEntries(
+  Object.entries(ACTION_CODES).map(([action, code]) => [code, action]),
+) as Record<string, ApprovalAction>;
+
+/** Button labels. The stored value is the key; the wording may change freely. */
+export const REJECTION_REASON_LABELS: Record<RejectionReason, string> = {
+  not_interesting: '😴 Not interesting',
+  wrong_topic: '🎯 Off-topic',
+  already_covered: '♻️ Already covered',
+  too_minor: '🤏 Too minor',
+  weak_source: '📰 Weak source',
+  other: '••• Other',
+};
+
+/** Long enough for a sentence or two of why, short enough to stay a reason. */
+export const REJECTION_NOTE_MAX_LENGTH = 500;
 
 /** Telegram caps callback_data at 64 bytes, so keep it to a verb and an id. */
 export function buildCallbackData(action: ApprovalAction, postId: number): string {
-  return `${action === 'approve' ? 'ap' : 'rj'}:${postId}`;
+  return `${ACTION_CODES[action]}:${postId}`;
 }
 
-export function parseCallbackData(
-  data: string | undefined,
-): { action: ApprovalAction; postId: number } | null {
+/** The longest, `rr:<12 digits>:already_covered`, is 31 bytes. */
+export function buildRejectReasonCallbackData(postId: number, reason: RejectionReason): string {
+  return `rr:${postId}:${reason}`;
+}
+
+export function parseCallbackData(data: string | undefined): ApprovalCallback | null {
   if (!data) return null;
 
-  const match = /^(ap|rj):(\d{1,12})$/.exec(data.trim());
+  const match = /^(ap|rj|rb|rr):(\d{1,12})(?::([a-z_]{1,32}))?$/.exec(data.trim());
   if (!match) return null;
 
   const postId = Number(match[2]);
   if (!Number.isSafeInteger(postId) || postId <= 0) return null;
 
-  return { action: match[1] === 'ap' ? 'approve' : 'reject', postId };
+  const [, code, , reason] = match;
+
+  // A reason travels only with `rr`, and only one we know: anything else is
+  // refused here, before it can reach the database.
+  if (code === 'rr') {
+    return reason && isRejectionReason(reason)
+      ? { action: 'reject_reason', postId, reason }
+      : null;
+  }
+  if (reason !== undefined) return null;
+
+  return { action: ACTIONS_BY_CODE[code!]!, postId };
 }
 
 /**
@@ -59,6 +113,11 @@ export function parseCallbackData(
  */
 export function buildEditUrl(baseUrl: string, postId: number): string {
   return `${baseUrl.replace(/\/+$/, '')}/review?post=${postId}`;
+}
+
+/** Mini App where the reviewer writes their own reason, for "Other". */
+export function buildRejectNoteUrl(baseUrl: string, postId: number): string {
+  return `${baseUrl.replace(/\/+$/, '')}/review/reject?post=${postId}`;
 }
 
 export function buildApprovalKeyboard(
@@ -77,6 +136,66 @@ export function buildApprovalKeyboard(
       ? [decide, [{ text: '✏️ Edit text', web_app: { url: options.editUrl } }]]
       : [decide],
   };
+}
+
+/**
+ * Shown in place of the review buttons once Reject is pressed.
+ *
+ * With a Mini App available, "Other" opens it so the reviewer can say why in
+ * their own words; without one it rejects straight away like the rest.
+ */
+export function buildRejectReasonKeyboard(
+  postId: number,
+  options?: { otherUrl?: string },
+): InlineKeyboardMarkup {
+  const reasons: InlineKeyboardMarkup['inline_keyboard'][number] = REJECTION_REASONS.map(
+    (reason) =>
+      reason === 'other' && options?.otherUrl
+        ? { text: REJECTION_REASON_LABELS[reason], web_app: { url: options.otherUrl } }
+        : {
+            text: REJECTION_REASON_LABELS[reason],
+            callback_data: buildRejectReasonCallbackData(postId, reason),
+          },
+  );
+
+  const rows: InlineKeyboardMarkup['inline_keyboard'] = [];
+  for (let index = 0; index < reasons.length; index += 2) {
+    rows.push(reasons.slice(index, index + 2));
+  }
+  rows.push([{ text: '↩️ Back', callback_data: buildCallbackData('reject_back', postId) }]);
+
+  return { inline_keyboard: rows };
+}
+
+/** The note left in place of the review buttons once a post is rejected. */
+export function formatRejectionNotice(input: {
+  reason: RejectionReason;
+  note?: string | null;
+  xPostUrl: string;
+}): string {
+  const note = input.note?.trim();
+  return [
+    '🚫 Rejected',
+    `Reason: ${REJECTION_REASON_LABELS[input.reason]}`,
+    // The reviewer's own text is plain; it must not be read as markup.
+    ...(note ? [`“${escapeHtml(note)}”`] : []),
+    escapeHtml(input.xPostUrl),
+  ].join('\n');
+}
+
+/** Replace the review buttons with a note of the decision. */
+export async function settleReviewMessage(
+  client: TelegramClient,
+  chatId: string | null | undefined,
+  messageId: number | null | undefined,
+  note: string,
+): Promise<void> {
+  if (!chatId || !messageId) return;
+  await client
+    .editMessageText(chatId, messageId, note, TELEGRAM_PARSE_MODE)
+    // Whatever the message turns out to be, at minimum take the buttons away
+    // so a settled post cannot be actioned again from the chat.
+    .catch(() => client.editMessageReplyMarkup(chatId, messageId).catch(() => {}));
 }
 
 /** Turns the messages Telegram just returned into re-sendable references. */
@@ -172,6 +291,32 @@ export async function sendForApproval(
 
   await sleep(TELEGRAM_MIN_DELAY_BETWEEN_SENDS_MS);
 
+  /**
+   * A text too long for a caption reaches the channel as a second message on
+   * Approve, so the reviewer sees that too — exactly as it will be sent.
+   *
+   * Best effort: the media is already in the reviewer's chat, and failing the
+   * review here would send it all again on the retry. Without this preview
+   * the post can still be reviewed from its caption.
+   */
+  let overflowMessageId: number | undefined;
+
+  if (request.overflowMessage) {
+    try {
+      const overflow = await sendText(
+        { ...context, replyMarkup: undefined },
+        request.overflowMessage,
+        { replyToMessageId: mediaMessages[0]?.message_id },
+      );
+      overflowMessageId = overflow.message_id;
+    } catch (error) {
+      options?.logger?.warn('approval.overflow_preview_failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    await sleep(TELEGRAM_MIN_DELAY_BETWEEN_SENDS_MS);
+  }
+
   const control = await sendText(
     { ...context, replyMarkup: keyboard },
     formatMessageText(
@@ -199,6 +344,7 @@ export async function sendForApproval(
       overflowMessage: request.overflowMessage,
       items,
       adminMediaMessageId: mediaMessages[0]?.message_id,
+      adminOverflowMessageId: overflowMessageId,
     },
   };
 }

@@ -312,6 +312,41 @@ describe('normalizePost', () => {
     expect(normalizePost(post, new Map(), 'user').post.isReply).toBe(true);
   });
 
+  it('takes the text of a long-form post from note_tweet, whole', () => {
+    const long = `${'word '.repeat(80)}and the end, with a link https://t.co/long`;
+    const post = {
+      id: '1',
+      text: 'word word word… https://t.co/cut',
+      entities: {
+        urls: [{ start: 15, end: 38, url: 'https://t.co/cut', expanded_url: 'https://x.com/i/web/status/1' }],
+      },
+      note_tweet: {
+        text: long,
+        entities: {
+          urls: [{ start: 0, end: 1, url: 'https://t.co/long', expanded_url: 'https://example.com/read' }],
+        },
+      },
+    } as XPost;
+
+    const result = normalizePost(post, new Map(), 'user').post;
+
+    expect(result.text.length).toBeGreaterThan(280);
+    expect(result.text.endsWith('and the end, with a link https://example.com/read')).toBe(true);
+    expect(result.text).not.toContain('…');
+  });
+
+  it('gives an empty text for a post with no text', () => {
+    const post = {
+      id: '1',
+      text: 'https://t.co/pic',
+      entities: {
+        urls: [{ start: 0, end: 16, url: 'https://t.co/pic', display_url: 'pic.x.com/pic' }],
+      },
+    } as XPost;
+
+    expect(normalizePost(post, new Map(), 'user').post.text).toBe('');
+  });
+
   it('builds the canonical post URL', () => {
     const post = { id: '123', text: 'x' } as XPost;
     expect(normalizePost(post, new Map(), 'someuser').post.url).toBe(

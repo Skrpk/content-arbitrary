@@ -1,6 +1,8 @@
+import { sql } from 'drizzle-orm';
 import {
   bigint,
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -115,6 +117,29 @@ export const postStatusEnum = pgEnum('post_status', [
 export type PostStatus = (typeof postStatusEnum.enumValues)[number];
 
 /**
+ * Why a reviewer turned a post down.
+ *
+ * These values are stored and will be grouped on, so they are a contract:
+ * rename the button label freely, but never a value — add a new one instead.
+ */
+export const REJECTION_REASONS = [
+  'not_interesting',
+  'wrong_topic',
+  'already_covered',
+  'too_minor',
+  'weak_source',
+  'other',
+] as const;
+
+export const rejectionReasonEnum = pgEnum('rejection_reason', REJECTION_REASONS);
+
+export type RejectionReason = (typeof REJECTION_REASONS)[number];
+
+export function isRejectionReason(value: string): value is RejectionReason {
+  return (REJECTION_REASONS as readonly string[]).includes(value);
+}
+
+/**
  * One row per X post we have ever seen.
  *
  * `xPostId` is UNIQUE — this is the hard guarantee against double-publishing.
@@ -142,6 +167,16 @@ export const processedPosts = pgTable(
     xAuthorUsername: text('x_author_username'),
     /** Post creation time as reported by X, used to order oldest → newest. */
     xCreatedAt: timestamp('x_created_at', { withTimezone: true }),
+    /**
+     * The author's own text, whole: the full long-form text where X has one,
+     * with t.co links resolved, the link to the post's own media removed and
+     * X's HTML entities decoded — plain text, before any prefix, suffix,
+     * source link, truncation or escaping of ours. Recorded for every post the
+     * moment it is first seen, whatever happens to it afterwards, and never
+     * changed. Null on rows that predate the column; empty for a post with no
+     * text.
+     */
+    sourceText: text('source_text'),
 
     status: postStatusEnum('status').notNull().default('pending'),
 
@@ -169,7 +204,41 @@ export const processedPosts = pgTable(
     /** Message in the admin's private chat carrying the Approve button. */
     adminChatId: text('admin_chat_id'),
     adminMessageId: bigint('admin_message_id', { mode: 'number' }),
+    /**
+     * When a person decided the post: set on Approve and on Reject, null for a
+     * post published straight to the channel with no review. Rows approved
+     * before this was recorded have it null as well.
+     */
     reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+    /** Set only on `rejected` rows, and null on those rejected before reasons existed. */
+    rejectionReason: rejectionReasonEnum('rejection_reason'),
+    /** The reviewer's own words on why, given with the `other` reason. Plain text. */
+    rejectionNote: text('rejection_note'),
+
+    /**
+     * The caption as it was first sent for review. Written once and never
+     * changed afterwards — it is the "before" half of every edit.
+     *
+     * Both captions are stored in the same escaped Telegram-HTML form the post
+     * is published in, so they compare directly; `unescapeHtml` gives the plain
+     * text. For a post published with no review both hold the caption it went
+     * out with. Null on rows that were never sent anywhere (skipped, failed)
+     * or were settled before this column existed; an empty string is a real
+     * value — a media-only post with no text.
+     */
+    originalCaption: text('original_caption'),
+    /**
+     * The caption the post will be — or was — published with. Equal to
+     * `originalCaption` until a reviewer edits it, and the one source of truth
+     * for publishing. Unlike `approval_payload` it survives the decision, so the
+     * text that actually went out is never lost.
+     */
+    caption: text('caption'),
+    /**
+     * When the reviewer last saved a caption in the editor; null if they never
+     * did. Saving does not imply a change — compare the two captions for that.
+     */
+    captionEditedAt: timestamp('caption_edited_at', { withTimezone: true }),
 
     /**
      * Set when a row moves to `processing`. A row stuck in `processing` past
@@ -192,6 +261,20 @@ export const processedPosts = pgTable(
     index('processed_posts_status_idx').on(table.status),
     index('processed_posts_source_idx').on(table.sourceId),
     index('processed_posts_processed_at_idx').on(table.processedAt),
+    // A row has both captions or neither: a "current" with no "original" would
+    // make every later comparison of the two meaningless.
+    check(
+      'processed_posts_caption_pair_check',
+      sql`(${table.originalCaption} IS NULL) = (${table.caption} IS NULL)`,
+    ),
+    check(
+      'processed_posts_rejection_reason_check',
+      sql`${table.rejectionReason} IS NULL OR ${table.status} = 'rejected'`,
+    ),
+    check(
+      'processed_posts_rejection_note_check',
+      sql`${table.rejectionNote} IS NULL OR ${table.rejectionReason} IS NOT NULL`,
+    ),
   ],
 );
 
@@ -258,6 +341,11 @@ export interface ApprovalMediaItem {
 
 export interface ApprovalPayload {
   method: 'sendPhoto' | 'sendVideo' | 'sendMediaGroup';
+  /**
+   * Kept in step with `processed_posts.caption`, which is what publishing
+   * reads. Still written so that a rollback to code that predates the column
+   * publishes the right text.
+   */
   caption: string;
   overflowMessage?: string;
   items: ApprovalMediaItem[];
@@ -267,8 +355,12 @@ export interface ApprovalPayload {
    * existed, which is why every use of it is optional.
    */
   adminMediaMessageId?: number;
-  /** Set once a reviewer has rewritten the caption by hand. */
-  captionEditedAt?: string;
+  /**
+   * The preview of `overflowMessage` in the reviewer's chat, so it can be
+   * marked as dropped when an edit replaces it. Absent when there was no
+   * overflow, its send failed, or the post was queued before it was previewed.
+   */
+  adminOverflowMessageId?: number;
 }
 
 export type ProcessedPost = typeof processedPosts.$inferSelect;
