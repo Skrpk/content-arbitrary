@@ -47,6 +47,38 @@ describe('environment validation', () => {
     );
   });
 
+  /**
+   * Both only seed workspace 1, once. Requiring them would let a missing
+   * variable stop the whole installation — every tenant — from starting.
+   */
+  it('needs neither the channel nor the reviewer, even with approval on', async () => {
+    await withEnv(
+      {
+        TELEGRAM_CHAT_ID: undefined,
+        TELEGRAM_ADMIN_CHAT_ID: undefined,
+        REQUIRE_APPROVAL: 'true',
+        TELEGRAM_WEBHOOK_SECRET: 'a'.repeat(64),
+      },
+      (env) => {
+        expect(env.TELEGRAM_CHAT_ID).toBeUndefined();
+        expect(env.TELEGRAM_ADMIN_CHAT_ID).toBeUndefined();
+        expect(env.REQUIRE_APPROVAL).toBe(true);
+      },
+    );
+  });
+
+  it('treats an empty channel variable as unset', async () => {
+    await withEnv({ TELEGRAM_CHAT_ID: '' }, (env) => {
+      expect(env.TELEGRAM_CHAT_ID).toBeUndefined();
+    });
+  });
+
+  it('still rejects a malformed reviewer id', async () => {
+    await expect(
+      withEnv({ TELEGRAM_ADMIN_CHAT_ID: 'not-a-number' }, () => getEnv()),
+    ).rejects.toThrow(/TELEGRAM_ADMIN_CHAT_ID/);
+  });
+
   it('rejects a CRON_SECRET that is too short to be safe', async () => {
     await expect(withEnv({ CRON_SECRET: 'short' }, () => getEnv())).rejects.toThrow(/CRON_SECRET/);
   });

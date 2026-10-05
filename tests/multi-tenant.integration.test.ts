@@ -520,6 +520,41 @@ describeIfDb('the environment seeds tenant 1 only', () => {
     expect(again.telegramAdminChatId).toBe(REVIEWER_B);
   });
 
+  /**
+   * Once the row is set up the variables are unused, so removing them from the
+   * deployment must change nothing — least of all empty a live channel.
+   */
+  it('keeps a configured tenant 1 when the variables are removed', async () => {
+    await withEnv(baseEnv, (env) => ensureDefaultWorkspace(db, env));
+
+    const after = await withEnv(
+      { ...baseEnv, TELEGRAM_CHAT_ID: undefined, TELEGRAM_ADMIN_CHAT_ID: undefined },
+      (env) => ensureDefaultWorkspace(db, env),
+    );
+
+    expect(after.telegramChatId).toBe(CHANNEL_A);
+    expect(after.telegramAdminChatId).toBe(REVIEWER_A);
+  });
+
+  it('leaves tenant 1 unconfigured, and skipped, on an install without the variables', async () => {
+    const seeded = await withEnv(
+      {
+        ...baseEnv,
+        REQUIRE_APPROVAL: 'true',
+        TELEGRAM_CHAT_ID: undefined,
+        TELEGRAM_ADMIN_CHAT_ID: undefined,
+      },
+      async (env) => {
+        const workspace = await ensureDefaultWorkspace(db, env);
+        return { workspace, destination: destinationFor(workspace, env) };
+      },
+    );
+
+    expect(seeded.workspace.telegramChatId).toBeNull();
+    expect(seeded.workspace.telegramAdminChatId).toBeNull();
+    expect(seeded.destination).toEqual({ ok: false, reason: 'workspace has no telegram_chat_id' });
+  });
+
   it('never seeds a second tenant from the environment', async () => {
     await db.insert(workspaces).values({ id: TENANT_B, name: 'second' });
 

@@ -374,8 +374,9 @@ After the first production deploy, confirm the job appears under
 **Project → Settings → Environment Variables.** Add every variable from your `.env` for the
 **Production** environment:
 
-`DATABASE_URL`, `X_USER_ID`, `X_USERNAME`, `X_BEARER_TOKEN`, `TELEGRAM_BOT_TOKEN`,
-`TELEGRAM_CHAT_ID`, `CRON_SECRET`, plus any optional ones you use.
+`DATABASE_URL`, `X_BEARER_TOKEN`, `TELEGRAM_BOT_TOKEN`, `CRON_SECRET`, plus any optional ones you
+use. On a fresh install, `TELEGRAM_CHAT_ID` (and `TELEGRAM_ADMIN_CHAT_ID` with approval on) set
+up the first channel; once that is in the database they can be removed.
 
 Two things to get right:
 
@@ -563,7 +564,8 @@ environment change and no redeploy:
 `/addsource` accepts whatever is easiest to paste — `karpathy`, `@karpathy`,
 `x.com/karpathy`, a full profile URL, or even a link to one of the account's posts.
 
-Only `TELEGRAM_ADMIN_CHAT_ID` may run these; anyone else is ignored without a reply.
+Only a workspace's reviewer may run these, for the workspaces that name them; anyone else is
+ignored without a reply.
 The commands arrive over the same webhook as the Approve buttons, so
 `npm run webhook:set` must have been run once (see below).
 
@@ -742,8 +744,8 @@ this adds `POST /api/telegram/webhook`. Two independent checks guard it:
 
 1. the `X-Telegram-Bot-Api-Secret-Token` header must match `TELEGRAM_WEBHOOK_SECRET`, proving
    the call came from Telegram;
-2. the pressing user must be `TELEGRAM_ADMIN_CHAT_ID` — forwarding the message to someone else
-   does not hand them the publish button.
+2. the pressing user must be the reviewer of the post's workspace — forwarding the message to
+   someone else does not hand them the publish button.
 
 The review send is not wasted work. Telegram returns a `file_id` for every asset it stored, and
 re-sending by `file_id` needs no upload and no download. Approving therefore costs a single
@@ -770,10 +772,11 @@ reply underneath the album.
    ```bash
    openssl rand -hex 32
    ```
-4. **Set the three variables** in Vercel and redeploy:
-   `REQUIRE_APPROVAL=true`, `TELEGRAM_ADMIN_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`.
-   Enabling approval without the other two fails validation at startup rather than silently
-   publishing unreviewed.
+4. **Set the variables** in Vercel and redeploy: `REQUIRE_APPROVAL=true` and
+   `TELEGRAM_WEBHOOK_SECRET`, plus `TELEGRAM_ADMIN_CHAT_ID` on a fresh install to seed workspace
+   1's reviewer. Enabling approval without the webhook secret fails validation at startup; a
+   workspace with no reviewer is skipped by the sync with the reason, never published
+   unreviewed.
 5. **Register the webhook once per deployment URL:**
    ```bash
    npm run webhook:set -- https://your-project.vercel.app
@@ -890,12 +893,12 @@ shows both statuses in its counts and recent posts.
 | `X_BEARER_TOKEN` | — | **Required.** App-only Bearer token. |
 | `X_API_BASE_URL` | `https://api.x.com` | Override only if proxying. |
 | `TELEGRAM_BOT_TOKEN` | — | **Required.** From BotFather. |
-| `TELEGRAM_CHAT_ID` | — | **Required.** `-1001234567890` or `@channelusername`. |
+| `TELEGRAM_CHAT_ID` | — | Seeds workspace 1's channel (`-1001234567890` or `@channelusername`), once, while its column is empty. Unused after that; safe to remove. |
 | `TELEGRAM_API_BASE_URL` | `https://api.telegram.org` | Override for a local Bot API server. |
 | `TELEGRAM_DISABLE_NOTIFICATION` | `false` | Post silently. |
 | `CRON_SECRET` | — | **Required, ≥ 16 chars.** Protects `/api/cron/sync`. |
 | `REQUIRE_APPROVAL` | `false` | Hold every post for review instead of publishing directly. |
-| `TELEGRAM_ADMIN_CHAT_ID` | — | Your numeric Telegram user id. Required when `REQUIRE_APPROVAL` is on. |
+| `TELEGRAM_ADMIN_CHAT_ID` | — | Seeds workspace 1's reviewer (your numeric Telegram user id), once, while its column is empty. Unused after that; safe to remove. |
 | `TELEGRAM_WEBHOOK_SECRET` | — | ≥ 16 chars, `A-Z a-z 0-9 _ -` only. Required when `REQUIRE_APPROVAL` is on. |
 | `APP_BASE_URL` | — | Public HTTPS origin, e.g. `https://your-app.vercel.app`. Enables the Edit button; without it review works unchanged. |
 | `ADMIN_SECRET` | falls back to `CRON_SECRET` | Protects `/api/status`. |

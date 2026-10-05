@@ -109,7 +109,7 @@ export function testDestination(
 ): TelegramDestination {
   return {
     workspaceId: DEFAULT_WORKSPACE_ID,
-    chatId: env.TELEGRAM_CHAT_ID,
+    chatId: env.TELEGRAM_CHAT_ID ?? '',
     adminChatId: env.TELEGRAM_ADMIN_CHAT_ID ?? null,
     disableNotification: env.TELEGRAM_DISABLE_NOTIFICATION,
     ...overrides,

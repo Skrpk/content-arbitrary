@@ -51,13 +51,13 @@ export async function ensureDefaultWorkspace(
     .values({
       id: DEFAULT_WORKSPACE_ID,
       name: 'default',
-      telegramChatId: env.TELEGRAM_CHAT_ID,
+      telegramChatId: env.TELEGRAM_CHAT_ID ?? null,
       telegramAdminChatId: env.TELEGRAM_ADMIN_CHAT_ID ?? null,
     })
     .onConflictDoUpdate({
       target: workspaces.id,
       set: {
-        telegramChatId: rawSql`coalesce(${workspaces.telegramChatId}, ${env.TELEGRAM_CHAT_ID})`,
+        telegramChatId: rawSql`coalesce(${workspaces.telegramChatId}, ${env.TELEGRAM_CHAT_ID ?? null})`,
         telegramAdminChatId: rawSql`coalesce(${workspaces.telegramAdminChatId}, ${
           env.TELEGRAM_ADMIN_CHAT_ID ?? null
         })`,

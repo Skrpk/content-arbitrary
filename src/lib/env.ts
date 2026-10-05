@@ -78,14 +78,18 @@ const enumWithDefault = <T extends readonly [string, ...string[]]>(
  * channel username (`@channelusername`). Private channels have no username, so
  * the numeric form is the only universally correct option — we accept both and
  * say so in the error message.
+ *
+ * Optional: it only seeds workspace 1's channel, once, while that column is
+ * empty. After that the workspace row is the authority and this is unused.
  */
 const telegramChatId = z
   .string()
-  .min(1, 'TELEGRAM_CHAT_ID is required')
   .refine(
     (value) => /^-?\d+$/.test(value) || /^@[A-Za-z0-9_]{5,}$/.test(value),
     'TELEGRAM_CHAT_ID must be a numeric id (e.g. -1001234567890) or a public @channelusername',
-  );
+  )
+  .optional()
+  .or(z.literal('').transform(() => undefined));
 
 const schema = z
   .object({
@@ -130,8 +134,10 @@ const schema = z
     TELEGRAM_DISABLE_NOTIFICATION: booleanish(false),
 
     /**
-     * Numeric Telegram user id of the reviewer. Posts are sent to this user's
-     * private chat with the bot for approval before reaching the channel.
+     * Numeric Telegram user id of workspace 1's reviewer. Like TELEGRAM_CHAT_ID
+     * it only seeds that workspace while its column is empty; reviewers are
+     * read from the workspaces table, and each tenant without one is skipped
+     * while REQUIRE_APPROVAL is on.
      */
     TELEGRAM_ADMIN_CHAT_ID: z
       .string()
@@ -233,13 +239,9 @@ const schema = z
       }),
   })
   .superRefine((value, ctx) => {
-    if (value.REQUIRE_APPROVAL && !value.TELEGRAM_ADMIN_CHAT_ID) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['TELEGRAM_ADMIN_CHAT_ID'],
-        message: 'TELEGRAM_ADMIN_CHAT_ID is required when REQUIRE_APPROVAL is enabled',
-      });
-    }
+    // No check for a reviewer here: reviewers live on the workspaces, and a
+    // tenant without one is refused per tenant (destinationFor) rather than
+    // the whole installation failing to start.
     if (value.REQUIRE_APPROVAL && !value.TELEGRAM_WEBHOOK_SECRET) {
       ctx.addIssue({
         code: 'custom',
@@ -291,7 +293,7 @@ export function redactedEnvSummary(env: Env = getEnv()) {
   return {
     /** @deprecated Sources come from the database; see the `sources` list. */
     legacyXAccount: env.X_USERNAME ?? env.X_USER_ID ?? null,
-    telegramChatId: env.TELEGRAM_CHAT_ID,
+    telegramChatId: env.TELEGRAM_CHAT_ID ?? null,
     hasXBearerToken: Boolean(env.X_BEARER_TOKEN),
     hasTelegramBotToken: Boolean(env.TELEGRAM_BOT_TOKEN),
     hasAdminSecret: Boolean(env.ADMIN_SECRET),

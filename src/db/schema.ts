@@ -15,21 +15,19 @@ import {
 } from 'drizzle-orm/pg-core';
 
 /**
- * One installation's tenant: a destination channel and the admin who reviews
- * for it.
- *
- * There is exactly one row today, seeded from the environment, and the runtime
- * still reads the channel and admin id from env. It exists now so that the
- * scoping columns below can be added while the tables are small — adding them
- * after a second tenant exists would mean rewriting live data and changing the
- * duplicate-protection constraint under traffic.
+ * One tenant: a destination channel and the person who reviews for it. The
+ * row is the authority on both; one person may review several workspaces.
  */
 export const workspaces = pgTable('workspaces', {
   id: serial('id').primaryKey(),
   name: text('name').notNull().default('default'),
-  /** Mirrors TELEGRAM_CHAT_ID; env remains authoritative until tenants land. */
+  /** The channel. Null while the tenant is being set up; it is then skipped. */
   telegramChatId: text('telegram_chat_id'),
-  /** Mirrors TELEGRAM_ADMIN_CHAT_ID. */
+  /**
+   * The reviewer's Telegram user id — and their authorisation. For workspace 1
+   * both columns are seeded once from TELEGRAM_CHAT_ID / TELEGRAM_ADMIN_CHAT_ID
+   * if those are set; the environment never overwrites them afterwards.
+   */
   telegramAdminChatId: text('telegram_admin_chat_id'),
   /**
    * When the legacy X_USER_ID / X_USERNAME pair was copied into `sources`.
