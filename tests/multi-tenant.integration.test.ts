@@ -19,7 +19,7 @@ import { dispatchCommand } from '@/lib/telegram/commands';
 import {
   destinationFor,
   ensureDefaultWorkspace,
-  findWorkspaceByAdminChatId,
+  findWorkspacesByAdminChatId,
   listActiveWorkspaces,
 } from '@/lib/workspace';
 import { XClient } from '@/lib/x/client';
@@ -106,7 +106,7 @@ function makeXStack(timelines: Record<string, string[]>) {
 }
 
 function makeTelegramStack() {
-  const sends: { method: string; chatId: unknown }[] = [];
+  const sends: { method: string; chatId: unknown; text?: unknown }[] = [];
   let messageId = 100;
 
   const fetchImpl = vi.fn(async (input: unknown, init?: RequestInit) => {
@@ -124,7 +124,7 @@ function makeTelegramStack() {
     const body = (
       typeof raw === 'string' ? JSON.parse(raw) : Object.fromEntries((raw as FormData).entries())
     ) as Record<string, unknown>;
-    sends.push({ method, chatId: body.chat_id });
+    sends.push({ method, chatId: body.chat_id, text: body.text });
 
     messageId += 1;
     const result =
@@ -478,9 +478,12 @@ describeIfDb('tenant isolation', () => {
   });
 
   it('resolves each reviewer to their own tenant', async () => {
-    expect((await findWorkspaceByAdminChatId(db, REVIEWER_A))?.id).toBe(DEFAULT_WORKSPACE_ID);
-    expect((await findWorkspaceByAdminChatId(db, REVIEWER_B))?.id).toBe(TENANT_B);
-    expect(await findWorkspaceByAdminChatId(db, '999999')).toBeNull();
+    const ids = async (reviewer: string) =>
+      (await findWorkspacesByAdminChatId(db, reviewer)).map((workspace) => workspace.id);
+
+    expect(await ids(REVIEWER_A)).toEqual([DEFAULT_WORKSPACE_ID]);
+    expect(await ids(REVIEWER_B)).toEqual([TENANT_B]);
+    expect(await ids('999999')).toEqual([]);
   });
 
   it('locks tenants separately', async () => {
@@ -527,5 +530,55 @@ describeIfDb('the environment seeds tenant 1 only', () => {
     expect(await withEnv(baseEnv, (env) => destinationFor(rows[0]!, env)).then((r) => r.ok)).toBe(
       false,
     );
+  });
+});
+
+describeIfDb('one reviewer for two channels', () => {
+  beforeEach(setUpTenants);
+
+  /** The control message under each review: the one carrying the buttons. */
+  const controlTexts = (telegram: ReturnType<typeof makeTelegramStack>) =>
+    telegram.sends
+      .filter((send) => send.method === 'sendMessage')
+      .map((send) => String(send.text));
+
+  it('names the channel on each review, so the reviewer can tell them apart', async () => {
+    await db.update(workspaces).set({ name: 'Alpha' }).where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+    await db
+      .update(workspaces)
+      .set({ name: 'Beta', telegramAdminChatId: REVIEWER_A })
+      .where(eq(workspaces.id, TENANT_B));
+    await addSource(db, { platform: 'x', externalId: SHARED_X_ID, username: 'shared_account' });
+    await addSource(db, {
+      platform: 'x',
+      externalId: SHARED_X_ID,
+      username: 'shared_account',
+      workspaceId: TENANT_B,
+    });
+
+    const telegram = makeTelegramStack();
+    await run(makeXStack({ [SHARED_X_ID]: ['1750000000000000301'] }), telegram, {
+      REQUIRE_APPROVAL: 'true',
+    });
+
+    // Both reviews went to the one reviewer, each labelled with its channel.
+    expect(telegram.sends.every((send) => send.chatId === REVIEWER_A)).toBe(true);
+    const texts = controlTexts(telegram);
+    expect(texts).toHaveLength(2);
+    expect(texts.some((text) => text.startsWith('📢 Alpha\n'))).toBe(true);
+    expect(texts.some((text) => text.startsWith('📢 Beta\n'))).toBe(true);
+  });
+
+  it('adds no label for a reviewer of a single channel', async () => {
+    await addSource(db, { platform: 'x', externalId: SHARED_X_ID, username: 'shared_account' });
+
+    const telegram = makeTelegramStack();
+    await run(makeXStack({ [SHARED_X_ID]: ['1750000000000000302'] }), telegram, {
+      REQUIRE_APPROVAL: 'true',
+    });
+
+    const texts = controlTexts(telegram);
+    expect(texts).toHaveLength(1);
+    expect(texts[0]).not.toContain('📢');
   });
 });

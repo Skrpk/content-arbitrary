@@ -178,10 +178,21 @@ export function buildScheduledKeyboard(
   };
 }
 
-/** The text of the message carrying a post's review buttons. */
-export function formatReviewControlText(sourceUsername: string | null, xPostUrl: string): string {
+/**
+ * The text of the message carrying a post's review buttons. `channel` names
+ * the destination for a reviewer of several channels; omitted otherwise.
+ */
+export function formatReviewControlText(
+  sourceUsername: string | null,
+  xPostUrl: string,
+  channel?: string | null,
+): string {
   return formatMessageText(
-    sourceUsername ? `Source: @${sourceUsername.replace(/^@/, '')}\n${xPostUrl}` : xPostUrl,
+    [
+      ...(channel ? [`📢 ${channel}`] : []),
+      ...(sourceUsername ? [`Source: @${sourceUsername.replace(/^@/, '')}`] : []),
+      xPostUrl,
+    ].join('\n'),
   );
 }
 
@@ -222,10 +233,11 @@ export function formatScheduledNotice(input: {
   timezone: string | null;
   sourceUsername: string | null;
   xPostUrl: string;
+  channel?: string | null;
 }): string {
   return [
     `🕒 Scheduled for ${escapeHtml(formatScheduleTime(input.scheduledFor, input.timezone))}`,
-    formatReviewControlText(input.sourceUsername, input.xPostUrl),
+    formatReviewControlText(input.sourceUsername, input.xPostUrl, input.channel),
   ].join('\n');
 }
 
@@ -333,6 +345,8 @@ export interface ReviewRequest {
   editUrl?: string;
   /** Mini App URL for the Schedule button; omitted when APP_BASE_URL is unset. */
   scheduleUrl?: string;
+  /** The destination channel's name, for a reviewer of several channels. */
+  channelLabel?: string | null;
 }
 
 export interface ReviewResult {
@@ -420,7 +434,7 @@ export async function sendForApproval(
 
   const control = await sendText(
     { ...context, replyMarkup: keyboard },
-    formatReviewControlText(request.sourceUsername, request.xPostUrl),
+    formatReviewControlText(request.sourceUsername, request.xPostUrl, request.channelLabel),
     { replyToMessageId: previewMessages[0]?.message_id },
   );
   const buttonMessageId = control.message_id;

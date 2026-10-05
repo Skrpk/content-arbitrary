@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { describeError } from '@/lib/errors';
 import { TelegramClient } from '@/lib/telegram/client';
 import { TELEGRAM_PARSE_MODE, unescapeHtml } from '@/lib/telegram/format-caption';
-import { authorizeReviewer, json } from '@/lib/telegram/webapp-request';
+import { authorizeReviewer, json, reviewerWorkspaceForPost } from '@/lib/telegram/webapp-request';
 import {
   buildScheduledKeyboard,
   formatScheduledNotice,
@@ -11,6 +11,7 @@ import {
   reviewLinks,
 } from '@/lib/sync/approval';
 import { findPostAwaitingReview, schedulePost } from '@/lib/sync/repository';
+import { channelLabelFor } from '@/lib/workspace';
 
 /**
  * The Schedule Mini App's API: approve a post for a later time, or move the
@@ -50,9 +51,12 @@ export async function GET(request: Request): Promise<Response> {
     return json({ error: 'bad post id' }, 400);
   }
 
+  const workspace = await reviewerWorkspaceForPost(auth, postId);
+  if (!workspace) return json({ error: 'This post is no longer awaiting review.' }, 404);
+
   const post = await findPostAwaitingReview(auth.db, {
     id: postId,
-    workspaceId: auth.workspace.id,
+    workspaceId: workspace.id,
     includeScheduled: true,
   });
   if (!post || !post.approvalPayload) {
@@ -86,6 +90,9 @@ export async function POST(request: Request): Promise<Response> {
     return json({ error: 'bad request' }, 400);
   }
 
+  const workspace = await reviewerWorkspaceForPost(auth, body.postId);
+  if (!workspace) return json({ error: 'This post is no longer awaiting review.' }, 409);
+
   const scheduledFor = new Date(body.scheduledFor);
   if (Number.isNaN(scheduledFor.getTime())) {
     return json({ error: 'bad request' }, 400);
@@ -103,7 +110,7 @@ export async function POST(request: Request): Promise<Response> {
 
   const result = await schedulePost(auth.db, {
     id: body.postId,
-    workspaceId: auth.workspace.id,
+    workspaceId: workspace.id,
     scheduledFor,
     timezone,
   });
@@ -134,6 +141,7 @@ export async function POST(request: Request): Promise<Response> {
           timezone,
           sourceUsername: row.xAuthorUsername,
           xPostUrl: row.xPostUrl,
+          channel: channelLabelFor(workspace, auth.workspaces.length),
         }),
         TELEGRAM_PARSE_MODE,
         buildScheduledKeyboard(row.id, reviewLinks(auth.env.APP_BASE_URL, row.id)),

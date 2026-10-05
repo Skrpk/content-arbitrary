@@ -636,8 +636,25 @@ VALUES ('second channel', '-1001234567890', '123456789');
 - `telegram_chat_id` — the channel, found exactly as in [F](#f-get-your-telegram_chat_id). Add
   the bot to it as an administrator with **Post messages** first.
 - `telegram_admin_chat_id` — the reviewer's numeric Telegram user id. This is also what
-  authorises them: they can run `/addsource` and press Approve for this workspace and no other.
-  Note that a channel id is negative and begins `-100`, while a user id is positive.
+  authorises them: they can run `/addsource` and press Approve for the workspaces that name
+  them, and no others. Note that a channel id is negative and begins `-100`, while a user id is
+  positive.
+- `name` — shown to a reviewer of more than one channel, so give it the channel's name.
+
+#### One reviewer for several channels
+
+The same person may be the reviewer of any number of workspaces — use the same
+`telegram_admin_chat_id` in each row. Then:
+
+- every button and Mini App acts on the post's own channel, whichever it is: the post decides
+  the workspace, and the reviewer only has to be its reviewer;
+- review messages start with `📢 <name>`, so the two channels' posts can be told apart;
+- `/addsource` asks which channel with a button per channel; `/removesource`, `/pausesource`
+  and `/resumesource` act at once when only one channel watches the account, and ask when
+  several do;
+- `/sources`, `/scheduled` and the ⚙️ Settings page cover every channel, grouped by name.
+
+A reviewer of a single channel sees none of this — no labels, no questions.
 
 The reviewer must have sent the bot a message at least once before the first post is held for
 them: Telegram does not allow a bot to open a conversation, so review would otherwise fail with
@@ -809,8 +826,8 @@ be pressed days later. Leave it unset and review works exactly as before, withou
 A Mini App page is openly reachable; that is normal, and it is not what guards anything.
 Telegram hands the page a signed `initData` string, every request carries it in an
 `Authorization: tma …` header, and the server does nothing until that signature verifies
-against the bot token, names a Telegram user who is some workspace's reviewer, and that
-reviewer's workspace owns the post. The post id in the URL is therefore not a credential:
+against the bot token, names a Telegram user who is some workspace's reviewer, and the post
+belongs to a workspace they review for. The post id in the URL is therefore not a credential:
 asking for another tenant's post returns exactly what asking for a nonexistent one returns.
 Signed data older than 24 hours is refused, so a captured `initData` string does not stay
 usable.

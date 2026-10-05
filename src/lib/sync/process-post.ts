@@ -277,6 +277,7 @@ export async function processPost(
           overflowMessage,
           payloads,
           ...reviewLinks(env.APP_BASE_URL, options.postId!),
+          channelLabel: options.destination.channelLabel,
         },
         { logger, sleep },
       );
@@ -462,6 +463,7 @@ async function processTextPost(
           caption: text,
           payloads: [],
           ...reviewLinks(env.APP_BASE_URL, options.postId!),
+          channelLabel: options.destination.channelLabel,
         },
         { logger, sleep: options.sleep },
       );

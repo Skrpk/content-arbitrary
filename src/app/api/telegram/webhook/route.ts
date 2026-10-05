@@ -17,8 +17,22 @@ import {
   settleReviewMessage,
 } from '@/lib/sync/approval';
 import { publishDecidedPost } from '@/lib/sync/publish';
-import { buildSettingsUrl, dispatchCommand, parseCommand } from '@/lib/telegram/commands';
-import { destinationFor, findWorkspaceByAdminChatId } from '@/lib/workspace';
+import {
+  buildSettingsUrl,
+  dispatchCommand,
+  parseChannelChoice,
+  parseCommand,
+  runChosenChannel,
+  type CommandContext,
+  type CommandReply,
+} from '@/lib/telegram/commands';
+import {
+  channelLabelFor,
+  destinationFor,
+  findWorkspacesByAdminChatId,
+  workspaceForPost,
+} from '@/lib/workspace';
+import type { Workspace } from '@/db/schema';
 import { XClient } from '@/lib/x/client';
 import type { Logger } from '@/lib/logger';
 import {
@@ -154,13 +168,45 @@ export async function POST(request: Request): Promise<Response> {
   if (!query) return ok();
 
   // Anyone can be forwarded the message; only a reviewer may act on it, and
-  // only on their own tenant's posts.
-  const workspace = await findWorkspaceByAdminChatId(db, query.from.id);
-  if (!workspace) {
+  // only on the posts of channels they review.
+  const reviewerWorkspaces = await findWorkspacesByAdminChatId(db, query.from.id);
+  if (reviewerWorkspaces.length === 0) {
     logger.warn('webhook.unauthorized_user', { fromId: query.from.id });
     await client
       .answerCallbackQuery(query.id, 'You are not authorised to review posts.')
       .catch(() => {});
+    return ok();
+  }
+
+  // A channel button under a source command, for a reviewer of several.
+  const choice = parseChannelChoice(query.data);
+  if (choice) {
+    await handleChannelChoice(query, choice, {
+      db,
+      client,
+      logger,
+      workspaces: reviewerWorkspaces,
+      settingsUrl: env.APP_BASE_URL ? buildSettingsUrl(env.APP_BASE_URL) : undefined,
+    });
+    return ok();
+  }
+
+  const parsed = parseCallbackData(query.data);
+  if (!parsed) {
+    logger.warn('webhook.unparsable_callback', {});
+    await client.answerCallbackQuery(query.id, 'Unrecognised action.').catch(() => {});
+    return ok();
+  }
+
+  /**
+   * The post decides the tenant: a reviewer of several channels acts on each
+   * post in its own channel. A post of a channel they do not review gets the
+   * same answer as one that does not exist.
+   */
+  const workspace = await workspaceForPost(db, reviewerWorkspaces, parsed.postId);
+  if (!workspace) {
+    logger.info('webhook.post_not_reviewable', { postId: parsed.postId, fromId: query.from.id });
+    await client.answerCallbackQuery(query.id, alreadySettledNotice(undefined)).catch(() => {});
     return ok();
   }
 
@@ -171,13 +217,6 @@ export async function POST(request: Request): Promise<Response> {
       reason: resolved.reason,
     });
     await client.answerCallbackQuery(query.id, 'This channel is not configured.').catch(() => {});
-    return ok();
-  }
-
-  const parsed = parseCallbackData(query.data);
-  if (!parsed) {
-    logger.warn('webhook.unparsable_callback', {});
-    await client.answerCallbackQuery(query.id, 'Unrecognised action.').catch(() => {});
     return ok();
   }
 
@@ -273,7 +312,11 @@ export async function POST(request: Request): Promise<Response> {
         .editMessageText(
           chatId,
           messageId,
-          formatReviewControlText(result.row.xAuthorUsername, result.row.xPostUrl),
+          formatReviewControlText(
+            result.row.xAuthorUsername,
+            result.row.xPostUrl,
+            channelLabelFor(workspace, reviewerWorkspaces.length),
+          ),
           TELEGRAM_PARSE_MODE,
           buildApprovalKeyboard(result.row.id, reviewLinks(env.APP_BASE_URL, result.row.id)),
         )
@@ -388,7 +431,8 @@ async function handleCommandMessage(
   const parsed = parseCommand(message.text);
   if (!parsed) return;
 
-  const workspace = await findWorkspaceByAdminChatId(db, message.from?.id);
+  const reviewerWorkspaces = await findWorkspacesByAdminChatId(db, message.from?.id);
+  const workspace = reviewerWorkspaces[0];
   if (!workspace) {
     logger.warn('webhook.unauthorized_command', {
       fromId: message.from?.id,
@@ -404,13 +448,15 @@ async function handleCommandMessage(
       {
         db,
         xClient: new XClient({ logger }),
-        logger: logger.child({ workspaceId: workspace.id }),
+        logger: logger.child({ fromId: message.from?.id }),
         workspaceId: workspace.id,
+        workspaces: reviewerWorkspaces.map(({ id, name }) => ({ id, name })),
       },
       parsed,
     );
     if (!reply) return;
 
+    const markup = replyMarkupFor(reply, context.settingsUrl);
     await client.call(
       'sendMessage',
       {
@@ -418,13 +464,7 @@ async function handleCommandMessage(
         text: reply.text,
         parse_mode: TELEGRAM_PARSE_MODE,
         link_preview_options: { is_disabled: true },
-        ...(reply.offerSettings && context.settingsUrl
-          ? {
-              reply_markup: {
-                inline_keyboard: [[{ text: '⚙️ Settings', web_app: { url: context.settingsUrl } }]],
-              },
-            }
-          : {}),
+        ...(markup ? { reply_markup: markup } : {}),
       },
       z.object({ message_id: z.number() }),
     );
@@ -441,6 +481,64 @@ async function handleCommandMessage(
         { chat_id: chatId, text: '⚠️ Something went wrong running that command.' },
         z.object({ message_id: z.number() }),
       )
+      .catch(() => {});
+  }
+}
+
+/** A command reply's own buttons, or the Settings button when it offers one. */
+function replyMarkupFor(reply: CommandReply, settingsUrl: string | undefined) {
+  if (reply.replyMarkup) return reply.replyMarkup;
+  if (reply.offerSettings && settingsUrl) {
+    return { inline_keyboard: [[{ text: '⚙️ Settings', web_app: { url: settingsUrl } }]] };
+  }
+  return undefined;
+}
+
+/**
+ * A channel picked for a source command. The question is replaced by the
+ * outcome, so the buttons cannot be pressed a second time.
+ */
+async function handleChannelChoice(
+  query: { id: string; message?: { message_id: number; chat: { id: number } } },
+  choice: NonNullable<ReturnType<typeof parseChannelChoice>>,
+  context: {
+    db: Database;
+    client: TelegramClient;
+    logger: Logger;
+    workspaces: Workspace[];
+    settingsUrl?: string;
+  },
+): Promise<void> {
+  const { client, logger } = context;
+  const commandContext: CommandContext = {
+    db: context.db,
+    xClient: new XClient({ logger }),
+    logger,
+    workspaceId: context.workspaces[0]!.id,
+    workspaces: context.workspaces.map(({ id, name }) => ({ id, name })),
+  };
+
+  try {
+    const reply = await runChosenChannel(commandContext, choice);
+    await client.answerCallbackQuery(query.id).catch(() => {});
+
+    if (query.message) {
+      await client.editMessageText(
+        String(query.message.chat.id),
+        query.message.message_id,
+        reply.text,
+        TELEGRAM_PARSE_MODE,
+        replyMarkupFor(reply, context.settingsUrl),
+      );
+    }
+  } catch (error) {
+    logger.error('webhook.channel_choice_failed', {
+      command: choice.command,
+      workspaceId: choice.workspaceId,
+      error: describeError(error),
+    });
+    await client
+      .answerCallbackQuery(query.id, 'Something went wrong — try the command again.')
       .catch(() => {});
   }
 }

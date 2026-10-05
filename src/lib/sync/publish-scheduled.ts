@@ -20,7 +20,12 @@ import {
   returnToSchedule,
 } from '@/lib/sync/repository';
 import { defaultSleep } from '@/lib/sync/retry';
-import { destinationFor, findWorkspaceById } from '@/lib/workspace';
+import {
+  channelLabelFor,
+  destinationFor,
+  findWorkspaceById,
+  findWorkspacesByAdminChatId,
+} from '@/lib/workspace';
 
 /**
  * Publish every scheduled post whose time has come.
@@ -92,6 +97,8 @@ export async function publishDueScheduledPosts(input: {
 
       // Tell the reviewer, and give them the decision back.
       if (row.adminChatId && row.adminMessageId) {
+        const reviewerWorkspaces = await findWorkspacesByAdminChatId(db, row.adminChatId);
+        const channel = reviewerWorkspaces.find((candidate) => candidate.id === row.workspaceId);
         await client
           .editMessageText(
             row.adminChatId,
@@ -99,7 +106,11 @@ export async function publishDueScheduledPosts(input: {
             [
               `⚠️ Scheduled publishing failed ${attempts} times: ${escapeHtml(error.slice(0, 300))}`,
               'Back in review — approve or schedule it again.',
-              formatReviewControlText(row.xAuthorUsername, row.xPostUrl),
+              formatReviewControlText(
+                row.xAuthorUsername,
+                row.xPostUrl,
+                channel ? channelLabelFor(channel, reviewerWorkspaces.length) : null,
+              ),
             ].join('\n'),
             TELEGRAM_PARSE_MODE,
             buildApprovalKeyboard(row.id, reviewLinks(env.APP_BASE_URL, row.id)),

@@ -129,7 +129,13 @@ describeIfDb('GET /api/telegram/webapp/sources', () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
-      sources: [{ id: mine.id, username: 'alpha', enabled: true, includeTextOnly: false }],
+      channels: [
+        {
+          id: DEFAULT_WORKSPACE_ID,
+          name: 'default',
+          sources: [{ id: mine.id, username: 'alpha', enabled: true, includeTextOnly: false }],
+        },
+      ],
     });
   });
 

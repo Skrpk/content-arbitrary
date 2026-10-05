@@ -23,7 +23,7 @@ import {
   syncStateKey,
 } from '@/lib/sources/repository';
 import { dispatchCommand } from '@/lib/telegram/commands';
-import { findWorkspaceByAdminChatId } from '@/lib/workspace';
+import { findWorkspacesByAdminChatId } from '@/lib/workspace';
 import { upsertSyncState } from '@/lib/sync/repository';
 import { XClient } from '@/lib/x/client';
 import { createTestLogger, ensureTestWorkspace } from './helpers';
@@ -343,8 +343,8 @@ describeIfDb('source commands', () => {
       .set({ telegramChatId: '-1001', telegramAdminChatId: '555001' })
       .where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
 
-    const found = await findWorkspaceByAdminChatId(db, 555001);
-    expect(found?.id).toBe(DEFAULT_WORKSPACE_ID);
+    const found = await findWorkspacesByAdminChatId(db, 555001);
+    expect(found.map((workspace) => workspace.id)).toEqual([DEFAULT_WORKSPACE_ID]);
 
     await dispatchCommand(makeContext(), { command: 'addsource', args: 'karpathy' });
     expect(await countSources(db)).toBe(1);
@@ -356,8 +356,8 @@ describeIfDb('source commands', () => {
       .set({ telegramChatId: '-1001', telegramAdminChatId: '555001' })
       .where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
 
-    expect(await findWorkspaceByAdminChatId(db, 999999)).toBeNull();
-    expect(await findWorkspaceByAdminChatId(db, undefined)).toBeNull();
+    expect(await findWorkspacesByAdminChatId(db, 999999)).toEqual([]);
+    expect(await findWorkspacesByAdminChatId(db, undefined)).toEqual([]);
 
     // The webhook stops before dispatch, so nothing is written.
     expect(await countSources(db)).toBe(0);
@@ -366,7 +366,7 @@ describeIfDb('source commands', () => {
   it('is nobody\'s admin when no workspace names a reviewer', async () => {
     // ensureTestWorkspace leaves both columns null, which is the state of a
     // tenant mid-setup: its id must not authorise anyone.
-    expect(await findWorkspaceByAdminChatId(db, 555001)).toBeNull();
+    expect(await findWorkspacesByAdminChatId(db, 555001)).toEqual([]);
   });
 
   it('returns help for /start', async () => {

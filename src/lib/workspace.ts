@@ -1,8 +1,8 @@
-import { and, eq, isNotNull, sql as rawSql } from 'drizzle-orm';
+import { and, asc, eq, isNotNull, sql as rawSql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import type { Env } from '@/lib/env';
 import type { Logger } from '@/lib/logger';
-import { DEFAULT_WORKSPACE_ID, workspaces, type Workspace } from '@/db/schema';
+import { DEFAULT_WORKSPACE_ID, processedPosts, workspaces, type Workspace } from '@/db/schema';
 
 /**
  * A workspace is one tenant: a destination channel and the reviewer who
@@ -26,6 +26,11 @@ export interface TelegramDestination {
   /** The reviewer's private chat; null when this tenant has no reviewer. */
   adminChatId: string | null;
   disableNotification: boolean;
+  /**
+   * The channel's name, shown on its review messages — set only when the
+   * reviewer reviews for more than one channel and needs telling them apart.
+   */
+  channelLabel?: string | null;
 }
 
 /**
@@ -105,19 +110,20 @@ export async function listAllWorkspaces(db: Database): Promise<Workspace[]> {
 }
 
 /**
- * The tenant a Telegram user reviews for.
+ * Every tenant a Telegram user reviews for, in a stable order.
  *
- * This is the whole authorisation rule for the webhook: a user is an admin
- * exactly when some workspace names them as its reviewer. Nobody else can
- * manage sources or publish, however the message reached them.
+ * This is the whole authorisation rule: a user is an admin exactly when some
+ * workspace names them as its reviewer, and only for those workspaces. One
+ * person may review several channels; nobody else can manage sources or
+ * publish, however a message reached them.
  */
-export async function findWorkspaceByAdminChatId(
+export async function findWorkspacesByAdminChatId(
   db: Database,
-  adminChatId: number | string | undefined,
-): Promise<Workspace | null> {
-  if (adminChatId === undefined || adminChatId === null || adminChatId === '') return null;
+  adminChatId: number | string | undefined | null,
+): Promise<Workspace[]> {
+  if (adminChatId === undefined || adminChatId === null || adminChatId === '') return [];
 
-  const rows = await db
+  return db
     .select()
     .from(workspaces)
     .where(
@@ -126,9 +132,39 @@ export async function findWorkspaceByAdminChatId(
         isNotNull(workspaces.telegramChatId),
       ),
     )
+    .orderBy(asc(workspaces.id));
+}
+
+/**
+ * The tenant a post belongs to, if the user reviews for it; otherwise null.
+ *
+ * A button or Mini App request carries only a post id, so the post itself says
+ * which tenant is meant. A post of a tenant the user does not review for gets
+ * the same null as one that does not exist, so nothing about it leaks.
+ */
+export async function workspaceForPost(
+  db: Database,
+  reviewerWorkspaces: Workspace[],
+  postId: number,
+): Promise<Workspace | null> {
+  if (reviewerWorkspaces.length === 0) return null;
+
+  const rows = await db
+    .select({ workspaceId: processedPosts.workspaceId })
+    .from(processedPosts)
+    .where(eq(processedPosts.id, postId))
     .limit(1);
 
-  return rows[0] ?? null;
+  const workspaceId = rows[0]?.workspaceId;
+  return reviewerWorkspaces.find((workspace) => workspace.id === workspaceId) ?? null;
+}
+
+/** A channel's name for its review messages, when its reviewer has several. */
+export function channelLabelFor(
+  workspace: Pick<Workspace, 'name'>,
+  reviewerWorkspaceCount: number,
+): string | null {
+  return reviewerWorkspaceCount > 1 ? workspace.name : null;
 }
 
 export async function findWorkspaceById(db: Database, id: number): Promise<Workspace | null> {

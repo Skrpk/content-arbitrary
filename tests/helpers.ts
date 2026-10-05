@@ -86,7 +86,12 @@ export async function ensureTestWorkspace(db: Database): Promise<void> {
     .values({ id: DEFAULT_WORKSPACE_ID, name: 'default' })
     .onConflictDoUpdate({
       target: workspaces.id,
-      set: { legacySourceImportedAt: null, telegramChatId: null, telegramAdminChatId: null },
+      set: {
+        name: 'default',
+        legacySourceImportedAt: null,
+        telegramChatId: null,
+        telegramAdminChatId: null,
+      },
     });
 }
 

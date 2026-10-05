@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { describeError } from '@/lib/errors';
 import { TelegramClient } from '@/lib/telegram/client';
 import { unescapeHtml } from '@/lib/telegram/format-caption';
-import { authorizeReviewer, json } from '@/lib/telegram/webapp-request';
+import { authorizeReviewer, json, reviewerWorkspaceForPost } from '@/lib/telegram/webapp-request';
 import {
   formatRejectionNotice,
   REJECTION_NOTE_MAX_LENGTH,
@@ -43,7 +43,10 @@ export async function GET(request: Request): Promise<Response> {
     return json({ error: 'bad post id' }, 400);
   }
 
-  const post = await findPostAwaitingReview(auth.db, { id: postId, workspaceId: auth.workspace.id });
+  const workspace = await reviewerWorkspaceForPost(auth, postId);
+  if (!workspace) return json({ error: 'This post is no longer awaiting review.' }, 404);
+
+  const post = await findPostAwaitingReview(auth.db, { id: postId, workspaceId: workspace.id });
   if (!post || !post.approvalPayload) {
     return json({ error: 'This post is no longer awaiting review.' }, 404);
   }
@@ -74,6 +77,9 @@ export async function POST(request: Request): Promise<Response> {
     return json({ error: 'bad request' }, 400);
   }
 
+  const workspace = await reviewerWorkspaceForPost(auth, body.postId);
+  if (!workspace) return json({ error: 'This post is no longer awaiting review.' }, 409);
+
   const note = body.note?.trim() ?? '';
   if (note.length > REJECTION_NOTE_MAX_LENGTH) {
     return json(
@@ -84,7 +90,7 @@ export async function POST(request: Request): Promise<Response> {
 
   const result = await rejectWithReason(auth.db, {
     id: body.postId,
-    workspaceId: auth.workspace.id,
+    workspaceId: workspace.id,
     reason: 'other',
     note,
   });

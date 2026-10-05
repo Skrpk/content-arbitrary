@@ -8,7 +8,8 @@ import { TELEGRAM_WEB_APP_SCRIPT, theme } from '@/lib/telegram/webapp-client';
  * The source settings Mini App.
  *
  * Opened from the Settings button under /sources or /addsource. Lists the
- * reviewer's own sources with their switches; each switch saves as soon as it
+ * reviewer's own sources — channel by channel when they review several — with
+ * their switches; each switch saves as soon as it
  * is flipped. As with the review pages, every request carries Telegram's
  * signed `initData`, and the server alone decides which sources are theirs.
  */
@@ -18,6 +19,12 @@ interface SourceView {
   username: string;
   enabled: boolean;
   includeTextOnly: boolean;
+}
+
+interface ChannelView {
+  id: number;
+  name: string;
+  sources: SourceView[];
 }
 
 type Setting = 'enabled' | 'includeTextOnly';
@@ -36,7 +43,7 @@ const SETTINGS: { key: Setting; label: string; hint: string }[] = [
 export default function SettingsPage() {
   const [phase, setPhase] = useState<Phase>('waiting-for-telegram');
   const [message, setMessage] = useState<string | null>(null);
-  const [sources, setSources] = useState<SourceView[]>([]);
+  const [channels, setChannels] = useState<ChannelView[]>([]);
   /** `${sourceId}:${setting}` of switches waiting for the server. */
   const [saving, setSaving] = useState<Set<string>>(new Set());
 
@@ -65,10 +72,10 @@ export default function SettingsPage() {
       const response = await fetch('/api/telegram/webapp/sources', {
         headers: { Authorization: `tma ${app.initData}` },
       });
-      const body = (await response.json()) as { sources?: SourceView[]; error?: string };
+      const body = (await response.json()) as { channels?: ChannelView[]; error?: string };
       if (!response.ok) throw new Error(body.error ?? `Request failed (${response.status})`);
 
-      setSources(body.sources ?? []);
+      setChannels(body.channels ?? []);
       setPhase('ready');
     } catch (error: unknown) {
       setPhase('error');
@@ -84,7 +91,14 @@ export default function SettingsPage() {
     const key = `${source.id}:${setting}`;
     const value = !source[setting];
     const apply = (next: boolean) =>
-      setSources((all) => all.map((item) => (item.id === source.id ? { ...item, [setting]: next } : item)));
+      setChannels((all) =>
+        all.map((channel) => ({
+          ...channel,
+          sources: channel.sources.map((item) =>
+            item.id === source.id ? { ...item, [setting]: next } : item,
+          ),
+        })),
+      );
 
     apply(value);
     setSaving((current) => new Set(current).add(key));
@@ -141,7 +155,7 @@ export default function SettingsPage() {
           <>
             <h1 style={{ fontSize: '1.05rem', fontWeight: 600, margin: '0 0 0.75rem' }}>Sources</h1>
 
-            {sources.length === 0 ? (
+            {channels.every((channel) => channel.sources.length === 0) ? (
               <p style={{ color: theme.hint }}>
                 No sources yet. Add one in the chat with /addsource @username.
               </p>
@@ -151,52 +165,64 @@ export default function SettingsPage() {
               <p style={{ color: '#e53935', fontSize: '0.85rem', margin: '0 0 0.75rem' }}>{message}</p>
             ) : null}
 
-            {sources.map((source) => (
-              <section
-                key={source.id}
-                style={{
-                  background: theme.secondaryBg,
-                  borderRadius: '0.6rem',
-                  padding: '0.75rem 0.9rem',
-                  marginBottom: '0.75rem',
-                }}
-              >
-                <div style={{ fontWeight: 600, marginBottom: '0.4rem' }}>@{source.username}</div>
-
-                {SETTINGS.map((setting) => {
-                  const busy = saving.has(`${source.id}:${setting.key}`);
-                  return (
-                    <label
-                      key={setting.key}
+            {channels.map((channel) => {
+              return (
+                <div key={channel.id}>
+                  {/* Named only when there is more than one to tell apart. */}
+                  {channels.length > 1 ? (
+                    <h2 style={{ fontSize: '0.95rem', fontWeight: 600, margin: '1rem 0 0.5rem' }}>
+                      📢 {channel.name}
+                    </h2>
+                  ) : null}
+                  {channel.sources.map((source) => (
+                    <section
+                      key={source.id}
                       style={{
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        justifyContent: 'space-between',
-                        gap: '0.75rem',
-                        padding: '0.45rem 0',
-                        opacity: busy ? 0.6 : 1,
+                        background: theme.secondaryBg,
+                        borderRadius: '0.6rem',
+                        padding: '0.75rem 0.9rem',
+                        marginBottom: '0.75rem',
                       }}
                     >
-                      <span>
-                        <span style={{ display: 'block' }}>{setting.label}</span>
-                        <span style={{ display: 'block', color: theme.hint, fontSize: '0.8rem' }}>
-                          {setting.hint}
-                        </span>
-                      </span>
-                      <input
-                        type="checkbox"
-                        checked={source[setting.key]}
-                        disabled={busy}
-                        onChange={() => {
-                          void toggle(source, setting.key);
-                        }}
-                        style={{ width: '1.3rem', height: '1.3rem', flexShrink: 0, accentColor: theme.button }}
-                      />
-                    </label>
-                  );
-                })}
-              </section>
-            ))}
+                      <div style={{ fontWeight: 600, marginBottom: '0.4rem' }}>@{source.username}</div>
+
+                      {SETTINGS.map((setting) => {
+                        const busy = saving.has(`${source.id}:${setting.key}`);
+                        return (
+                          <label
+                            key={setting.key}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'flex-start',
+                              justifyContent: 'space-between',
+                              gap: '0.75rem',
+                              padding: '0.45rem 0',
+                              opacity: busy ? 0.6 : 1,
+                            }}
+                          >
+                            <span>
+                              <span style={{ display: 'block' }}>{setting.label}</span>
+                              <span style={{ display: 'block', color: theme.hint, fontSize: '0.8rem' }}>
+                                {setting.hint}
+                              </span>
+                            </span>
+                            <input
+                              type="checkbox"
+                              checked={source[setting.key]}
+                              disabled={busy}
+                              onChange={() => {
+                                void toggle(source, setting.key);
+                              }}
+                              style={{ width: '1.3rem', height: '1.3rem', flexShrink: 0, accentColor: theme.button }}
+                            />
+                          </label>
+                        );
+                      })}
+                    </section>
+                  ))}
+                </div>
+              );
+            })}
           </>
         ) : null}
       </main>

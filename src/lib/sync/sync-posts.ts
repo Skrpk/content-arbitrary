@@ -17,6 +17,7 @@ import { attributePostsToSource, getSyncState } from '@/lib/sync/repository';
 import { defaultSleep } from '@/lib/sync/retry';
 import { syncXSource } from '@/lib/sync/sync-x-source';
 import {
+  channelLabelFor,
   destinationFor,
   ensureDefaultWorkspace,
   listActiveWorkspaces,
@@ -105,6 +106,15 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
       ids: tenants.map((tenant) => tenant.id),
     });
 
+    // How many channels each reviewer has, so a reviewer of several can be told
+    // which one a post is for.
+    const channelsPerReviewer = new Map<string, number>();
+    for (const tenant of tenants) {
+      if (!tenant.telegramAdminChatId) continue;
+      const count = channelsPerReviewer.get(tenant.telegramAdminChatId) ?? 0;
+      channelsPerReviewer.set(tenant.telegramAdminChatId, count + 1);
+    }
+
     for (const tenant of tenants) {
       const resolved = destinationFor(tenant, env);
       if (!resolved.ok) {
@@ -114,6 +124,11 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
         skippedWorkspaces.push({ workspaceId: tenant.id, reason: resolved.reason });
         continue;
       }
+
+      resolved.destination.channelLabel = channelLabelFor(
+        tenant,
+        channelsPerReviewer.get(tenant.telegramAdminChatId ?? '') ?? 0,
+      );
 
       /**
        * One lock per tenant. A tenant already being synced by an overlapping

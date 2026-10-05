@@ -1,4 +1,4 @@
-import { and, asc, eq, sql as rawSql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql as rawSql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import {
   DEFAULT_WORKSPACE_ID,
@@ -151,7 +151,8 @@ export interface SourceSettings {
 }
 
 /**
- * Change a source's settings, only within the given workspace.
+ * Change a source's settings, only within the given workspaces — the ones the
+ * reviewer asking reviews for.
  *
  * The id comes from a client, so the workspace scope is what keeps a reviewer
  * to their own sources: another tenant's id matches nothing and returns null,
@@ -159,12 +160,14 @@ export interface SourceSettings {
  */
 export async function updateSourceSettings(
   db: Database,
-  input: { id: number; workspaceId: number; settings: SourceSettings },
+  input: { id: number; workspaceIds: number[]; settings: SourceSettings },
 ): Promise<Source | null> {
+  if (input.workspaceIds.length === 0) return null;
+
   const rows = await db
     .update(sources)
     .set({ ...input.settings, updatedAt: new Date() })
-    .where(and(eq(sources.id, input.id), eq(sources.workspaceId, input.workspaceId)))
+    .where(and(eq(sources.id, input.id), inArray(sources.workspaceId, input.workspaceIds)))
     .returning();
   return rows[0] ?? null;
 }

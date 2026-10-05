@@ -5,13 +5,13 @@ import { listSources, updateSourceSettings } from '@/lib/sources/repository';
 import { authorizeReviewer, json } from '@/lib/telegram/webapp-request';
 
 /**
- * The settings Mini App's API: list the reviewer's sources and change their
- * per-source switches.
+ * The settings Mini App's API: list the reviewer's sources, channel by
+ * channel, and change their per-source switches.
  *
  * Guarded like the other Mini App endpoints — signed `initData` naming a
- * workspace's reviewer — and every read and write is scoped to that
- * workspace, so a source id from another tenant behaves as if it did not
- * exist.
+ * workspace's reviewer — and every read and write is scoped to the workspaces
+ * they review for, so a source id from another tenant behaves as if it did
+ * not exist.
  */
 
 export const runtime = 'nodejs';
@@ -46,8 +46,14 @@ export async function GET(request: Request): Promise<Response> {
   }
   if (!auth.ok) return auth.response;
 
-  const all = await listSources(auth.db, auth.workspace.id);
-  return json({ sources: all.map(view) });
+  const channels = await Promise.all(
+    auth.workspaces.map(async (workspace) => ({
+      id: workspace.id,
+      name: workspace.name,
+      sources: (await listSources(auth.db, workspace.id)).map(view),
+    })),
+  );
+  return json({ channels });
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -70,7 +76,7 @@ export async function POST(request: Request): Promise<Response> {
   const { sourceId, ...settings } = body;
   const updated = await updateSourceSettings(auth.db, {
     id: sourceId,
-    workspaceId: auth.workspace.id,
+    workspaceIds: auth.workspaces.map((workspace) => workspace.id),
     settings,
   });
 

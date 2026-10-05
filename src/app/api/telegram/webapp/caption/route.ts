@@ -3,7 +3,7 @@ import { describeError } from '@/lib/errors';
 import { TelegramClient } from '@/lib/telegram/client';
 import { TELEGRAM_PARSE_MODE, escapeHtml, unescapeHtml } from '@/lib/telegram/format-caption';
 import { TELEGRAM_CAPTION_LIMIT, TELEGRAM_MESSAGE_TEXT_LIMIT } from '@/lib/telegram/limits';
-import { authorizeReviewer, json } from '@/lib/telegram/webapp-request';
+import { authorizeReviewer, json, reviewerWorkspaceForPost } from '@/lib/telegram/webapp-request';
 import { findPostAwaitingReview, updateApprovalCaption } from '@/lib/sync/repository';
 import type { ApprovalPayload } from '@/db/schema';
 
@@ -52,9 +52,12 @@ export async function GET(request: Request): Promise<Response> {
     return json({ error: 'bad post id' }, 400);
   }
 
+  const workspace = await reviewerWorkspaceForPost(auth, postId);
+  if (!workspace) return json({ error: 'This post is no longer awaiting review.' }, 404);
+
   const post = await findPostAwaitingReview(auth.db, {
     id: postId,
-    workspaceId: auth.workspace.id,
+    workspaceId: workspace.id,
     // A scheduled post has not gone out yet, so its text may still change.
     includeScheduled: true,
   });
@@ -93,11 +96,14 @@ export async function POST(request: Request): Promise<Response> {
     return json({ error: 'bad request' }, 400);
   }
 
+  const workspace = await reviewerWorkspaceForPost(auth, body.postId);
+  if (!workspace) return json({ error: 'This post is no longer awaiting review.' }, 409);
+
   const caption = body.caption.trim();
 
   const target = await findPostAwaitingReview(auth.db, {
     id: body.postId,
-    workspaceId: auth.workspace.id,
+    workspaceId: workspace.id,
     includeScheduled: true,
   });
   if (!target?.approvalPayload) {
@@ -122,7 +128,7 @@ export async function POST(request: Request): Promise<Response> {
 
   const result = await updateApprovalCaption(auth.db, {
     id: body.postId,
-    workspaceId: auth.workspace.id,
+    workspaceId: workspace.id,
     caption: escapeHtml(caption),
   });
 
@@ -143,7 +149,7 @@ export async function POST(request: Request): Promise<Response> {
    */
   const post = await findPostAwaitingReview(auth.db, {
     id: body.postId,
-    workspaceId: auth.workspace.id,
+    workspaceId: workspace.id,
     includeScheduled: true,
   });
   const previewMessageId = post?.approvalPayload?.adminMediaMessageId;

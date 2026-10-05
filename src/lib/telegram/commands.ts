@@ -14,6 +14,7 @@ import {
 import type { XClient } from '@/lib/x/client';
 import { formatScheduleTime } from '@/lib/sync/approval';
 import { listScheduledPosts } from '@/lib/sync/repository';
+import type { InlineKeyboardMarkup } from '@/lib/telegram/send-media';
 
 /**
  * Slash commands for managing the source list from the bot's private chat.
@@ -24,6 +25,10 @@ import { listScheduledPosts } from '@/lib/sync/repository';
  *
  * Handlers return the reply text. Authorisation is the caller's job, so that
  * the single admin check in the webhook stays the only one.
+ *
+ * A reviewer of several channels is asked which one a command is for, with a
+ * button per channel; the button carries the whole command, so even that
+ * question needs no state between calls.
  */
 
 export interface CommandReply {
@@ -33,6 +38,14 @@ export interface CommandReply {
    * opens their settings. The webhook adds it when a Mini App is configured.
    */
   offerSettings?: boolean;
+  /** Buttons that belong to the reply itself, such as a choice of channel. */
+  replyMarkup?: InlineKeyboardMarkup;
+}
+
+/** A channel the reviewer works on, as the commands need to name it. */
+export interface WorkspaceRef {
+  id: number;
+  name: string;
 }
 
 /** Absolute URL of the Mini App page with every source's settings. */
@@ -70,6 +83,63 @@ export interface CommandContext {
    * can never list or change another tenant's accounts.
    */
   workspaceId: number;
+  /**
+   * Every tenant the sender reviews for, when there is more than one. Lists
+   * then cover them all, and a command about one source asks which channel.
+   */
+  workspaces?: WorkspaceRef[];
+}
+
+/** The commands that act on one source in one channel. */
+type SourceCommand = 'addsource' | 'removesource' | 'pausesource' | 'resumesource';
+
+const CHOICE_CODES: Record<SourceCommand, string> = {
+  addsource: 'a',
+  removesource: 'r',
+  pausesource: 'p',
+  resumesource: 'u',
+};
+
+const CHOICE_QUESTIONS: Record<SourceCommand, (handle: string) => string> = {
+  addsource: (handle) => `Add <b>@${handle}</b> to which channel?`,
+  removesource: (handle) => `Remove <b>@${handle}</b> from which channel?`,
+  pausesource: (handle) => `Pause <b>@${handle}</b> in which channel?`,
+  resumesource: (handle) => `Resume <b>@${handle}</b> in which channel?`,
+};
+
+/** A channel button's data, well inside Telegram's 64 bytes: `wc:a:12:karpathy`. */
+export function buildChannelChoiceData(
+  command: SourceCommand,
+  workspaceId: number,
+  username: string,
+): string {
+  return `wc:${CHOICE_CODES[command]}:${workspaceId}:${username}`;
+}
+
+/**
+ * Read a channel button back. Untrusted like any callback: the caller must
+ * still check the workspace is one the presser reviews for.
+ */
+export function parseChannelChoice(
+  data: string | undefined,
+): { command: SourceCommand; workspaceId: number; username: string } | null {
+  const match = /^wc:([arpu]):(\d{1,12}):([A-Za-z0-9_]{1,15})$/.exec(data?.trim() ?? '');
+  if (!match) return null;
+
+  const workspaceId = Number(match[2]);
+  if (!Number.isSafeInteger(workspaceId) || workspaceId <= 0) return null;
+
+  const command = (Object.keys(CHOICE_CODES) as SourceCommand[]).find(
+    (key) => CHOICE_CODES[key] === match[1],
+  )!;
+  return { command, workspaceId, username: match[3]! };
+}
+
+/** The channels a command covers: all of the sender's, or the one it acts on. */
+function channelsOf(context: CommandContext): WorkspaceRef[] {
+  return context.workspaces && context.workspaces.length > 0
+    ? context.workspaces
+    : [{ id: context.workspaceId, name: '' }];
 }
 
 const HELP_TEXT = [
@@ -107,27 +177,38 @@ async function resolveHandleArgument(
 }
 
 export async function handleSources(context: CommandContext): Promise<CommandReply> {
-  const all = await listSources(context.db, context.workspaceId);
+  const channels = channelsOf(context);
+  const listed = await Promise.all(
+    channels.map(async (channel) => ({ channel, sources: await listSources(context.db, channel.id) })),
+  );
+  const all = listed.flatMap((entry) => entry.sources);
 
   if (all.length === 0) {
-    return { text: [
-      'No sources yet.',
-      '',
-      'Add the first one:',
-      '<code>/addsource @username</code>',
-    ].join('\n') };
+    return {
+      text: ['No sources yet.', '', 'Add the first one:', '<code>/addsource @username</code>'].join(
+        '\n',
+      ),
+    };
   }
 
-  const lines = all.map(
-    (source) =>
-      `${source.enabled ? '✅' : '⏸'} @${escapeHtml(source.username)}` +
-      (source.includeTextOnly ? ' · text posts too' : ''),
-  );
+  const lineFor = (source: (typeof all)[number]) =>
+    `${source.enabled ? '✅' : '⏸'} @${escapeHtml(source.username)}` +
+    (source.includeTextOnly ? ' · text posts too' : '');
+
+  // One list, or one per channel when there are several to tell apart.
+  const body =
+    channels.length > 1
+      ? listed.flatMap(({ channel, sources }) => [
+          '',
+          `<b>📢 ${escapeHtml(channel.name)}</b>`,
+          ...(sources.length > 0 ? sources.map(lineFor) : ['—']),
+        ])
+      : ['', ...all.map(lineFor)];
 
   const paused = all.filter((source) => !source.enabled).length;
   const footer = paused > 0 ? ['', `${paused} paused — /resumesource to re-enable.`] : [];
 
-  return { text: ['<b>Sources</b>', '', ...lines, ...footer].join('\n'), offerSettings: true };
+  return { text: ['<b>Sources</b>', ...body, ...footer].join('\n'), offerSettings: true };
 }
 
 export async function handleAddSource(
@@ -229,23 +310,132 @@ async function setEnabled(
     : `⏸ <b>@${escapeHtml(source.username)}</b> paused — kept, but skipped on sync.`;
 }
 
-/** The tenant's scheduled posts, soonest first, each at the time it was picked in. */
+/**
+ * The scheduled posts of every channel the sender reviews, soonest first, each
+ * at the time it was picked in — and, across several channels, which one.
+ */
 export async function handleScheduled(context: CommandContext): Promise<string> {
-  const posts = await listScheduledPosts(context.db, context.workspaceId);
+  const channels = channelsOf(context);
+  const posts = (
+    await Promise.all(
+      channels.map(async (channel) =>
+        (await listScheduledPosts(context.db, channel.id)).map((post) => ({ post, channel })),
+      ),
+    )
+  )
+    .flat()
+    .sort(
+      (a, b) => (a.post.scheduledFor?.getTime() ?? 0) - (b.post.scheduledFor?.getTime() ?? 0),
+    );
 
   if (posts.length === 0) {
     return 'Nothing scheduled. Use 🕒 Schedule under a post in review.';
   }
 
-  const lines = posts.map((post) => {
+  const lines = posts.map(({ post, channel }) => {
     const at = post.scheduledFor
       ? escapeHtml(formatScheduleTime(post.scheduledFor, post.scheduledTimezone))
       : 'no time set';
     const who = post.xAuthorUsername ? ` · @${escapeHtml(post.xAuthorUsername)}` : '';
-    return `🕒 ${at}${who}\n${escapeHtml(post.xPostUrl)}`;
+    const where = channels.length > 1 ? ` · 📢 ${escapeHtml(channel.name)}` : '';
+    return `🕒 ${at}${who}${where}\n${escapeHtml(post.xPostUrl)}`;
   });
 
   return [`<b>Scheduled</b> (${posts.length})`, '', lines.join('\n\n')].join('\n');
+}
+
+/** Run a source command in one channel, the way it runs for a single-channel reviewer. */
+async function runInChannel(
+  context: CommandContext,
+  command: SourceCommand,
+  username: string,
+): Promise<CommandReply> {
+  const single = { ...context, workspaces: undefined };
+  switch (command) {
+    case 'addsource':
+      return handleAddSource(single, username);
+    case 'removesource':
+      return { text: await handleRemoveSource(single, username) };
+    case 'pausesource':
+      return { text: await setEnabled(single, username, false) };
+    case 'resumesource':
+      return { text: await setEnabled(single, username, true) };
+  }
+}
+
+/**
+ * A source command from a reviewer of several channels: act at once when only
+ * one channel can be meant, otherwise ask with a button per channel.
+ */
+async function sourceCommandAcrossChannels(
+  context: CommandContext,
+  command: SourceCommand,
+  args: string,
+  channels: WorkspaceRef[],
+): Promise<CommandReply> {
+  const resolved = await resolveHandleArgument(args, `/${command} @username`);
+  if (!resolved.ok) return { text: resolved.reply };
+  const { username } = resolved;
+
+  // Adding fits any channel; the rest only those already watching the account.
+  const candidates =
+    command === 'addsource'
+      ? channels
+      : (
+          await Promise.all(
+            channels.map(async (channel) =>
+              (await findSourceByUsername(context.db, {
+                platform: 'x',
+                username,
+                workspaceId: channel.id,
+              }))
+                ? channel
+                : null,
+            ),
+          )
+        ).filter((channel): channel is WorkspaceRef => channel !== null);
+
+  if (candidates.length === 0) {
+    return { text: `ℹ️ <b>@${escapeHtml(username)}</b> is not in your sources.` };
+  }
+  if (candidates.length === 1) {
+    return runChosenChannel(context, { command, workspaceId: candidates[0]!.id, username });
+  }
+
+  return {
+    text: CHOICE_QUESTIONS[command](escapeHtml(username)),
+    replyMarkup: {
+      inline_keyboard: candidates.map((channel) => [
+        {
+          text: `📢 ${channel.name}`,
+          callback_data: buildChannelChoiceData(command, channel.id, username),
+        },
+      ]),
+    },
+  };
+}
+
+/**
+ * Carry out a source command in the channel the reviewer picked. The channel
+ * must be one of theirs: a button for any other is refused like a stranger's.
+ */
+export async function runChosenChannel(
+  context: CommandContext,
+  choice: { command: SourceCommand; workspaceId: number; username: string },
+): Promise<CommandReply> {
+  const channel = channelsOf(context).find((candidate) => candidate.id === choice.workspaceId);
+  if (!channel) return { text: '⚠️ That channel is not one of yours.' };
+
+  const reply = await runInChannel(
+    { ...context, workspaceId: channel.id },
+    choice.command,
+    choice.username,
+  );
+
+  // Say which channel it happened in, when there are several it could have been.
+  return channelsOf(context).length > 1
+    ? { ...reply, text: `📢 ${escapeHtml(channel.name)}\n\n${reply.text}` }
+    : reply;
 }
 
 /**
@@ -256,23 +446,24 @@ export async function dispatchCommand(
   context: CommandContext,
   parsed: ParsedCommand,
 ): Promise<CommandReply | null> {
-  switch (parsed.command) {
+  const command = parsed.command === 'deletesource' ? 'removesource' : parsed.command;
+  const channels = channelsOf(context);
+
+  switch (command) {
     case 'start':
     case 'help':
       return { text: HELP_TEXT };
     case 'sources':
       return handleSources(context);
-    case 'addsource':
-      return handleAddSource(context, parsed.args);
-    case 'removesource':
-    case 'deletesource':
-      return { text: await handleRemoveSource(context, parsed.args) };
-    case 'pausesource':
-      return { text: await setEnabled(context, parsed.args, false) };
-    case 'resumesource':
-      return { text: await setEnabled(context, parsed.args, true) };
     case 'scheduled':
       return { text: await handleScheduled(context) };
+    case 'addsource':
+    case 'removesource':
+    case 'pausesource':
+    case 'resumesource':
+      return channels.length > 1
+        ? sourceCommandAcrossChannels(context, command, parsed.args, channels)
+        : runInChannel(context, command, parsed.args);
     default:
       return null;
   }
