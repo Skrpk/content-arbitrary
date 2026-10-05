@@ -12,6 +12,8 @@ import {
   updateSourceUsername,
 } from '@/lib/sources/repository';
 import type { XClient } from '@/lib/x/client';
+import { formatScheduleTime } from '@/lib/sync/approval';
+import { listScheduledPosts } from '@/lib/sync/repository';
 
 /**
  * Slash commands for managing the source list from the bot's private chat.
@@ -78,6 +80,10 @@ const HELP_TEXT = [
   '/removesource @username — stop watching and forget it',
   '/pausesource @username — keep it, but skip it on sync',
   '/resumesource @username — watch it again',
+  '',
+  '<b>Publishing</b>',
+  '',
+  '/scheduled — posts waiting to be published at a set time',
   '',
   'Per-source options, such as mirroring posts without media, are under ⚙️ Settings in /sources.',
 ].join('\n');
@@ -223,6 +229,25 @@ async function setEnabled(
     : `⏸ <b>@${escapeHtml(source.username)}</b> paused — kept, but skipped on sync.`;
 }
 
+/** The tenant's scheduled posts, soonest first, each at the time it was picked in. */
+export async function handleScheduled(context: CommandContext): Promise<string> {
+  const posts = await listScheduledPosts(context.db, context.workspaceId);
+
+  if (posts.length === 0) {
+    return 'Nothing scheduled. Use 🕒 Schedule under a post in review.';
+  }
+
+  const lines = posts.map((post) => {
+    const at = post.scheduledFor
+      ? escapeHtml(formatScheduleTime(post.scheduledFor, post.scheduledTimezone))
+      : 'no time set';
+    const who = post.xAuthorUsername ? ` · @${escapeHtml(post.xAuthorUsername)}` : '';
+    return `🕒 ${at}${who}\n${escapeHtml(post.xPostUrl)}`;
+  });
+
+  return [`<b>Scheduled</b> (${posts.length})`, '', lines.join('\n\n')].join('\n');
+}
+
 /**
  * Dispatch a command. Returns null for anything unrecognised, so the webhook
  * can stay silent rather than arguing with stray messages.
@@ -246,6 +271,8 @@ export async function dispatchCommand(
       return { text: await setEnabled(context, parsed.args, false) };
     case 'resumesource':
       return { text: await setEnabled(context, parsed.args, true) };
+    case 'scheduled':
+      return { text: await handleScheduled(context) };
     default:
       return null;
   }

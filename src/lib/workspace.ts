@@ -131,6 +131,11 @@ export async function findWorkspaceByAdminChatId(
   return rows[0] ?? null;
 }
 
+export async function findWorkspaceById(db: Database, id: number): Promise<Workspace | null> {
+  const rows = await db.select().from(workspaces).where(eq(workspaces.id, id)).limit(1);
+  return rows[0] ?? null;
+}
+
 /**
  * Turn a workspace row into a publish destination, or explain why it cannot
  * publish yet. Returning the reason keeps the decision out of the caller.

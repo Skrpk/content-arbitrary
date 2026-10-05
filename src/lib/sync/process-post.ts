@@ -25,7 +25,7 @@ import { downloadMedia, formatBytes, type DownloadedMedia } from '@/lib/x/downlo
 import { selectTelegramVideoVariant } from '@/lib/x/select-video-variant';
 import { maxUploadBytesFor } from '@/lib/telegram/limits';
 import type { NormalizedMedia, NormalizedPost, TelegramMethod } from '@/types';
-import { buildEditUrl, sendForApproval } from '@/lib/sync/approval';
+import { reviewLinks, sendForApproval } from '@/lib/sync/approval';
 import type { ApprovalPayload } from '@/db/schema';
 import { defaultSleep } from '@/lib/sync/retry';
 import type { TelegramDestination } from '@/lib/workspace';
@@ -276,9 +276,7 @@ export async function processPost(
           caption,
           overflowMessage,
           payloads,
-          editUrl: env.APP_BASE_URL
-            ? buildEditUrl(env.APP_BASE_URL, options.postId!)
-            : undefined,
+          ...reviewLinks(env.APP_BASE_URL, options.postId!),
         },
         { logger, sleep },
       );
@@ -463,7 +461,7 @@ async function processTextPost(
           method,
           caption: text,
           payloads: [],
-          editUrl: env.APP_BASE_URL ? buildEditUrl(env.APP_BASE_URL, options.postId!) : undefined,
+          ...reviewLinks(env.APP_BASE_URL, options.postId!),
         },
         { logger, sleep: options.sleep },
       );

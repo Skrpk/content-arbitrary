@@ -52,7 +52,12 @@ export async function GET(request: Request): Promise<Response> {
     return json({ error: 'bad post id' }, 400);
   }
 
-  const post = await findPostAwaitingReview(auth.db, { id: postId, workspaceId: auth.workspace.id });
+  const post = await findPostAwaitingReview(auth.db, {
+    id: postId,
+    workspaceId: auth.workspace.id,
+    // A scheduled post has not gone out yet, so its text may still change.
+    includeScheduled: true,
+  });
   if (!post || !post.approvalPayload) {
     return json({ error: 'This post is no longer awaiting review.' }, 404);
   }
@@ -93,6 +98,7 @@ export async function POST(request: Request): Promise<Response> {
   const target = await findPostAwaitingReview(auth.db, {
     id: body.postId,
     workspaceId: auth.workspace.id,
+    includeScheduled: true,
   });
   if (!target?.approvalPayload) {
     return json({ error: 'This post is no longer awaiting review.' }, 409);
@@ -138,6 +144,7 @@ export async function POST(request: Request): Promise<Response> {
   const post = await findPostAwaitingReview(auth.db, {
     id: body.postId,
     workspaceId: auth.workspace.id,
+    includeScheduled: true,
   });
   const previewMessageId = post?.approvalPayload?.adminMediaMessageId;
   const client = new TelegramClient({ logger: auth.logger });

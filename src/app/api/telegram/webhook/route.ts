@@ -6,17 +6,17 @@ import { describeError } from '@/lib/errors';
 import { createLogger } from '@/lib/logger';
 import { TelegramClient } from '@/lib/telegram/client';
 import { TELEGRAM_PARSE_MODE, escapeHtml } from '@/lib/telegram/format-caption';
-import type { SendContext } from '@/lib/telegram/send-media';
 import {
   buildApprovalKeyboard,
-  buildEditUrl,
   buildRejectNoteUrl,
   buildRejectReasonKeyboard,
   formatRejectionNotice,
+  formatReviewControlText,
   parseCallbackData,
-  publishApprovedPayload,
+  reviewLinks,
   settleReviewMessage,
 } from '@/lib/sync/approval';
+import { publishDecidedPost } from '@/lib/sync/publish';
 import { buildSettingsUrl, dispatchCommand, parseCommand } from '@/lib/telegram/commands';
 import { destinationFor, findWorkspaceByAdminChatId } from '@/lib/workspace';
 import { XClient } from '@/lib/x/client';
@@ -25,9 +25,10 @@ import {
   claimForDecision,
   findPostAwaitingReview,
   findStatusInWorkspace,
-  markPublished,
   rejectWithReason,
   releaseToApproval,
+  returnToSchedule,
+  unschedulePost,
 } from '@/lib/sync/repository';
 import type { PostStatus } from '@/db/schema';
 
@@ -36,7 +37,8 @@ import type { PostStatus } from '@/db/schema';
  *
  * Approve publishes. Reject only swaps the buttons for a list of reasons (and a
  * Back button); choosing a reason is what rejects the post, so every rejection
- * records why.
+ * records why. Schedule is a Mini App, not a callback; once a post is
+ * scheduled its buttons are Publish now and Unschedule.
  *
  * Inline keyboards deliver their callbacks over a webhook, which a cron-only
  * application has no other way to receive. Telegram calls this endpoint.
@@ -101,6 +103,7 @@ const ok = () => new Response('ok', { status: 200 });
 function alreadySettledNotice(status: PostStatus | undefined): string {
   if (status === 'published') return 'Already published.';
   if (status === 'rejected') return 'Already rejected.';
+  if (status === 'scheduled') return 'Already scheduled — use its own buttons.';
   return `Not awaiting review (status: ${status ?? 'unknown'}).`;
 }
 
@@ -203,9 +206,7 @@ export async function POST(request: Request): Promise<Response> {
         ? buildRejectReasonKeyboard(post.id, {
             otherUrl: baseUrl ? buildRejectNoteUrl(baseUrl, post.id) : undefined,
           })
-        : buildApprovalKeyboard(post.id, {
-            editUrl: baseUrl ? buildEditUrl(baseUrl, post.id) : undefined,
-          });
+        : buildApprovalKeyboard(post.id, reviewLinks(baseUrl, post.id));
 
     try {
       if (chatId && messageId) await client.editMessageReplyMarkup(chatId, messageId, keyboard);
@@ -252,10 +253,51 @@ export async function POST(request: Request): Promise<Response> {
     return ok();
   }
 
-  // A single conditional UPDATE decides the winner, so a double tap — or an
-  // Approve racing a rejection — can only ever act once. Scoped to the
-  // presser's tenant, so a post id from another tenant simply does not match.
-  const claim = await claimForDecision(db, parsed.postId, workspace.id);
+  if (parsed.action === 'unschedule') {
+    // Back to the review queue: the decision is undone, nothing is sent.
+    const result = await unschedulePost(db, { id: parsed.postId, workspaceId: workspace.id });
+
+    if (!result.unscheduled || !result.row) {
+      postLogger.info('webhook.already_decided', { currentStatus: result.currentStatus ?? 'unknown' });
+      await client.answerCallbackQuery(query.id, alreadySettledNotice(result.currentStatus)).catch(() => {});
+      return ok();
+    }
+
+    postLogger.info('webhook.unscheduled', { xPostId: result.row.xPostId });
+    await client.answerCallbackQuery(query.id, 'Unscheduled — back in review.').catch(() => {});
+
+    const chatId = result.row.adminChatId ?? String(query.message?.chat.id ?? '');
+    const messageId = result.row.adminMessageId ?? query.message?.message_id;
+    if (chatId && messageId) {
+      await client
+        .editMessageText(
+          chatId,
+          messageId,
+          formatReviewControlText(result.row.xAuthorUsername, result.row.xPostUrl),
+          TELEGRAM_PARSE_MODE,
+          buildApprovalKeyboard(result.row.id, reviewLinks(env.APP_BASE_URL, result.row.id)),
+        )
+        .catch((error: unknown) => {
+          postLogger.warn('webhook.keyboard_swap_failed', { error: describeError(error) });
+        });
+    }
+    return ok();
+  }
+
+  /**
+   * Approve, or Publish now on a scheduled post: either way it goes out now.
+   * A single conditional UPDATE decides the winner, so a double tap — or one
+   * racing a rejection, or the scheduler — can only ever act once. Scoped to
+   * the presser's tenant, so a post id from another tenant simply does not
+   * match.
+   */
+  const fromSchedule = parsed.action === 'publish_now';
+  const claim = await claimForDecision(
+    db,
+    parsed.postId,
+    workspace.id,
+    fromSchedule ? ['scheduled'] : ['awaiting_approval'],
+  );
 
   if (!claim.claimed || !claim.row) {
     postLogger.info('webhook.already_decided', { currentStatus: claim.currentStatus ?? 'unknown' });
@@ -266,26 +308,21 @@ export async function POST(request: Request): Promise<Response> {
   const adminChatId = claim.row.adminChatId ?? String(query.message?.chat.id ?? '');
   const adminMessageId = claim.row.adminMessageId ?? query.message?.message_id;
 
-  const stored = claim.row.approvalPayload;
+  /** Return the post to where it was claimed from, so it can be tried again. */
+  const putBack = (errorMessage: string) =>
+    fromSchedule
+      ? returnToSchedule(db, { id: parsed.postId, errorMessage, countAttempt: false })
+      : releaseToApproval(db, { id: parsed.postId, errorMessage });
+
+  const payload = claim.row.approvalPayload;
   // A text-only post has no media by design; any other post without it does.
-  if (!stored || (stored.method !== 'sendMessage' && stored.items.length === 0)) {
+  if (!payload || (payload.method !== 'sendMessage' && payload.items.length === 0)) {
     const reason = 'approval payload is missing; re-run the sync for this post';
     postLogger.error('webhook.missing_payload', { xPostId: claim.row.xPostId });
-    await releaseToApproval(db, { id: parsed.postId, errorMessage: reason });
+    await putBack(reason);
     await client.answerCallbackQuery(query.id, 'Cannot publish: media reference lost.').catch(() => {});
     return ok();
   }
-
-  // The caption column, not the payload's copy, is what gets published: it is
-  // the one an edit is guaranteed to have written. The fallback covers a post
-  // queued by the previous deploy, before the column existed.
-  const payload = { ...stored, caption: claim.row.caption ?? stored.caption };
-
-  const channelContext: SendContext = {
-    client,
-    chatId: resolved.destination.chatId,
-    disableNotification: resolved.destination.disableNotification,
-  };
 
   try {
     postLogger.info('webhook.publishing', {
@@ -294,16 +331,15 @@ export async function POST(request: Request): Promise<Response> {
       mediaCount: payload.items.length,
     });
 
-    const result = await publishApprovedPayload(channelContext, payload, { logger: postLogger });
-
-    await markPublished(db, {
-      id: parsed.postId,
-      telegramChatId: resolved.destination.chatId,
-      primaryMessageId: result.primaryMessageId,
-      telegramMethod: result.method,
-      mediaCount: payload.items.length,
-      messages: result.messages,
-      reviewedAt: new Date(),
+    const result = await publishDecidedPost({
+      db,
+      client,
+      row: claim.row,
+      payload,
+      destination: resolved.destination,
+      logger: postLogger,
+      // A scheduled post was decided when it was scheduled.
+      reviewedAt: fromSchedule ? undefined : new Date(),
     });
 
     postLogger.info('webhook.published', {
@@ -319,10 +355,10 @@ export async function POST(request: Request): Promise<Response> {
       `✅ Published\n${escapeHtml(claim.row.xPostUrl)}`,
     );
   } catch (error) {
-    // Put it back in the queue so the reviewer can simply press Approve again.
+    // Put it back so the reviewer can simply press the button again.
     const message = describeError(error);
     postLogger.error('webhook.publish_failed', { xPostId: claim.row.xPostId, error: message });
-    await releaseToApproval(db, { id: parsed.postId, errorMessage: message });
+    await putBack(message);
     await client.answerCallbackQuery(query.id, 'Publishing failed — try again.').catch(() => {});
   }
 

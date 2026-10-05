@@ -6,7 +6,11 @@ import {
   buildRejectReasonCallbackData,
   buildRejectNoteUrl,
   buildRejectReasonKeyboard,
+  buildScheduledKeyboard,
   formatRejectionNotice,
+  formatScheduledNotice,
+  formatScheduleTime,
+  reviewLinks,
   parseCallbackData,
   publishApprovedPayload,
   sendForApproval,
@@ -253,6 +257,80 @@ describe('rejection reasons', () => {
         expect(Buffer.byteLength(button.callback_data, 'utf8')).toBeLessThanOrEqual(64);
       }
     }
+  });
+});
+
+describe('scheduling buttons', () => {
+  it.each([
+    ['publish_now', 'pn:5'],
+    ['unschedule', 'us:5'],
+  ] as const)('round-trips %s', (action, data) => {
+    expect(buildCallbackData(action, 5)).toBe(data);
+    expect(parseCallbackData(data)).toEqual({ action, postId: 5 });
+  });
+
+  it('offers Schedule beside Edit, away from the two final actions', () => {
+    const keyboard = buildApprovalKeyboard(9, reviewLinks('https://example.vercel.app/', 9));
+
+    expect(keyboard.inline_keyboard).toEqual([
+      [
+        { text: '✅ Approve', callback_data: 'ap:9' },
+        { text: '🚫 Reject', callback_data: 'rj:9' },
+      ],
+      [
+        { text: '🕒 Schedule', web_app: { url: 'https://example.vercel.app/review/schedule?post=9' } },
+        { text: '✏️ Edit text', web_app: { url: 'https://example.vercel.app/review?post=9' } },
+      ],
+    ]);
+  });
+
+  it('gives a scheduled post its own buttons', () => {
+    const keyboard = buildScheduledKeyboard(9, reviewLinks('https://example.vercel.app', 9));
+
+    expect(keyboard.inline_keyboard).toEqual([
+      [
+        { text: '⚡ Publish now', callback_data: 'pn:9' },
+        { text: '↩️ Unschedule', callback_data: 'us:9' },
+      ],
+      [
+        { text: '🕒 Change time', web_app: { url: 'https://example.vercel.app/review/schedule?post=9' } },
+        { text: '✏️ Edit text', web_app: { url: 'https://example.vercel.app/review?post=9' } },
+      ],
+    ]);
+  });
+
+  it('keeps Publish now and Unschedule without a Mini App', () => {
+    expect(buildScheduledKeyboard(9, reviewLinks(undefined, 9)).inline_keyboard).toEqual([
+      [
+        { text: '⚡ Publish now', callback_data: 'pn:9' },
+        { text: '↩️ Unschedule', callback_data: 'us:9' },
+      ],
+    ]);
+  });
+});
+
+describe('formatScheduleTime', () => {
+  const at = new Date('2026-10-05T15:00:00Z');
+
+  it('shows the time as picked, in the reviewer\'s zone', () => {
+    expect(formatScheduleTime(at, 'Europe/Kyiv')).toBe('Mon 5 Oct, 18:00');
+  });
+
+  it('names UTC, and falls back to it for a zone it does not know', () => {
+    expect(formatScheduleTime(at, 'UTC')).toBe('Mon 5 Oct, 15:00 UTC');
+    expect(formatScheduleTime(at, null)).toBe('Mon 5 Oct, 15:00 UTC');
+    expect(formatScheduleTime(at, 'Not/AZone')).toBe('Mon 5 Oct, 15:00 UTC');
+  });
+
+  it('puts the time above the source in the review message', () => {
+    expect(
+      formatScheduledNotice({
+        scheduledFor: at,
+        timezone: 'Europe/Kyiv',
+        sourceUsername: 'someone',
+        xPostUrl: 'https://x.com/someone/status/1',
+      }),
+    ).toBe('🕒 Scheduled for Mon 5 Oct, 18:00\nSource: @someone\nhttps://x.com/someone/status/1');
   });
 });
 

@@ -253,7 +253,10 @@ describeIfDb('Reject', () => {
           { text: '✅ Approve', callback_data: `ap:${post.id}` },
           { text: '🚫 Reject', callback_data: `rj:${post.id}` },
         ],
-        [{ text: '✏️ Edit text', web_app: { url: `https://example.vercel.app/review?post=${post.id}` } }],
+        [
+          { text: '🕒 Schedule', web_app: { url: `https://example.vercel.app/review/schedule?post=${post.id}` } },
+          { text: '✏️ Edit text', web_app: { url: `https://example.vercel.app/review?post=${post.id}` } },
+        ],
       ],
     });
     expect((await reload(post.id)).status).toBe('awaiting_approval');
@@ -481,5 +484,104 @@ describeIfDb('the Settings button on source commands', () => {
 
     expect(callsTo('sendMessage')).toHaveLength(1);
     expect(markupOf()).toBeUndefined();
+  });
+});
+
+describeIfDb('a scheduled post', () => {
+  async function queueScheduled(caption = 'A') {
+    const post = await queuePost({ caption });
+    const decidedAt = new Date('2026-10-01T10:00:00Z');
+    await db
+      .update(processedPosts)
+      .set({
+        status: 'scheduled',
+        scheduledFor: new Date(Date.now() + 60 * 60 * 1000),
+        scheduledTimezone: 'Europe/Kyiv',
+        reviewedAt: decidedAt,
+      })
+      .where(eq(processedPosts.id, post.id));
+    return { post, decidedAt };
+  }
+
+  it('is published at once on Publish now, keeping the time it was decided', async () => {
+    const { post, decidedAt } = await queueScheduled('Now please');
+
+    await press(`pn:${post.id}`);
+
+    expect(callsTo('sendPhoto')[0]?.body).toMatchObject({ chat_id: CHANNEL_CHAT, caption: 'Now please' });
+    const after = await reload(post.id);
+    expect(after.status).toBe('published');
+    expect(after.reviewedAt?.toISOString()).toBe(decidedAt.toISOString());
+  });
+
+  it('stays scheduled when Publish now fails', async () => {
+    const { post } = await queueScheduled();
+    failMethod = { method: 'sendPhoto', description: 'Bad Request: chat not found' };
+
+    await press(`pn:${post.id}`);
+
+    const after = await reload(post.id);
+    expect(after.status).toBe('scheduled');
+    expect(after.errorMessage).toContain('chat not found');
+  });
+
+  it('goes back to review on Unschedule, with the review buttons restored', async () => {
+    const { post } = await queueScheduled();
+
+    await press(`us:${post.id}`);
+
+    const after = await reload(post.id);
+    expect(after.status).toBe('awaiting_approval');
+    expect(after.scheduledFor).toBeNull();
+    expect(after.reviewedAt).toBeNull();
+
+    const [restored] = callsTo('editMessageText');
+    expect(restored?.body.text).toBe('Source: @someone\nhttps://x.com/someone/status/1750000000000000001');
+    const buttons = (restored?.body.reply_markup as { inline_keyboard: { text: string }[][] }).inline_keyboard
+      .flat()
+      .map((button) => button.text);
+    expect(buttons).toEqual(['✅ Approve', '🚫 Reject', '🕒 Schedule', '✏️ Edit text']);
+  });
+
+  it('is not published by a stale Approve button', async () => {
+    const { post } = await queueScheduled();
+
+    await press(`ap:${post.id}`);
+
+    expect(callsTo('sendPhoto')).toHaveLength(0);
+    expect((await reload(post.id)).status).toBe('scheduled');
+    expect(callsTo('answerCallbackQuery').at(-1)?.body.text).toBe('Already scheduled — use its own buttons.');
+  });
+
+  it('cannot be published now or unscheduled by a stranger or another tenant\'s reviewer', async () => {
+    await db.insert(workspaces).values({
+      id: OTHER_WORKSPACE,
+      name: 'second',
+      telegramChatId: '-1002000000002',
+      telegramAdminChatId: String(OTHER_REVIEWER_ID),
+    });
+    const { post } = await queueScheduled();
+
+    for (const fromId of [STRANGER_ID, OTHER_REVIEWER_ID]) {
+      await press(`pn:${post.id}`, fromId);
+      await press(`us:${post.id}`, fromId);
+    }
+
+    expect(callsTo('sendPhoto')).toHaveLength(0);
+    expect((await reload(post.id)).status).toBe('scheduled');
+  });
+
+  it('is listed by /scheduled at the time it was picked', async () => {
+    const { post } = await queueScheduled();
+    await db
+      .update(processedPosts)
+      .set({ scheduledFor: new Date('2026-10-05T15:00:00Z') })
+      .where(eq(processedPosts.id, post.id));
+
+    await send('/scheduled');
+
+    const reply = callsTo('sendMessage').at(-1)?.body.text as string;
+    expect(reply).toContain('<b>Scheduled</b> (1)');
+    expect(reply).toContain('🕒 Mon 5 Oct, 18:00 · @someone');
   });
 });

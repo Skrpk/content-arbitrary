@@ -120,6 +120,12 @@ export const postStatusEnum = pgEnum('post_status', [
   'awaiting_approval',
   /** The admin declined it. Never published, never retried. */
   'rejected',
+  /**
+   * Approved for a later time; published by the scheduler once
+   * `scheduled_for` arrives. Telegram's own scheduled messages are not open to
+   * bots, so the queue lives here.
+   */
+  'scheduled',
 ]);
 
 export type PostStatus = (typeof postStatusEnum.enumValues)[number];
@@ -218,6 +224,16 @@ export const processedPosts = pgTable(
      * before this was recorded have it null as well.
      */
     reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+    /**
+     * When the reviewer chose to publish it. Kept after publishing, so a
+     * post's planned time can be compared with when it actually went out.
+     */
+    scheduledFor: timestamp('scheduled_for', { withTimezone: true }),
+    /**
+     * The IANA zone of the reviewer's phone when they scheduled it, used only
+     * to show the time back to them as they picked it.
+     */
+    scheduledTimezone: text('scheduled_timezone'),
     /** Set only on `rejected` rows, and null on those rejected before reasons existed. */
     rejectionReason: rejectionReasonEnum('rejection_reason'),
     /** The reviewer's own words on why, given with the `other` reason. Plain text. */
@@ -269,6 +285,8 @@ export const processedPosts = pgTable(
     index('processed_posts_status_idx').on(table.status),
     index('processed_posts_source_idx').on(table.sourceId),
     index('processed_posts_processed_at_idx').on(table.processedAt),
+    // The scheduler asks every minute for what is due.
+    index('processed_posts_scheduled_idx').on(table.status, table.scheduledFor),
     // A row has both captions or neither: a "current" with no "original" would
     // make every later comparison of the two meaningless.
     check(

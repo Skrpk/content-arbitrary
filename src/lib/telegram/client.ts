@@ -293,7 +293,14 @@ export class TelegramClient {
     );
   }
 
-  editMessageText(chatId: string, messageId: number, text: string, parseMode: string) {
+  /** Replaces a message's text and, by default, strips its buttons. */
+  editMessageText(
+    chatId: string,
+    messageId: number,
+    text: string,
+    parseMode: string,
+    replyMarkup: InlineKeyboardMarkup = { inline_keyboard: [] },
+  ) {
     return this.call(
       'editMessageText',
       {
@@ -302,7 +309,7 @@ export class TelegramClient {
         text,
         parse_mode: parseMode,
         link_preview_options: { is_disabled: true },
-        reply_markup: { inline_keyboard: [] },
+        reply_markup: replyMarkup,
       },
       z.union([telegramMessageSchema, z.boolean()]),
     );

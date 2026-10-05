@@ -40,8 +40,9 @@ import type { TelegramMethod } from '@/types';
  * Reject does not settle anything: it only swaps the buttons for the list of
  * reasons, and the post is rejected when one of those is chosen. `reject_back`
  * undoes a mis-tapped Reject by bringing the original buttons back.
+ * `publish_now` and `unschedule` act on a post already scheduled.
  */
-export type ApprovalAction = 'approve' | 'reject' | 'reject_back';
+export type ApprovalAction = 'approve' | 'reject' | 'reject_back' | 'publish_now' | 'unschedule';
 
 export type ApprovalCallback =
   | { action: ApprovalAction; postId: number }
@@ -51,6 +52,8 @@ const ACTION_CODES: Record<ApprovalAction, string> = {
   approve: 'ap',
   reject: 'rj',
   reject_back: 'rb',
+  publish_now: 'pn',
+  unschedule: 'us',
 };
 
 const ACTIONS_BY_CODE = Object.fromEntries(
@@ -83,7 +86,7 @@ export function buildRejectReasonCallbackData(postId: number, reason: RejectionR
 export function parseCallbackData(data: string | undefined): ApprovalCallback | null {
   if (!data) return null;
 
-  const match = /^(ap|rj|rb|rr):(\d{1,12})(?::([a-z_]{1,32}))?$/.exec(data.trim());
+  const match = /^(ap|rj|rb|pn|us|rr):(\d{1,12})(?::([a-z_]{1,32}))?$/.exec(data.trim());
   if (!match) return null;
 
   const postId = Number(match[2]);
@@ -120,22 +123,110 @@ export function buildRejectNoteUrl(baseUrl: string, postId: number): string {
   return `${baseUrl.replace(/\/+$/, '')}/review/reject?post=${postId}`;
 }
 
+/** Mini App that picks the date and time to publish this post at. */
+export function buildScheduleUrl(baseUrl: string, postId: number): string {
+  return `${baseUrl.replace(/\/+$/, '')}/review/schedule?post=${postId}`;
+}
+
+/** The Mini App links for a post's buttons; none without a base URL. */
+export function reviewLinks(
+  baseUrl: string | undefined,
+  postId: number,
+): { editUrl?: string; scheduleUrl?: string } {
+  return baseUrl
+    ? { editUrl: buildEditUrl(baseUrl, postId), scheduleUrl: buildScheduleUrl(baseUrl, postId) }
+    : {};
+}
+
 export function buildApprovalKeyboard(
   postId: number,
-  options?: { editUrl?: string },
+  options?: { editUrl?: string; scheduleUrl?: string },
 ): InlineKeyboardMarkup {
   const decide = [
     { text: '✅ Approve', callback_data: buildCallbackData('approve', postId) },
     { text: '🚫 Reject', callback_data: buildCallbackData('reject', postId) },
   ];
 
-  // Its own row: Edit opens a Mini App rather than settling the post, and
+  // Their own row: these open a Mini App rather than settling the post, and
   // sitting beside the two final actions invites a misclick.
+  const open = [
+    ...(options?.scheduleUrl ? [{ text: '🕒 Schedule', web_app: { url: options.scheduleUrl } }] : []),
+    ...(options?.editUrl ? [{ text: '✏️ Edit text', web_app: { url: options.editUrl } }] : []),
+  ];
+
+  return { inline_keyboard: open.length > 0 ? [decide, open] : [decide] };
+}
+
+/** The buttons under a post approved for later. */
+export function buildScheduledKeyboard(
+  postId: number,
+  options?: { editUrl?: string; scheduleUrl?: string },
+): InlineKeyboardMarkup {
+  const open = [
+    ...(options?.scheduleUrl ? [{ text: '🕒 Change time', web_app: { url: options.scheduleUrl } }] : []),
+    ...(options?.editUrl ? [{ text: '✏️ Edit text', web_app: { url: options.editUrl } }] : []),
+  ];
+
   return {
-    inline_keyboard: options?.editUrl
-      ? [decide, [{ text: '✏️ Edit text', web_app: { url: options.editUrl } }]]
-      : [decide],
+    inline_keyboard: [
+      [
+        { text: '⚡ Publish now', callback_data: buildCallbackData('publish_now', postId) },
+        { text: '↩️ Unschedule', callback_data: buildCallbackData('unschedule', postId) },
+      ],
+      ...(open.length > 0 ? [open] : []),
+    ],
   };
+}
+
+/** The text of the message carrying a post's review buttons. */
+export function formatReviewControlText(sourceUsername: string | null, xPostUrl: string): string {
+  return formatMessageText(
+    sourceUsername ? `Source: @${sourceUsername.replace(/^@/, '')}\n${xPostUrl}` : xPostUrl,
+  );
+}
+
+/**
+ * A moment as the reviewer picked it: in their zone, e.g. "Mon 5 Oct, 18:00".
+ * Falls back to UTC for a zone this runtime does not know.
+ */
+export function formatScheduleTime(at: Date, timeZone: string | null | undefined): string {
+  const format = (zone: string) =>
+    new Intl.DateTimeFormat('en-GB', {
+      timeZone: zone,
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).format(at);
+
+  // UTC is named, since nobody's phone shows it; their own zone needs no label.
+  if (timeZone && isKnownTimeZone(timeZone) && timeZone !== 'UTC') return format(timeZone);
+  return `${format('UTC')} UTC`;
+}
+
+/** Whether this runtime can format times in `timeZone`. */
+export function isKnownTimeZone(timeZone: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-GB', { timeZone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The review message once a post is scheduled. */
+export function formatScheduledNotice(input: {
+  scheduledFor: Date;
+  timezone: string | null;
+  sourceUsername: string | null;
+  xPostUrl: string;
+}): string {
+  return [
+    `🕒 Scheduled for ${escapeHtml(formatScheduleTime(input.scheduledFor, input.timezone))}`,
+    formatReviewControlText(input.sourceUsername, input.xPostUrl),
+  ].join('\n');
 }
 
 /**
@@ -240,6 +331,8 @@ export interface ReviewRequest {
   payloads: MediaPayload[];
   /** Mini App URL for the Edit button; omitted when APP_BASE_URL is unset. */
   editUrl?: string;
+  /** Mini App URL for the Schedule button; omitted when APP_BASE_URL is unset. */
+  scheduleUrl?: string;
 }
 
 export interface ReviewResult {
@@ -262,7 +355,10 @@ export async function sendForApproval(
   options?: { logger?: Logger; sleep?: (ms: number) => Promise<void> },
 ): Promise<ReviewResult> {
   const sleep = options?.sleep ?? defaultSleep;
-  const keyboard = buildApprovalKeyboard(request.postId, { editUrl: request.editUrl });
+  const keyboard = buildApprovalKeyboard(request.postId, {
+    editUrl: request.editUrl,
+    scheduleUrl: request.scheduleUrl,
+  });
 
   /**
    * The media is sent exactly as it would appear in the channel — same caption,
@@ -324,9 +420,7 @@ export async function sendForApproval(
 
   const control = await sendText(
     { ...context, replyMarkup: keyboard },
-    formatMessageText(
-      `Source: @${request.sourceUsername.replace(/^@/, '')}\n${request.xPostUrl}`,
-    ),
+    formatReviewControlText(request.sourceUsername, request.xPostUrl),
     { replyToMessageId: previewMessages[0]?.message_id },
   );
   const buttonMessageId = control.message_id;

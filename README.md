@@ -79,14 +79,16 @@ Source: https://x.com/someaccount/status/1750000000000000003
 
 ### Plan requirements (Vercel)
 
-The hourly schedule in `vercel.json` requires a **Pro or Enterprise** plan, which allows
+The schedules in `vercel.json` — the hourly sync and the every-minute publisher for
+[scheduled posts](#scheduling-a-post) — require a **Pro or Enterprise** plan, which allows
 intervals down to once per minute and fires within the specified minute.
 
 > **On Hobby**, cron jobs are limited to **once per day** and a more frequent expression fails
 > the deployment. Either change the schedule to a daily one (e.g. `"schedule": "0 9 * * *"` —
 > Hobby crons fire somewhere within that hour, not on the minute), or keep the hourly schedule
 > and trigger `/api/cron/sync` from an external scheduler (GitHub Actions, cron-job.org,
-> Upstash QStash) sending `Authorization: Bearer $CRON_SECRET`. Nothing else differs.
+> Upstash QStash) sending `Authorization: Bearer $CRON_SECRET`. The same goes for
+> `/api/cron/publish-scheduled`, which needs to run every minute. Nothing else differs.
 
 Pro also allows a function `maxDuration` of up to 800s. This route asks for **300s**, which is
 the platform default on every plan and is far more than a run of five posts needs — there is no
@@ -816,12 +818,47 @@ usable.
 If Telegram ever refuses to open the button, set your domain under **Bot Settings** in
 BotFather and try again; the inline-keyboard button type documents only the HTTPS requirement.
 
+### Scheduling a post
+
+With `APP_BASE_URL` set, a post in review also carries **🕒 Schedule**. It opens a Mini App with
+a date and time picker — in your phone's time zone — and a few shortcuts (in an hour, tonight,
+tomorrow morning). Pick a time and the post is approved for then: the review message becomes
+"🕒 Scheduled for Mon 5 Oct, 18:00" with these buttons:
+
+| Button | What it does |
+| --- | --- |
+| ⚡ Publish now | Publishes it immediately. |
+| ↩️ Unschedule | Back to review, undecided, with Approve / Reject / Schedule again. |
+| 🕒 Change time | The same picker, to move it. |
+| ✏️ Edit text | Still editable until it goes out; the latest text is what is published. |
+
+`/scheduled` lists what is waiting, soonest first, at the times you picked.
+
+**Telegram does not let bots use a channel's own scheduled messages**, so these do not appear
+in the channel's *Scheduled* list. The queue lives in the database instead, and
+`GET /api/cron/publish-scheduled` — run **every minute** by Vercel Cron — publishes whatever is
+due, so a post goes out within a minute of its time. Most runs find nothing and cost one
+indexed query.
+
+Publishing is the same path as Approve: the stored `file_id`s, the current caption, the full
+text follow-up of a long post. Each post is claimed with a conditional `UPDATE` before it is
+sent, so overlapping runs or a **Publish now** pressed in the same minute publish it exactly
+once. A failed publish stays scheduled and is tried again the next minute; after
+`MAX_RETRY_ATTEMPTS` failures it goes back to review with the error, and the review message
+says so and offers the buttons again — rather than retrying forever.
+
+Times are stored as exact moments (`scheduled_for`, UTC) with the zone they were picked in
+(`scheduled_timezone`), used only to show them back to you. A post can be scheduled up to a
+year ahead. `scheduled_for` is kept after publishing, so the planned time can be compared with
+when it actually went out.
+
 ### New states
 
 | Status | Meaning |
 | --- | --- |
 | `awaiting_approval` | Sent to you, waiting for a button press. Not in the channel. |
 | `rejected` | You declined it. Never published, never retried, never re-synced. |
+| `scheduled` | Approved for a later time; published by the scheduler when it comes. |
 
 `/api/cron/sync` reports an `awaitingApproval` count alongside `published`, and `/api/status`
 shows both statuses in its counts and recent posts.

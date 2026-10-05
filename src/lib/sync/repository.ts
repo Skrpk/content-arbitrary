@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, lt, or, sql as rawSql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, lt, lte, or, sql as rawSql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import {
   DEFAULT_WORKSPACE_ID,
@@ -31,6 +31,7 @@ export interface ClaimResult {
     | 'retries-exhausted'
     | 'permanently-failed'
     | 'awaiting-approval'
+    | 'scheduled'
     | 'rejected';
 }
 
@@ -128,6 +129,7 @@ export async function claimPost(
   if (current.status === 'published') return { claimed: false, row: current, reason: 'already-published' };
   if (current.status === 'awaiting_approval') return { claimed: false, row: current, reason: 'awaiting-approval' };
   if (current.status === 'rejected') return { claimed: false, row: current, reason: 'rejected' };
+  if (current.status === 'scheduled') return { claimed: false, row: current, reason: 'scheduled' };
   if (current.status === 'skipped') return { claimed: false, row: current, reason: 'permanently-failed' };
   if (current.status === 'failed') return { claimed: false, row: current, reason: 'retries-exhausted' };
   return { claimed: false, row: current, reason: 'in-flight' };
@@ -259,6 +261,8 @@ export async function claimForDecision(
   db: Database,
   postId: number,
   workspaceId: number = DEFAULT_WORKSPACE_ID,
+  /** Which states a decision may be taken from: Publish now also takes a scheduled post. */
+  from: PostStatus[] = ['awaiting_approval'],
 ): Promise<{ claimed: boolean; row?: typeof processedPosts.$inferSelect; currentStatus?: PostStatus }> {
   const rows = await db
     .update(processedPosts)
@@ -270,7 +274,7 @@ export async function claimForDecision(
         // so without this one reviewer could publish another tenant's post by
         // sending a button press for an id that was never theirs.
         eq(processedPosts.workspaceId, workspaceId),
-        eq(processedPosts.status, 'awaiting_approval'),
+        inArray(processedPosts.status, from),
       ),
     )
     .returning();
@@ -291,7 +295,12 @@ export async function claimForDecision(
  */
 export async function findPostAwaitingReview(
   db: Database,
-  input: { id: number; workspaceId: number },
+  input: {
+    id: number;
+    workspaceId: number;
+    /** Also a post approved for later, which can still be edited or retimed. */
+    includeScheduled?: boolean;
+  },
 ) {
   const rows = await db
     .select()
@@ -300,12 +309,17 @@ export async function findPostAwaitingReview(
       and(
         eq(processedPosts.id, input.id),
         eq(processedPosts.workspaceId, input.workspaceId),
-        eq(processedPosts.status, 'awaiting_approval'),
+        inArray(processedPosts.status, openStatuses(input.includeScheduled)),
       ),
     )
     .limit(1);
 
   return rows[0] ?? null;
+}
+
+/** States in which a post has not gone out and can still be changed. */
+function openStatuses(includeScheduled = false): PostStatus[] {
+  return includeScheduled ? ['awaiting_approval', 'scheduled'] : ['awaiting_approval'];
 }
 
 /**
@@ -332,7 +346,8 @@ export async function updateApprovalCaption(
   /** The reviewer's preview of the follow-up this edit dropped, if there was one. */
   droppedOverflowPreviewId?: number;
 }> {
-  const existing = await findPostAwaitingReview(db, input);
+  // A scheduled post is still unpublished, so its text may still change.
+  const existing = await findPostAwaitingReview(db, { ...input, includeScheduled: true });
   if (!existing || !existing.approvalPayload) {
     return { updated: false, currentStatus: await findStatusInWorkspace(db, input) };
   }
@@ -357,7 +372,7 @@ export async function updateApprovalCaption(
       and(
         eq(processedPosts.id, input.id),
         eq(processedPosts.workspaceId, input.workspaceId),
-        eq(processedPosts.status, 'awaiting_approval'),
+        inArray(processedPosts.status, openStatuses(true)),
       ),
     )
     .returning({ id: processedPosts.id });
@@ -365,6 +380,167 @@ export async function updateApprovalCaption(
   return rows.length > 0
     ? { updated: true, droppedOverflowPreviewId: existing.approvalPayload.adminOverflowMessageId }
     : { updated: false, currentStatus: existing.status };
+}
+
+/**
+ * Approve a post for publishing at a later time, or move the time of one
+ * already scheduled.
+ *
+ * One guarded UPDATE, like every decision: it races Approve, Reject and the
+ * scheduler itself safely, because each needs the post in a state this
+ * changes. The review time is the first decision's; retiming does not move it.
+ */
+export async function schedulePost(
+  db: Database,
+  input: { id: number; workspaceId: number; scheduledFor: Date; timezone: string },
+): Promise<{ scheduled: boolean; row?: typeof processedPosts.$inferSelect; currentStatus?: PostStatus }> {
+  const rows = await db
+    .update(processedPosts)
+    .set({
+      status: 'scheduled',
+      scheduledFor: input.scheduledFor,
+      scheduledTimezone: input.timezone,
+      reviewedAt: rawSql`CASE WHEN ${processedPosts.status} = 'awaiting_approval' THEN now() ELSE ${processedPosts.reviewedAt} END`,
+      // A fresh count for the scheduler's own attempts.
+      retryCount: 0,
+      errorMessage: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(processedPosts.id, input.id),
+        eq(processedPosts.workspaceId, input.workspaceId),
+        inArray(processedPosts.status, openStatuses(true)),
+      ),
+    )
+    .returning();
+
+  const row = rows[0];
+  if (row) return { scheduled: true, row };
+  return { scheduled: false, currentStatus: await findStatusInWorkspace(db, input) };
+}
+
+/** Take a scheduled post back into the review queue, undoing the decision. */
+export async function unschedulePost(
+  db: Database,
+  input: { id: number; workspaceId: number },
+): Promise<{ unscheduled: boolean; row?: typeof processedPosts.$inferSelect; currentStatus?: PostStatus }> {
+  const rows = await db
+    .update(processedPosts)
+    .set({
+      status: 'awaiting_approval',
+      scheduledFor: null,
+      scheduledTimezone: null,
+      reviewedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(processedPosts.id, input.id),
+        eq(processedPosts.workspaceId, input.workspaceId),
+        eq(processedPosts.status, 'scheduled'),
+      ),
+    )
+    .returning();
+
+  const row = rows[0];
+  if (row) return { unscheduled: true, row };
+  return { unscheduled: false, currentStatus: await findStatusInWorkspace(db, input) };
+}
+
+/** Ids of scheduled posts whose time has come, earliest first. */
+export async function listDueScheduledPostIds(
+  db: Database,
+  input: { now: Date; limit: number },
+): Promise<number[]> {
+  const rows = await db
+    .select({ id: processedPosts.id })
+    .from(processedPosts)
+    .where(and(eq(processedPosts.status, 'scheduled'), lte(processedPosts.scheduledFor, input.now)))
+    .orderBy(asc(processedPosts.scheduledFor), asc(processedPosts.id))
+    .limit(input.limit);
+  return rows.map((row) => row.id);
+}
+
+/**
+ * Take a due post for publishing.
+ *
+ * Conditional on it still being scheduled and due, so two overlapping
+ * scheduler runs — or a Publish now pressed at the same minute — publish it
+ * exactly once, and a post retimed or cancelled a moment ago is left alone.
+ */
+export async function claimScheduledForPublishing(
+  db: Database,
+  input: { id: number; now: Date },
+): Promise<typeof processedPosts.$inferSelect | null> {
+  const rows = await db
+    .update(processedPosts)
+    .set({ status: 'processing', lockedAt: new Date(), updatedAt: new Date() })
+    .where(
+      and(
+        eq(processedPosts.id, input.id),
+        eq(processedPosts.status, 'scheduled'),
+        lte(processedPosts.scheduledFor, input.now),
+      ),
+    )
+    .returning();
+  return rows[0] ?? null;
+}
+
+/**
+ * Put a post back on the schedule after a failed publish, counting the
+ * attempt when it was the scheduler's, so a lasting failure is noticed.
+ */
+export async function returnToSchedule(
+  db: Database,
+  input: { id: number; errorMessage: string; countAttempt: boolean },
+): Promise<number> {
+  const rows = await db
+    .update(processedPosts)
+    .set({
+      status: 'scheduled',
+      errorMessage: input.errorMessage.slice(0, 2000),
+      retryCount: input.countAttempt
+        ? rawSql`${processedPosts.retryCount} + 1`
+        : processedPosts.retryCount,
+      lockedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(processedPosts.id, input.id))
+    .returning({ retryCount: processedPosts.retryCount });
+  return rows[0]?.retryCount ?? 0;
+}
+
+/**
+ * Give up on a schedule that keeps failing: back to the review queue, with
+ * the error, so the reviewer decides again rather than the scheduler trying
+ * forever.
+ */
+export async function abandonSchedule(
+  db: Database,
+  input: { id: number; errorMessage: string },
+): Promise<void> {
+  await db
+    .update(processedPosts)
+    .set({
+      status: 'awaiting_approval',
+      errorMessage: input.errorMessage.slice(0, 2000),
+      scheduledFor: null,
+      scheduledTimezone: null,
+      reviewedAt: null,
+      lockedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(processedPosts.id, input.id));
+}
+
+/** A tenant's scheduled posts, soonest first. */
+export async function listScheduledPosts(db: Database, workspaceId: number) {
+  return db
+    .select()
+    .from(processedPosts)
+    .where(and(eq(processedPosts.workspaceId, workspaceId), eq(processedPosts.status, 'scheduled')))
+    .orderBy(asc(processedPosts.scheduledFor), asc(processedPosts.id));
 }
 
 /** Put a post back in the queue when publishing failed after a decision. */
@@ -630,6 +806,7 @@ export async function getStatusCounts(db: Database) {
     skipped: 0,
     awaiting_approval: 0,
     rejected: 0,
+    scheduled: 0,
   };
   for (const row of rows) counts[row.status] = row.count;
   return counts;
