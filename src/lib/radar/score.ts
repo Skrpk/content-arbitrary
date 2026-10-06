@@ -50,49 +50,49 @@ export class RadarError extends Error {
   }
 }
 
-export async function scorePost(
-  client: Anthropic,
-  input: {
-    profile: string;
-    approvalRate: number | null;
-    item: RadarItem;
-    examples: RadarExample[];
-    image?: RadarImage;
-  },
-  options: { timeoutMs: number },
-): Promise<RadarPrediction> {
-  const format = zodOutputFormat(radarOutputSchema);
-  // `create`, not `parse`: parsing is done below, after the stop reason is
-  // checked, so a refusal is reported as one — with the tokens it cost.
-  const response = await client.messages.create(
-    {
-      model: RADAR_MODEL,
-      max_tokens: 1024,
-      system: buildSystemPrompt(input.profile, input.approvalRate),
-      messages: [
-        { role: 'user', content: buildUserContent(input.item, input.examples, input.image) },
-      ],
-      output_config: { format },
-    },
-    // One retry at most: this runs inside the sync, which has its own clock.
-    { timeout: options.timeoutMs, maxRetries: 1 },
-  );
+export interface RadarInput {
+  profile: string;
+  approvalRate: number | null;
+  item: RadarItem;
+  examples: RadarExample[];
+  image?: RadarImage;
+}
 
+const radarFormat = zodOutputFormat(radarOutputSchema);
+
+/**
+ * The Messages API request for one Radar score — the same whether it is sent
+ * now or as part of a batch, so both are scored by exactly the same prompt.
+ */
+export function buildRadarRequest(input: RadarInput): Anthropic.MessageCreateParamsNonStreaming {
+  return {
+    model: RADAR_MODEL,
+    max_tokens: 1024,
+    system: buildSystemPrompt(input.profile, input.approvalRate),
+    messages: [{ role: 'user', content: buildUserContent(input.item, input.examples, input.image) }],
+    // Parsed by parseRadarMessage, not by the SDK: the stop reason is checked
+    // first, so a refusal is reported as one — with the tokens it cost.
+    output_config: { format: radarFormat },
+  };
+}
+
+/** Read a prediction out of a Radar response, or throw a RadarError saying why not. */
+export function parseRadarMessage(message: Anthropic.Message): RadarPrediction {
   const usage = {
-    inputTokens: response.usage.input_tokens,
-    outputTokens: response.usage.output_tokens,
+    inputTokens: message.usage.input_tokens,
+    outputTokens: message.usage.output_tokens,
   };
 
   // A refused or cut-off answer need not match the schema; it is a failure,
   // not a prediction.
-  if (response.stop_reason !== 'end_turn') {
-    throw new RadarError(`no usable answer (stop_reason: ${response.stop_reason})`, usage);
+  if (message.stop_reason !== 'end_turn') {
+    throw new RadarError(`no usable answer (stop_reason: ${message.stop_reason})`, usage);
   }
 
-  const text = response.content.find((block) => block.type === 'text')?.text ?? '';
+  const text = message.content.find((block) => block.type === 'text')?.text ?? '';
   let output: z.infer<typeof radarOutputSchema>;
   try {
-    output = format.parse(text);
+    output = radarFormat.parse(text);
   } catch (error) {
     throw new RadarError(`answer did not match the schema: ${(error as Error).message}`, usage);
   }
@@ -109,6 +109,20 @@ export async function scorePost(
       output.predicted_decision === 'reject' ? output.predicted_rejection_reason : null,
     ...usage,
   };
+}
+
+/** Score one post now. */
+export async function scorePost(
+  client: Anthropic,
+  input: RadarInput,
+  options: { timeoutMs: number },
+): Promise<RadarPrediction> {
+  const message = await client.messages.create(
+    buildRadarRequest(input),
+    // One retry at most: this runs inside the sync, which has its own clock.
+    { timeout: options.timeoutMs, maxRetries: 1 },
+  );
+  return parseRadarMessage(message);
 }
 
 function clampPercent(value: number): number {

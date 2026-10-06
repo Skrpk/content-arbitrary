@@ -927,10 +927,22 @@ npm run radar:backfill -- --workspace 2
 ```
 
 Scores posts the editor has already decided, each with only the decisions made before it arrived —
-what a live Radar would have seen — so the result measures prediction, not hindsight. Posts that
-arrived before there were five approvals and five rejections behind them are left out. Photos are
-fetched from Telegram (videos are scored on their text); `--text-only` skips that, `--limit N`
-scores the first N. It can be stopped and re-run: posts already scored are skipped.
+what a live Radar would have seen — so the result measures prediction, not hindsight. Since live
+scores change nothing during the experiment, this measures the same thing for less: requests go
+through the Message Batches API at half price, and nothing runs while nobody is looking.
+
+It submits the requests, waits for the batch (usually minutes, at most 24 hours) and reads the
+results in. If it is interrupted while waiting, pick the batch up with `--resume <batch id>`
+(the id is printed) rather than running it again, or the same posts are paid for twice;
+`--no-wait` submits and stops. Re-running later scores only what is new and retries what failed;
+a score already recorded is never requested or changed again.
+
+Posts that arrived before there were five approvals and five rejections behind them are left out
+(`--min-per-class N`). Photos are fetched from Telegram (videos are scored on their text);
+`--text-only` skips that, `--limit N` takes the first N posts.
+
+To keep Radar to backfills only, leave `ANTHROPIC_API_KEY` out of Vercel and set it just in your
+local `.env`: without it the sync never calls Radar.
 
 ### Reading the results
 

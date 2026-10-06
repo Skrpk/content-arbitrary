@@ -174,12 +174,15 @@ function formatGroup(key: string, rows: ReportRow[]): string {
   const inputTokens = sum(rows.map((row) => row.inputTokens ?? 0));
   const outputTokens = sum(rows.map((row) => row.outputTokens ?? 0));
   const price = PRICE_PER_MILLION[rows[0]!.model];
+  // The backfill goes through the Batches API, billed at half the list price.
+  const batch = rows[0]!.mode === 'backfill';
+  const cost = price
+    ? ((inputTokens * price.input + outputTokens * price.output) / 1_000_000) * (batch ? 0.5 : 1)
+    : null;
   lines.push(
     '',
     `Tokens: ${inputTokens} in, ${outputTokens} out` +
-      (price
-        ? ` ≈ $${((inputTokens * price.input + outputTokens * price.output) / 1_000_000).toFixed(2)}`
-        : ''),
+      (cost === null ? '' : ` ≈ $${cost.toFixed(2)}${batch ? ' (batch price)' : ''}`),
   );
 
   return lines.join('\n');

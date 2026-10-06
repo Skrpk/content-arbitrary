@@ -110,7 +110,7 @@ export async function runLiveRadar(
 
 /**
  * Score every variant this post does not have yet under the current setup,
- * recording each as `ok` or `failed`. Shared by live scoring and the backfill.
+ * recording each as `ok` or `failed`.
  */
 export async function scoreAndRecord(
   db: Database,

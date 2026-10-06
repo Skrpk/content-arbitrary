@@ -94,10 +94,20 @@ export async function loadRadarHistory(
   };
 }
 
-/** Variants this post already has a row for under this setup, so none is scored twice. */
+/**
+ * Variants this post already has a row for under this setup, so none is scored
+ * twice. With `scoredOnly`, a failed or skipped attempt does not count — the
+ * backfill retries those.
+ */
 export async function findEvaluatedVariants(
   db: Database,
-  input: { processedPostId: number; mode: RadarMode; model: string; promptVersion: string },
+  input: {
+    processedPostId: number;
+    mode: RadarMode;
+    model: string;
+    promptVersion: string;
+    scoredOnly?: boolean;
+  },
 ): Promise<Set<RadarVariant>> {
   const rows = await db
     .select({ variant: radarEvaluations.variant })
@@ -108,6 +118,7 @@ export async function findEvaluatedVariants(
         eq(radarEvaluations.mode, input.mode),
         eq(radarEvaluations.model, input.model),
         eq(radarEvaluations.promptVersion, input.promptVersion),
+        input.scoredOnly ? eq(radarEvaluations.status, 'ok') : undefined,
       ),
     );
   return new Set(rows.map((row) => row.variant));
@@ -119,4 +130,45 @@ export async function insertRadarEvaluation(
   row: typeof radarEvaluations.$inferInsert,
 ): Promise<void> {
   await db.insert(radarEvaluations).values(row).onConflictDoNothing();
+}
+
+/**
+ * Record a backfill result. It replaces an earlier failed attempt at the same
+ * score, but never a score that came back: re-reading a batch changes nothing.
+ */
+export async function recordBackfillEvaluation(
+  db: Database,
+  row: typeof radarEvaluations.$inferInsert,
+): Promise<void> {
+  await db
+    .insert(radarEvaluations)
+    .values(row)
+    .onConflictDoUpdate({
+      target: [
+        radarEvaluations.processedPostId,
+        radarEvaluations.mode,
+        radarEvaluations.variant,
+        radarEvaluations.model,
+        radarEvaluations.promptVersion,
+      ],
+      // Every result column, so nothing of the failed attempt survives.
+      set: {
+        status: row.status,
+        score: row.score ?? null,
+        predictedDecision: row.predictedDecision ?? null,
+        topicFit: row.topicFit ?? null,
+        editorialFit: row.editorialFit ?? null,
+        importance: row.importance ?? null,
+        reason: row.reason ?? null,
+        predictedRejectionReason: row.predictedRejectionReason ?? null,
+        imageIncluded: row.imageIncluded ?? false,
+        examplePostIds: row.examplePostIds ?? [],
+        inputTokens: row.inputTokens ?? null,
+        outputTokens: row.outputTokens ?? null,
+        latencyMs: row.latencyMs ?? null,
+        error: row.error ?? null,
+        createdAt: new Date(),
+      },
+      where: ne(radarEvaluations.status, 'ok'),
+    });
 }

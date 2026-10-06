@@ -12,7 +12,7 @@ import {
   telegramMessages,
   workspaces,
 } from '@/db/schema';
-import { runRadarBackfill } from '@/lib/radar/backfill';
+import { ingestRadarBatch, submitRadarBackfill, waitForBatch } from '@/lib/radar/backfill';
 import { loadRadarHistory } from '@/lib/radar/repository';
 import { formatRadarReport, loadReportRows } from '@/lib/radar/report';
 import { createRadarRun, runLiveRadar, type RadarSubject } from '@/lib/radar/shadow';
@@ -20,7 +20,7 @@ import { syncPosts } from '@/lib/sync/sync-posts';
 import { TelegramClient } from '@/lib/telegram/client';
 import { XClient } from '@/lib/x/client';
 import { createTestLogger, ensureTestWorkspace, instantSleep, withEnv } from './helpers';
-import { fakeAnthropic, messageResponse, radarOutput } from './radar-fakes';
+import { fakeAnthropic, fakeBatchAnthropic, messageResponse, radarOutput, succeeded } from './radar-fakes';
 
 /**
  * Shadow Radar against a real database: what it may see, what it records, and
@@ -407,54 +407,125 @@ describeIfDb('Radar in the sync', () => {
   });
 });
 
-describeIfDb('runRadarBackfill', () => {
-  it('scores each post with only the decisions made before it arrived', async () => {
-    // Two decisions exist before the post arrived at minute 10, one after.
+describeIfDb('Radar backfill through the Batches API', () => {
+  const noSleep = { pollMs: 0, sleep: async () => {} };
+
+  /** Two decisions before minute 10, so a post arriving then has history behind it. */
+  async function history() {
     await decidedPost({ decision: 'approve', reviewedAt: at(1), createdAt: at(0) });
     await decidedPost({ decision: 'reject', reviewedAt: at(2), createdAt: at(0) });
-    await decidedPost({ decision: 'approve', reviewedAt: at(20), createdAt: at(15), text: 'Later one' });
-    const post = await decidedPost({ decision: 'reject', reviewedAt: at(12), createdAt: at(10), text: 'The one' });
+  }
 
-    const { client, requests } = fakeAnthropic(() => messageResponse(radarOutput()));
-    const summary = await runRadarBackfill({
+  async function submitAndIngest(
+    batch: ReturnType<typeof fakeBatchAnthropic>,
+    extra: Partial<Parameters<typeof submitRadarBackfill>[0]> = {},
+  ) {
+    const submitted = await submitRadarBackfill({
       db,
-      client,
+      client: batch.client,
       workspaceId: DEFAULT_WORKSPACE_ID,
       profile: 'Space.',
       minPerClass: 1,
       logger: createTestLogger(),
+      ...extra,
     });
+    const ingested = [];
+    for (const batchId of submitted.batchIds) {
+      await waitForBatch(batch.client, batchId, noSleep);
+      ingested.push(
+        await ingestRadarBatch({
+          db,
+          client: batch.client,
+          batchId,
+          workspaceId: DEFAULT_WORKSPACE_ID,
+          logger: createTestLogger(),
+        }),
+      );
+    }
+    return { submitted, ingested };
+  }
 
-    const row = (await evaluations()).find((evaluation) => evaluation.processedPostId === post.id);
-    expect(row).toMatchObject({ mode: 'backfill', status: 'ok' });
-    expect(row!.examplePostIds).toHaveLength(2);
+  it('builds each request from only the decisions made before the post arrived', async () => {
+    await history();
+    await decidedPost({ decision: 'approve', reviewedAt: at(20), createdAt: at(15), text: 'Later one' });
+    const post = await decidedPost({ decision: 'reject', reviewedAt: at(12), createdAt: at(10), text: 'The one' });
 
-    const promptForPost = requests.find((request) =>
-      JSON.stringify(request.messages).includes('The one\\n</post>'),
-    );
-    expect(JSON.stringify(promptForPost!.messages)).not.toContain('Later one');
+    const batch = fakeBatchAnthropic(() => succeeded(radarOutput({ score: 33 })));
+    const { submitted, ingested } = await submitAndIngest(batch);
+
+    const request = batch.submitted[0]!.find((entry) => entry.custom_id === `p${post.id}-text`)!;
+    expect(request.params.model).toBe('claude-haiku-4-5');
+    expect(JSON.stringify(request.params.messages)).toContain('The one');
+    expect(JSON.stringify(request.params.messages)).not.toContain('Later one');
 
     // The first two arrived with no history behind them.
-    expect(summary.notEnoughHistory).toBe(2);
+    expect(submitted.notEnoughHistory).toBe(2);
+    expect(ingested).toEqual([{ scored: 2, failed: 0 }]);
+
+    const row = (await evaluations()).find((evaluation) => evaluation.processedPostId === post.id)!;
+    expect(row).toMatchObject({ mode: 'backfill', status: 'ok', score: 33, inputTokens: 1000 });
+    expect(row.examplePostIds).toHaveLength(2);
   });
 
-  it('can be re-run without scoring anything twice', async () => {
-    await decidedPost({ decision: 'approve', reviewedAt: at(1), createdAt: at(0) });
-    await decidedPost({ decision: 'reject', reviewedAt: at(2), createdAt: at(0) });
+  it('never asks for or overwrites a score it already has', async () => {
+    await history();
     await decidedPost({ decision: 'reject', reviewedAt: at(12), createdAt: at(10) });
-    const { client, requests } = fakeAnthropic(() => messageResponse(radarOutput()));
-    const options = { db, client, workspaceId: DEFAULT_WORKSPACE_ID, profile: 'Space.', minPerClass: 1, logger: createTestLogger() };
+    let reads = 0;
+    const batch = fakeBatchAnthropic(() => succeeded(radarOutput({ score: (reads += 1) === 1 ? 40 : 99 })));
 
-    await runRadarBackfill(options);
-    const second = await runRadarBackfill(options);
+    const first = await submitAndIngest(batch);
+    const second = await submitAndIngest(batch);
 
-    expect(requests).toHaveLength(1);
-    expect(second.alreadyScored).toBe(1);
+    expect(second.submitted).toMatchObject({ requests: 0, batchIds: [], alreadyScored: 1 });
+
+    // Reading the same batch again changes nothing.
+    await ingestRadarBatch({
+      db,
+      client: batch.client,
+      batchId: first.submitted.batchIds[0]!,
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      logger: createTestLogger(),
+    });
+    expect(await evaluations()).toMatchObject([{ score: 40 }]);
   });
 
-  it('shows the photo the reviewer got, fetched from Telegram', async () => {
-    await decidedPost({ decision: 'approve', reviewedAt: at(1), createdAt: at(0) });
-    await decidedPost({ decision: 'reject', reviewedAt: at(2), createdAt: at(0) });
+  it('records a failed request, and retries it on the next submit', async () => {
+    await history();
+    const post = await decidedPost({ decision: 'reject', reviewedAt: at(12), createdAt: at(10) });
+
+    let attempt = 0;
+    const batch = fakeBatchAnthropic(() => {
+      attempt += 1;
+      return attempt === 1
+        ? { type: 'errored', error: { type: 'error', error: { type: 'overloaded_error', message: 'busy' } } }
+        : succeeded(radarOutput({ score: 12, predicted_decision: 'reject', predicted_rejection_reason: 'too_minor' }));
+    });
+
+    const first = await submitAndIngest(batch);
+    expect(first.ingested).toEqual([{ scored: 0, failed: 1 }]);
+    expect((await evaluations())[0]).toMatchObject({
+      status: 'failed',
+      error: 'batch request overloaded_error: busy',
+    });
+
+    const second = await submitAndIngest(batch);
+    expect(second.submitted.requests).toBe(1);
+    const [row] = await evaluations();
+    expect(row).toMatchObject({ processedPostId: post.id, status: 'ok', score: 12, error: null });
+  });
+
+  it('records an answer that is not a usable prediction as failed, with its tokens', async () => {
+    await history();
+    await decidedPost({ decision: 'reject', reviewedAt: at(12), createdAt: at(10) });
+    const batch = fakeBatchAnthropic(() => succeeded(radarOutput(), { stopReason: 'max_tokens' }));
+
+    await submitAndIngest(batch);
+
+    expect((await evaluations())[0]).toMatchObject({ status: 'failed', inputTokens: 1000 });
+  });
+
+  it('sends the photo the reviewer got, fetched from Telegram', async () => {
+    await history();
     await decidedPost({
       decision: 'approve',
       reviewedAt: at(12),
@@ -474,28 +545,57 @@ describeIfDb('runRadarBackfill', () => {
       attempts: 1,
       sleep: instantSleep,
     });
-    const { client, requests } = fakeAnthropic(() => messageResponse(radarOutput()));
+    const batch = fakeBatchAnthropic(() => succeeded(radarOutput()));
 
-    await runRadarBackfill({
+    await submitAndIngest(batch, { telegram });
+
+    expect(telegramFetch).toHaveBeenCalledWith(
+      'https://api.telegram.example/file/bot123456:TEST/photos/file_1.jpg',
+      expect.anything(),
+    );
+    const withImage = batch.submitted[0]!.find((entry) => entry.custom_id.endsWith('-text_image'))!;
+    expect(JSON.stringify(withImage.params.messages)).toContain('"media_type":"image/jpeg","data":"AQID"');
+    expect((await evaluations()).map((row) => [row.variant, row.imageIncluded])).toEqual([
+      ['text', false],
+      ['text_image', true],
+    ]);
+  });
+
+  it('splits a large backfill into several batches', async () => {
+    await history();
+    for (let minute = 10; minute < 13; minute += 1) {
+      await decidedPost({ decision: 'reject', reviewedAt: at(minute + 30), createdAt: at(minute) });
+    }
+    const batch = fakeBatchAnthropic(() => succeeded(radarOutput()));
+
+    const { submitted } = await submitAndIngest(batch, { maxBatchBytes: 1 });
+
+    expect(submitted.batchIds).toHaveLength(3);
+    expect(batch.submitted.map((requests) => requests.length)).toEqual([1, 1, 1]);
+    expect(await evaluations()).toHaveLength(3);
+  });
+
+  it('waits until the batch has ended', async () => {
+    await history();
+    await decidedPost({ decision: 'reject', reviewedAt: at(12), createdAt: at(10) });
+    const batch = fakeBatchAnthropic(() => succeeded(radarOutput()));
+    const { batchIds } = await submitRadarBackfill({
       db,
-      client,
-      telegram,
+      client: batch.client,
       workspaceId: DEFAULT_WORKSPACE_ID,
       profile: 'Space.',
       minPerClass: 1,
       logger: createTestLogger(),
     });
 
-    expect(telegramFetch).toHaveBeenCalledWith(
-      'https://api.telegram.example/file/bot123456:TEST/photos/file_1.jpg',
-      expect.anything(),
-    );
-    const imageRequest = requests.find((request) => JSON.stringify(request.messages).includes('"type":"image"'));
-    expect(JSON.stringify(imageRequest!.messages)).toContain('"media_type":"image/jpeg","data":"AQID"');
-    expect((await evaluations()).map((row) => [row.variant, row.imageIncluded])).toEqual([
-      ['text', false],
-      ['text_image', true],
-    ]);
+    const statuses: string[] = [];
+    const ended = await waitForBatch(batch.client, batchIds[0]!, {
+      ...noSleep,
+      onStatus: (status) => statuses.push(status.processing_status),
+    });
+
+    expect(statuses).toEqual(['in_progress', 'ended']);
+    expect(ended.results_url).toBeTruthy();
   });
 });
 
@@ -520,7 +620,7 @@ describeIfDb('Radar report', () => {
     const backfill = sections.find((section) => section.startsWith('== backfill · text'))!;
     expect(backfill).toContain('Editor approved: 1 of 2 (50%)');
     expect(backfill).toContain('Separation (AUC): 1.00');
-    expect(backfill).toContain('Tokens: 1000000 in, 0 out ≈ $1.00');
+    expect(backfill).toContain('Tokens: 1000000 in, 0 out ≈ $0.50 (batch price)');
 
     const live = sections.find((section) => section.startsWith('== live · text'))!;
     expect(live).toContain('Decided and counted: 1');
