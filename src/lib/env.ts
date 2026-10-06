@@ -178,10 +178,15 @@ const schema = z
       .transform((value) => (value === undefined ? undefined : value.replace(/\/+$/, ''))),
 
     /**
-     * Turns on Shadow Radar, which scores each post sent for review (never
-     * shown, never acted on) for tenants that have an editorial profile.
-     * Unset, Radar is off and nothing else changes.
+     * Which model Shadow Radar asks: OpenAI's GPT-6 Luna (the default) or
+     * Anthropic's Claude Haiku 4.5. Radar scores each post sent for review —
+     * never shown, never acted on — for tenants that have an editorial
+     * profile, and only when the chosen provider's API key is set.
      */
+    RADAR_PROVIDER: enumWithDefault(['openai', 'anthropic'] as const, 'openai'),
+    /** Overrides the provider's default model id. */
+    RADAR_MODEL: z.string().trim().min(1).optional().or(z.literal('').transform(() => undefined)),
+    OPENAI_API_KEY: z.string().min(1).optional().or(z.literal('').transform(() => undefined)),
     ANTHROPIC_API_KEY: z.string().min(1).optional().or(z.literal('').transform(() => undefined)),
 
     CRON_SECRET: z.string().min(16, 'CRON_SECRET must be at least 16 characters'),
@@ -317,6 +322,9 @@ export function redactedEnvSummary(env: Env = getEnv()) {
     requireApproval: env.REQUIRE_APPROVAL,
     hasAdminChatId: Boolean(env.TELEGRAM_ADMIN_CHAT_ID),
     hasWebhookSecret: Boolean(env.TELEGRAM_WEBHOOK_SECRET),
+    radarProvider: env.RADAR_PROVIDER,
+    radarModel: env.RADAR_MODEL ?? null,
+    hasOpenAiApiKey: Boolean(env.OPENAI_API_KEY),
     hasAnthropicApiKey: Boolean(env.ANTHROPIC_API_KEY),
     // Not a secret, and whether editing is available depends on it.
     appBaseUrl: env.APP_BASE_URL ?? null,

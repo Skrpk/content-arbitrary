@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type Anthropic from '@anthropic-ai/sdk';
 import {
   buildSystemPrompt,
   buildUserContent,
   describeMedia,
   describeStoredMedia,
   type RadarExample,
+  type RadarPart,
 } from '@/lib/radar/prompt';
 
 const example = (overrides: Partial<RadarExample>): RadarExample => ({
@@ -19,10 +19,10 @@ const example = (overrides: Partial<RadarExample>): RadarExample => ({
   ...overrides,
 });
 
-const textOf = (content: Anthropic.ContentBlockParam[]) =>
+const textOf = (content: RadarPart[]) =>
   content
-    .filter((block): block is Anthropic.TextBlockParam => block.type === 'text')
-    .map((block) => block.text)
+    .filter((part): part is Extract<RadarPart, { type: 'text' }> => part.type === 'text')
+    .map((part) => part.text)
     .join('\n');
 
 describe('Radar system prompt', () => {
@@ -73,21 +73,9 @@ describe('Radar user content', () => {
 
     expect(content[imageIndex]).toEqual({
       type: 'image',
-      source: { type: 'url', url: 'https://pbs.twimg.com/media/x.jpg' },
+      image: { kind: 'url', url: 'https://pbs.twimg.com/media/x.jpg' },
     });
     expect(imageIndex).toBeLessThan(postIndex);
-  });
-
-  it('sends a stored image as base64', () => {
-    const content = buildUserContent({ sourceUsername: 'a', text: 't', media: 'photo' }, [], {
-      kind: 'base64',
-      mediaType: 'image/jpeg',
-      data: 'AAAA',
-    });
-    expect(content.find((block) => block.type === 'image')).toEqual({
-      type: 'image',
-      source: { type: 'base64', media_type: 'image/jpeg', data: 'AAAA' },
-    });
   });
 
   it('keeps a post from opening or closing the tags the prompt is built on', () => {

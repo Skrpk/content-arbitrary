@@ -216,6 +216,23 @@ describe('redactedEnvSummary', () => {
     });
   });
 
+  it('defaults Radar to OpenAI, accepts Anthropic, and refuses anything else', async () => {
+    await withEnv({ RADAR_PROVIDER: undefined }, (env) => expect(env.RADAR_PROVIDER).toBe('openai'));
+    await withEnv({ RADAR_PROVIDER: 'Anthropic' }, (env) => expect(env.RADAR_PROVIDER).toBe('anthropic'));
+    await expect(withEnv({ RADAR_PROVIDER: 'gemini' }, () => getEnv())).rejects.toThrow(
+      /RADAR_PROVIDER: must be one of "openai" \| "anthropic", received "gemini"/,
+    );
+  });
+
+  it('reports the OpenAI key only as present or not', async () => {
+    const key = 'sk-proj-secretsecretsecretsecret';
+    await withEnv({ OPENAI_API_KEY: key, RADAR_MODEL: 'gpt-6-luna' }, (env) => {
+      const summary = redactedEnvSummary(env);
+      expect(summary).toMatchObject({ hasOpenAiApiKey: true, radarProvider: 'openai', radarModel: 'gpt-6-luna' });
+      expect(JSON.stringify(summary)).not.toContain(key);
+    });
+  });
+
   it('reports the Anthropic key only as present or not', async () => {
     const key = 'sk-ant-api03-secretsecretsecret';
     await withEnv({ ANTHROPIC_API_KEY: key }, (env) => {
@@ -247,9 +264,14 @@ describe('log scrubbing', () => {
     );
   });
 
-  it('masks an Anthropic API key', () => {
-    const key = 'sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789';
-    expect(scrub(`request failed for ${key}`)).not.toContain('AbCdEfGh');
+  it('masks Anthropic and OpenAI API keys', () => {
+    for (const key of [
+      'sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789',
+      'sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789',
+      'sk-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789',
+    ]) {
+      expect(scrub(`request failed for ${key}`)).not.toContain('AbCdEfGh');
+    }
   });
 
   it('masks credentials in a postgres connection string', () => {

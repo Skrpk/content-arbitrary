@@ -1,4 +1,3 @@
-import type Anthropic from '@anthropic-ai/sdk';
 import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import { processedPosts, type ApprovalPayload, type RadarVariant } from '@/db/schema';
@@ -8,20 +7,19 @@ import type { TelegramClient } from '@/lib/telegram/client';
 import {
   describeStoredMedia,
   RADAR_EXAMPLES_PER_CLASS,
-  RADAR_MODEL,
   RADAR_PROMPT_VERSION,
   type RadarImage,
 } from '@/lib/radar/prompt';
+import type { RadarProvider } from '@/lib/radar/providers';
 import {
   findEvaluatedVariants,
   loadRadarHistory,
   recordBackfillEvaluation,
 } from '@/lib/radar/repository';
-import { buildRadarRequest, parseRadarMessage, RadarError } from '@/lib/radar/score';
 
 /**
  * Score posts the editor has already decided, as Radar would have scored them
- * when they arrived — through the Message Batches API, at half the price.
+ * when they arrived — through the provider's batch API, at half the price.
  *
  * Each post sees only the decisions made before it was first synced — what a
  * live Radar would have had — so the backfill measures prediction, not
@@ -36,8 +34,9 @@ import { buildRadarRequest, parseRadarMessage, RadarError } from '@/lib/radar/sc
 /** The API refuses larger images; Telegram's stored photos are well under it. */
 const MAX_IMAGE_BYTES = 3_500_000;
 /**
- * Where a batch is cut. The API takes up to 256 MB and 100,000 requests;
- * staying well below keeps a batch of photo-heavy requests safely inside it.
+ * Where a batch is cut. Anthropic takes up to 256 MB and 100,000 requests,
+ * OpenAI 200 MB and 50,000; staying well below both keeps a batch of
+ * photo-heavy requests safely inside either.
  */
 const MAX_BATCH_BYTES = 100_000_000;
 const MAX_BATCH_REQUESTS = 10_000;
@@ -46,6 +45,8 @@ export interface SubmitSummary {
   candidates: number;
   notEnoughHistory: number;
   alreadyScored: number;
+  /** Posts sent for scoring; each is one request, or two with a photo. */
+  posts: number;
   requests: number;
   batchIds: string[];
 }
@@ -67,13 +68,14 @@ function parseCustomId(customId: string): { processedPostId: number; variant: Ra
 
 export async function submitRadarBackfill(input: {
   db: Database;
-  client: Anthropic;
+  provider: RadarProvider;
   /** Fetches the stored photos for the text_image variant; without it only text is scored. */
   telegram?: TelegramClient;
   workspaceId: number;
   profile: string;
   /** Fewest approvals and fewest rejections a post needs behind it to be scored. */
   minPerClass: number;
+  /** Most posts to score this run — counting only posts that are sent, not ones passed over. */
   limit?: number;
   logger: Logger;
   maxBatchBytes?: number;
@@ -97,35 +99,41 @@ export async function submitRadarBackfill(input: {
         inArray(processedPosts.status, ['published', 'scheduled', 'rejected']),
       ),
     )
-    .orderBy(asc(processedPosts.createdAt))
-    .limit(input.limit ?? 100_000);
+    .orderBy(asc(processedPosts.createdAt));
 
   const summary: SubmitSummary = {
     candidates: candidates.length,
     notEnoughHistory: 0,
     alreadyScored: 0,
+    posts: 0,
     requests: 0,
     batchIds: [],
   };
 
   const maxBytes = input.maxBatchBytes ?? MAX_BATCH_BYTES;
-  let pending: Anthropic.Messages.BatchCreateParams.Request[] = [];
+  let pending: unknown[] = [];
   let pendingBytes = 0;
 
   const flush = async () => {
     if (pending.length === 0) return;
-    const batch = await input.client.messages.batches.create({ requests: pending });
-    summary.batchIds.push(batch.id);
-    input.logger.info('radar.batch_submitted', { batchId: batch.id, requests: pending.length });
+    const batchId = await input.provider.submitBatch(pending);
+    summary.batchIds.push(batchId);
+    input.logger.info('radar.batch_submitted', {
+      provider: input.provider.name,
+      batchId,
+      requests: pending.length,
+    });
     pending = [];
     pendingBytes = 0;
   };
 
   for (const post of candidates) {
+    if (input.limit !== undefined && summary.posts >= input.limit) break;
+
     const done = await findEvaluatedVariants(input.db, {
       processedPostId: post.id,
       mode: 'backfill',
-      model: RADAR_MODEL,
+      model: input.provider.model,
       promptVersion: RADAR_PROMPT_VERSION,
       scoredOnly: true,
     });
@@ -161,21 +169,19 @@ export async function submitRadarBackfill(input: {
       continue;
     }
 
+    summary.posts += 1;
     for (const variant of variants) {
-      const request = {
-        custom_id: radarCustomId(post.id, variant),
-        params: buildRadarRequest({
-          profile: input.profile,
-          approvalRate: history.approvalRate,
-          item: {
-            sourceUsername: post.sourceUsername ?? 'unknown',
-            text: post.sourceText ?? '',
-            media: describeStoredMedia(post.method, post.mediaCount),
-          },
-          examples: history.examples,
-          image: variant === 'text_image' ? image : undefined,
-        }),
-      };
+      const request = input.provider.batchEntry(radarCustomId(post.id, variant), {
+        profile: input.profile,
+        approvalRate: history.approvalRate,
+        item: {
+          sourceUsername: post.sourceUsername ?? 'unknown',
+          text: post.sourceText ?? '',
+          media: describeStoredMedia(post.method, post.mediaCount),
+        },
+        examples: history.examples,
+        image: variant === 'text_image' ? image : undefined,
+      });
 
       const bytes = JSON.stringify(request).length;
       if (pending.length > 0 && (pendingBytes + bytes > maxBytes || pending.length >= MAX_BATCH_REQUESTS)) {
@@ -193,19 +199,19 @@ export async function submitRadarBackfill(input: {
 
 /** Wait for a batch to finish. Batches usually take minutes, at most 24 hours. */
 export async function waitForBatch(
-  client: Anthropic,
+  provider: RadarProvider,
   batchId: string,
   options: {
     pollMs?: number;
     sleep?: (ms: number) => Promise<void>;
-    onStatus?: (batch: Anthropic.Messages.MessageBatch) => void;
+    onStatus?: (status: string) => void;
   } = {},
-): Promise<Anthropic.Messages.MessageBatch> {
+): Promise<void> {
   const sleep = options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
   for (;;) {
-    const batch = await client.messages.batches.retrieve(batchId);
-    options.onStatus?.(batch);
-    if (batch.processing_status === 'ended') return batch;
+    const { ended, status } = await provider.pollBatch(batchId);
+    options.onStatus?.(status);
+    if (ended) return;
     await sleep(options.pollMs ?? 30_000);
   }
 }
@@ -216,19 +222,18 @@ export async function waitForBatch(
  */
 export async function ingestRadarBatch(input: {
   db: Database;
-  client: Anthropic;
+  provider: RadarProvider;
   batchId: string;
   workspaceId: number;
   logger: Logger;
 }): Promise<IngestSummary> {
   const summary: IngestSummary = { scored: 0, failed: 0 };
-  const posts = new Map<number, { createdAt: Date; examplePostIds: number[] } | null>();
+  const posts = new Map<number, { examplePostIds: number[] } | null>();
 
-  const results = await input.client.messages.batches.results(input.batchId);
-  for await (const entry of results) {
-    const key = parseCustomId(entry.custom_id);
+  for await (const result of input.provider.batchResults(input.batchId)) {
+    const key = parseCustomId(result.customId);
     if (!key) {
-      input.logger.warn('radar.batch_unknown_result', { customId: entry.custom_id });
+      input.logger.warn('radar.batch_unknown_result', { customId: result.customId });
       continue;
     }
 
@@ -245,7 +250,6 @@ export async function ingestRadarBatch(input: {
         key.processedPostId,
         post
           ? {
-              createdAt: post.createdAt,
               examplePostIds: (
                 await loadRadarHistory(input.db, {
                   workspaceId: input.workspaceId,
@@ -261,7 +265,7 @@ export async function ingestRadarBatch(input: {
     const post = posts.get(key.processedPostId);
     if (!post) {
       // Deleted since, or another tenant's batch.
-      input.logger.warn('radar.batch_result_without_post', { customId: entry.custom_id });
+      input.logger.warn('radar.batch_result_without_post', { customId: result.customId });
       continue;
     }
 
@@ -270,54 +274,38 @@ export async function ingestRadarBatch(input: {
       processedPostId: key.processedPostId,
       mode: 'backfill' as const,
       variant: key.variant,
-      model: RADAR_MODEL,
+      model: input.provider.model,
       promptVersion: RADAR_PROMPT_VERSION,
       imageIncluded: key.variant === 'text_image',
       examplePostIds: post.examplePostIds,
     };
 
-    if (entry.result.type === 'succeeded') {
-      try {
-        const prediction = parseRadarMessage(entry.result.message);
-        await recordBackfillEvaluation(input.db, {
-          ...base,
-          status: 'ok',
-          score: prediction.score,
-          predictedDecision: prediction.predictedDecision,
-          topicFit: prediction.topicFit,
-          editorialFit: prediction.editorialFit,
-          importance: prediction.importance,
-          reason: prediction.reason,
-          predictedRejectionReason: prediction.predictedRejectionReason,
-          inputTokens: prediction.inputTokens,
-          outputTokens: prediction.outputTokens,
-        });
-        summary.scored += 1;
-      } catch (error) {
-        const usage = error instanceof RadarError ? error.usage : undefined;
-        await recordBackfillEvaluation(input.db, {
-          ...base,
-          status: 'failed',
-          inputTokens: usage?.inputTokens,
-          outputTokens: usage?.outputTokens,
-          error: scrub(describeError(error)).slice(0, 500),
-        });
-        summary.failed += 1;
-      }
-      continue;
+    if (result.ok) {
+      const { prediction } = result;
+      await recordBackfillEvaluation(input.db, {
+        ...base,
+        status: 'ok',
+        score: prediction.score,
+        predictedDecision: prediction.predictedDecision,
+        topicFit: prediction.topicFit,
+        editorialFit: prediction.editorialFit,
+        importance: prediction.importance,
+        reason: prediction.reason,
+        predictedRejectionReason: prediction.predictedRejectionReason,
+        inputTokens: prediction.inputTokens,
+        outputTokens: prediction.outputTokens,
+      });
+      summary.scored += 1;
+    } else {
+      await recordBackfillEvaluation(input.db, {
+        ...base,
+        status: 'failed',
+        inputTokens: result.usage?.inputTokens,
+        outputTokens: result.usage?.outputTokens,
+        error: scrub(result.error).slice(0, 500),
+      });
+      summary.failed += 1;
     }
-
-    // errored, expired or canceled: not billed, and retried by the next submit.
-    const detail =
-      entry.result.type === 'errored'
-        ? `${entry.result.error.error.type}: ${entry.result.error.error.message}`
-        : entry.result.type;
-    await recordBackfillEvaluation(input.db, {
-      ...base,
-      status: 'failed',
-      error: scrub(`batch request ${detail}`).slice(0, 500),
-    });
-    summary.failed += 1;
   }
 
   return summary;

@@ -1,17 +1,16 @@
-import type Anthropic from '@anthropic-ai/sdk';
 import type { RejectionReason } from '@/db/schema';
 import type { NormalizedMedia } from '@/types';
 
 /**
  * Shadow Radar's prompt: the editor's profile and past decisions, and the post
- * to score.
+ * to score. The same for every provider; each one only translates these parts
+ * into its own request format.
  *
  * Change anything that alters what the model is asked or shown, and bump
  * RADAR_PROMPT_VERSION: scores from different prompts cannot be compared, and
  * the version is how the report keeps them apart.
  */
 
-export const RADAR_MODEL = 'claude-haiku-4-5';
 export const RADAR_PROMPT_VERSION = 'radar-v0';
 
 /** Past decisions shown per class — this many approved, this many rejected. */
@@ -42,6 +41,9 @@ export interface RadarExample {
 export type RadarImage =
   | { kind: 'url'; url: string }
   | { kind: 'base64'; mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif'; data: string };
+
+/** One piece of the user message, in no particular provider's format. */
+export type RadarPart = { type: 'text'; text: string } | { type: 'image'; image: RadarImage };
 
 const REJECTION_REASON_MEANINGS: Record<RejectionReason, string> = {
   not_interesting: 'not interesting enough for this channel',
@@ -113,7 +115,7 @@ export function buildUserContent(
   item: RadarItem,
   examples: RadarExample[],
   image?: RadarImage,
-): Anthropic.ContentBlockParam[] {
+): RadarPart[] {
   const approved = examples.filter((example) => example.decision === 'approve');
   const rejected = examples.filter((example) => example.decision === 'reject');
 
@@ -124,19 +126,11 @@ export function buildUserContent(
 
   const history = [...approved, ...rejected].map(formatExample).join('\n');
 
-  const content: Anthropic.ContentBlockParam[] = [
-    { type: 'text', text: history ? `${intro}\n\n${history}` : intro },
-  ];
+  const content: RadarPart[] = [{ type: 'text', text: history ? `${intro}\n\n${history}` : intro }];
 
   if (image) {
     content.push({ type: 'text', text: "The new post's first image:" });
-    content.push({
-      type: 'image',
-      source:
-        image.kind === 'url'
-          ? { type: 'url', url: image.url }
-          : { type: 'base64', media_type: image.mediaType, data: image.data },
-    });
+    content.push({ type: 'image', image });
   }
 
   content.push({

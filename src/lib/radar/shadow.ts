@@ -1,17 +1,16 @@
-import Anthropic from '@anthropic-ai/sdk';
 import type { Database } from '@/lib/db';
 import type { RadarMode, RadarVariant } from '@/db/schema';
 import { describeError } from '@/lib/errors';
 import { scrub, type Logger } from '@/lib/logger';
+import { RadarError } from '@/lib/radar/output';
 import {
   RADAR_EXAMPLES_PER_CLASS,
-  RADAR_MODEL,
   RADAR_PROMPT_VERSION,
   type RadarImage,
   type RadarItem,
 } from '@/lib/radar/prompt';
+import type { RadarProvider } from '@/lib/radar/providers';
 import { findEvaluatedVariants, insertRadarEvaluation, loadRadarHistory } from '@/lib/radar/repository';
-import { RadarError, scorePost } from '@/lib/radar/score';
 
 /**
  * Shadow Radar: score a post and record the prediction, and nothing else.
@@ -27,22 +26,24 @@ const LIVE_RUN_BUDGET_MS = 120_000;
 const LIVE_MAX_CONSECUTIVE_FAILURES = 3;
 
 /**
- * Radar's state for one sync run, shared by every tenant in it: the client,
+ * Radar's state for one sync run, shared by every tenant in it: the provider,
  * and the limits that stop a slow or failing API from eating the run's time.
  */
 export interface RadarRun {
-  client: Anthropic;
+  provider: RadarProvider;
   deadline: number;
   consecutiveFailures: number;
   now: () => number;
 }
 
-export function createRadarRun(
-  options: { apiKey?: string; client?: Anthropic; now?: () => number; budgetMs?: number },
-): RadarRun {
+export function createRadarRun(options: {
+  provider: RadarProvider;
+  now?: () => number;
+  budgetMs?: number;
+}): RadarRun {
   const now = options.now ?? Date.now;
   return {
-    client: options.client ?? new Anthropic({ apiKey: options.apiKey }),
+    provider: options.provider,
     deadline: now() + (options.budgetMs ?? LIVE_RUN_BUDGET_MS),
     consecutiveFailures: 0,
     now,
@@ -78,7 +79,7 @@ export async function runLiveRadar(
       await Promise.all(
         variants.map((variant) =>
           insertRadarEvaluation(db, {
-            ...setup(subject, 'live', variant),
+            ...setup(subject, run.provider, 'live', variant),
             status: 'skipped',
             imageIncluded: false,
             error: reason,
@@ -88,7 +89,7 @@ export async function runLiveRadar(
       return;
     }
 
-    const outcomes = await scoreAndRecord(db, run.client, subject, {
+    const outcomes = await scoreAndRecord(db, run.provider, subject, {
       mode: 'live',
       // Only what was decided before this post arrived — which, live, is now.
       before: new Date(run.now()),
@@ -114,14 +115,14 @@ export async function runLiveRadar(
  */
 export async function scoreAndRecord(
   db: Database,
-  client: Anthropic,
+  provider: RadarProvider,
   subject: RadarSubject,
   options: { mode: RadarMode; before: Date; timeoutMs: number; logger: Logger },
 ): Promise<('ok' | 'failed' | 'exists')[]> {
   const done = await findEvaluatedVariants(db, {
     processedPostId: subject.processedPostId,
     mode: options.mode,
-    model: RADAR_MODEL,
+    model: provider.model,
     promptVersion: RADAR_PROMPT_VERSION,
   });
   const pending = variantsFor(subject.image).filter((variant) => !done.has(variant));
@@ -140,8 +141,7 @@ export async function scoreAndRecord(
       const image = variant === 'text_image' ? subject.image : undefined;
       const startedAt = Date.now();
       try {
-        const prediction = await scorePost(
-          client,
+        const prediction = await provider.score(
           {
             profile: subject.profile,
             approvalRate: history.approvalRate,
@@ -153,7 +153,7 @@ export async function scoreAndRecord(
         );
 
         await insertRadarEvaluation(db, {
-          ...setup(subject, options.mode, variant),
+          ...setup(subject, provider, options.mode, variant),
           status: 'ok',
           imageIncluded: Boolean(image),
           examplePostIds,
@@ -179,7 +179,7 @@ export async function scoreAndRecord(
       } catch (error) {
         const usage = error instanceof RadarError ? error.usage : undefined;
         await insertRadarEvaluation(db, {
-          ...setup(subject, options.mode, variant),
+          ...setup(subject, provider, options.mode, variant),
           status: 'failed',
           imageIncluded: Boolean(image),
           examplePostIds,
@@ -207,13 +207,13 @@ function variantsFor(image: RadarImage | undefined): RadarVariant[] {
   return image ? ['text', 'text_image'] : ['text'];
 }
 
-function setup(subject: RadarSubject, mode: RadarMode, variant: RadarVariant) {
+function setup(subject: RadarSubject, provider: RadarProvider, mode: RadarMode, variant: RadarVariant) {
   return {
     workspaceId: subject.workspaceId,
     processedPostId: subject.processedPostId,
     mode,
     variant,
-    model: RADAR_MODEL,
+    model: provider.model,
     promptVersion: RADAR_PROMPT_VERSION,
   };
 }

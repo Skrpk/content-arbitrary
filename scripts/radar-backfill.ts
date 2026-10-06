@@ -1,7 +1,10 @@
 /**
  * Score posts the editor has already decided, as Radar would have when they
- * arrived, through the Message Batches API (half price, usually done within
+ * arrived, through the provider's batch API (half price, usually done within
  * the hour), then see how it did with `npm run radar:report`.
+ *
+ * The provider is RADAR_PROVIDER (openai by default, or anthropic), with its
+ * API key; a resumed batch is read with the provider it was submitted to.
  *
  *   npm run radar:backfill -- --workspace 2 [--min-per-class 5] [--limit 200] [--text-only] [--no-wait]
  *   npm run radar:backfill -- --workspace 2 --resume <batch id>
@@ -10,18 +13,18 @@
  * If it is interrupted while waiting, --resume picks the batch up again; do not
  * submit a second time, or the same posts are paid for twice.
  *
- * Needs ANTHROPIC_API_KEY, and the workspace's editorial_profile set. Safe to
+ * Needs the provider's API key, and the workspace's editorial_profile set. Safe to
  * re-run: scores already recorded are skipped, failed ones are retried.
  */
 import 'dotenv/config';
 import { eq } from 'drizzle-orm';
-import Anthropic from '@anthropic-ai/sdk';
 import { workspaces } from '../src/db/schema';
 import { getDb, getSql } from '../src/lib/db';
 import { getEnv } from '../src/lib/env';
 import { createLogger } from '../src/lib/logger';
 import { ingestRadarBatch, submitRadarBackfill, waitForBatch } from '../src/lib/radar/backfill';
-import { RADAR_MODEL, RADAR_PROMPT_VERSION } from '../src/lib/radar/prompt';
+import { RADAR_PROMPT_VERSION } from '../src/lib/radar/prompt';
+import { createRadarProvider, providerOfBatch } from '../src/lib/radar/providers';
 import { TelegramClient } from '../src/lib/telegram/client';
 
 function argument(name: string): string | undefined {
@@ -35,14 +38,21 @@ async function main() {
   if (!Number.isSafeInteger(workspaceId) || workspaceId <= 0) {
     throw new Error('Pass the workspace: --workspace <id>');
   }
-  if (!env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY is not set');
+  const resume = argument('resume');
+  const providerName = resume ? providerOfBatch(resume) : env.RADAR_PROVIDER;
+  if (!providerName) throw new Error(`Not a batch id this script submits: ${resume}`);
+
+  const provider = createRadarProvider(env, providerName);
+  if (!provider) {
+    throw new Error(
+      `${providerName === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY'} is not set`,
+    );
+  }
 
   const db = getDb();
-  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
   const logger = createLogger({ app: 'content-arbitrary', surface: 'radar-backfill' });
 
   let batchIds: string[];
-  const resume = argument('resume');
 
   if (resume) {
     batchIds = [resume];
@@ -53,10 +63,12 @@ async function main() {
       throw new Error(`Workspace ${workspaceId} has no editorial_profile; Radar needs one`);
     }
 
-    console.log(`Radar backfill: workspace ${workspaceId}, ${RADAR_MODEL}, ${RADAR_PROMPT_VERSION}`);
+    console.log(
+      `Radar backfill: workspace ${workspaceId}, ${provider.name} ${provider.model}, ${RADAR_PROMPT_VERSION}`,
+    );
     const submitted = await submitRadarBackfill({
       db,
-      client,
+      provider,
       telegram: process.argv.includes('--text-only') ? undefined : new TelegramClient(),
       workspaceId,
       profile: workspace.editorialProfile,
@@ -81,14 +93,8 @@ async function main() {
 
   for (const batchId of batchIds) {
     console.log(`Waiting for ${batchId} (if interrupted: --resume ${batchId})`);
-    await waitForBatch(client, batchId, {
-      onStatus: (batch) =>
-        console.log(
-          `  ${batch.processing_status}: ${batch.request_counts.succeeded} done, ` +
-            `${batch.request_counts.processing} processing, ${batch.request_counts.errored} errored`,
-        ),
-    });
-    console.log(await ingestRadarBatch({ db, client, batchId, workspaceId, logger }));
+    await waitForBatch(provider, batchId, { onStatus: (status) => console.log(`  ${status}`) });
+    console.log(await ingestRadarBatch({ db, provider, batchId, workspaceId, logger }));
   }
 
   console.log(`Next: npm run radar:report -- --workspace ${workspaceId}`);

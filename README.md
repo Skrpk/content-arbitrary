@@ -906,11 +906,19 @@ skipped attempts are rows too, so coverage is visible.
 
 **Limits.** It runs inside the sync, so it has a 20-second timeout per call and two minutes per
 run; after three failures in a row it stops for that run. Posts it did not get to go to review
-unscored. It uses Claude Haiku 4.5.
+unscored.
+
+**Which model.** `RADAR_PROVIDER` picks it: `openai` (the default) asks GPT-6 Luna through the
+Responses API, with low reasoning effort, images at low detail, and nothing stored on OpenAI's
+side; `anthropic` asks Claude Haiku 4.5. Both get the same prompt and the same schema, every
+score records the model that gave it, and the report keeps models apart — so switching mid-way
+compares them rather than mixing them. Luna's list price is a tenth of Haiku's.
 
 ### Turning it on
 
-1. Add `ANTHROPIC_API_KEY` in Vercel (and in your local `.env` for the scripts below).
+1. Add the chosen provider's key (`OPENAI_API_KEY`, or `ANTHROPIC_API_KEY` with
+   `RADAR_PROVIDER=anthropic`) to your local `.env` for the scripts below — and to Vercel only if
+   you want posts scored live.
 2. Run `npm run db:migrate`.
 3. Write the channel's profile:
 
@@ -929,7 +937,7 @@ npm run radar:backfill -- --workspace 2
 Scores posts the editor has already decided, each with only the decisions made before it arrived —
 what a live Radar would have seen — so the result measures prediction, not hindsight. Since live
 scores change nothing during the experiment, this measures the same thing for less: requests go
-through the Message Batches API at half price, and nothing runs while nobody is looking.
+through the provider's batch API at half price, and nothing runs while nobody is looking.
 
 It submits the requests, waits for the batch (usually minutes, at most 24 hours) and reads the
 results in. If it is interrupted while waiting, pick the batch up with `--resume <batch id>`
@@ -939,10 +947,12 @@ a score already recorded is never requested or changed again.
 
 Posts that arrived before there were five approvals and five rejections behind them are left out
 (`--min-per-class N`). Photos are fetched from Telegram (videos are scored on their text);
-`--text-only` skips that, `--limit N` takes the first N posts.
+`--text-only` skips that, `--limit N` stops after scoring N posts (the oldest first).
 
-To keep Radar to backfills only, leave `ANTHROPIC_API_KEY` out of Vercel and set it just in your
-local `.env`: without it the sync never calls Radar.
+A resumed batch is read with the provider it was submitted to, whatever `RADAR_PROVIDER` says now.
+
+To keep Radar to backfills only, leave the API keys out of Vercel and set them just in your local
+`.env`: without the chosen provider's key the sync never calls Radar.
 
 ### Reading the results
 
@@ -980,7 +990,10 @@ separately and never mixed.
 | `TELEGRAM_WEBHOOK_SECRET` | — | ≥ 16 chars, `A-Z a-z 0-9 _ -` only. Required when `REQUIRE_APPROVAL` is on. |
 | `APP_BASE_URL` | — | Public HTTPS origin, e.g. `https://your-app.vercel.app`. Enables the Edit button; without it review works unchanged. |
 | `ADMIN_SECRET` | falls back to `CRON_SECRET` | Protects `/api/status`. |
-| `ANTHROPIC_API_KEY` | — | Turns on [Shadow Radar](#shadow-radar) for tenants with an editorial profile. Unset, Radar is off. |
+| `RADAR_PROVIDER` | `openai` | [Shadow Radar](#shadow-radar)'s model: `openai` (GPT-6 Luna) or `anthropic` (Claude Haiku 4.5). |
+| `RADAR_MODEL` | provider's default | Overrides the chosen provider's model id. |
+| `OPENAI_API_KEY` | — | Needed for Radar with `RADAR_PROVIDER=openai`. Without the chosen provider's key, Radar is off. |
+| `ANTHROPIC_API_KEY` | — | Needed for Radar with `RADAR_PROVIDER=anthropic`. |
 | `CAPTION_PREFIX` | empty | Text prepended, separated by a blank line. |
 | `CAPTION_SUFFIX` | empty | Text appended, separated by a blank line. |
 | `INCLUDE_SOURCE_LINK` | `true` | Append `Source: https://x.com/…`. |

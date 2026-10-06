@@ -18,8 +18,8 @@ const TOKEN_PATTERNS: RegExp[] = [
   // Bearer / token query params and headers
   /(Bearer\s+)[A-Za-z0-9._~+/=-]{16,}/gi,
   /(bot)\d{6,12}:[A-Za-z0-9_-]{20,}/g,
-  // Anthropic API keys
-  /\bsk-ant-[A-Za-z0-9_-]{10,}/g,
+  // OpenAI (sk-…, sk-proj-…) and Anthropic (sk-ant-…) API keys
+  /\bsk-[A-Za-z0-9_-]{16,}/g,
   // Postgres connection strings with credentials
   /(postgres(?:ql)?:\/\/)[^:@\s]+:[^@\s]+@/gi,
 ];

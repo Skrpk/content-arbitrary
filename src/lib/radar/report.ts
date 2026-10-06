@@ -7,7 +7,7 @@ import {
   type RadarStatus,
   type RadarVariant,
 } from '@/db/schema';
-import { RADAR_MODEL } from '@/lib/radar/prompt';
+import { ANTHROPIC_RADAR_MODEL, OPENAI_RADAR_MODEL } from '@/lib/radar/providers';
 
 /**
  * How well Radar's scores match the editor's decisions.
@@ -36,9 +36,14 @@ export interface ReportRow {
   reviewedAt: Date | null;
 }
 
-/** Anthropic list prices, USD per million tokens, for the models Radar has used. */
+/**
+ * List prices, USD per million tokens, for Radar's default models. Input is
+ * priced uncached, so a run that hit a provider's prompt cache cost a little
+ * less than reported. A model not listed here is reported without a cost.
+ */
 const PRICE_PER_MILLION: Record<string, { input: number; output: number }> = {
-  [RADAR_MODEL]: { input: 1, output: 5 },
+  [OPENAI_RADAR_MODEL]: { input: 0.1, output: 0.5 },
+  [ANTHROPIC_RADAR_MODEL]: { input: 1, output: 5 },
 };
 
 const BUCKETS = [
@@ -174,7 +179,7 @@ function formatGroup(key: string, rows: ReportRow[]): string {
   const inputTokens = sum(rows.map((row) => row.inputTokens ?? 0));
   const outputTokens = sum(rows.map((row) => row.outputTokens ?? 0));
   const price = PRICE_PER_MILLION[rows[0]!.model];
-  // The backfill goes through the Batches API, billed at half the list price.
+  // The backfill goes through the batch APIs, billed at half the list price.
   const batch = rows[0]!.mode === 'backfill';
   const cost = price
     ? ((inputTokens * price.input + outputTokens * price.output) / 1_000_000) * (batch ? 0.5 : 1)

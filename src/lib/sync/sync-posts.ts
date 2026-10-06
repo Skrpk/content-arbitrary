@@ -15,6 +15,7 @@ import {
 import { acquireSyncLock } from '@/lib/sync/locks';
 import { attributePostsToSource, getSyncState } from '@/lib/sync/repository';
 import { defaultSleep } from '@/lib/sync/retry';
+import { createRadarProvider } from '@/lib/radar/providers';
 import { createRadarRun, type RadarRun } from '@/lib/radar/shadow';
 import { syncXSource } from '@/lib/sync/sync-x-source';
 import {
@@ -100,10 +101,12 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
     const xClient = options.xClient ?? new XClient({ logger });
     const telegramClient = options.telegramClient ?? new TelegramClient({ logger });
 
-    // Shadow Radar only ever scores posts on their way to a reviewer.
+    // Shadow Radar only ever scores posts on their way to a reviewer, and only
+    // with the configured provider's key set.
+    const radarProvider = env.REQUIRE_APPROVAL && !env.DRY_RUN ? createRadarProvider(env) : null;
     const radarRun =
-      env.REQUIRE_APPROVAL && !env.DRY_RUN && (options.radarRun || env.ANTHROPIC_API_KEY)
-        ? (options.radarRun ?? createRadarRun({ apiKey: env.ANTHROPIC_API_KEY }))
+      env.REQUIRE_APPROVAL && !env.DRY_RUN
+        ? (options.radarRun ?? (radarProvider ? createRadarRun({ provider: radarProvider }) : null))
         : null;
 
     // Sources, posts and cursors are all scoped to it, so it has to exist first.
