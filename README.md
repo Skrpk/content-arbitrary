@@ -39,6 +39,7 @@ X account ──► /api/cron/sync ──► media download ──► Telegram B
 - [R. When X does not return the media you expect](#r-when-x-does-not-return-the-media-you-expect)
 - [Multiple channels](#multiple-channels)
 - [Shadow Radar](#shadow-radar)
+- [Publication history imports](#publication-history-imports)
 - [Configuration reference](#configuration-reference)
 - [Architecture decisions](#architecture-decisions)
 - [Project structure](#project-structure)
@@ -976,6 +977,44 @@ Change the prompt and bump `RADAR_PROMPT_VERSION` in
 [`src/lib/radar/prompt.ts`](src/lib/radar/prompt.ts): results of different prompts are reported
 separately and never mixed.
 
+## Publication history imports
+
+A workspace's own back catalogue — what its channel has already published — can be imported from
+an export file into `publication_history_items`. It is stored and nothing more: no part of the
+bot reads it yet.
+
+```bash
+npm run history:import -- --workspace 2 --adapter telegram-json --file ./result.json
+npm run history:import -- --workspace 2 --adapter telegram-json --file ./result.json --dry-run
+```
+
+**Telegram.** In Telegram Desktop open the channel → ⋮ → *Export chat history*, choose the
+*Machine-readable JSON* format, and pass the `result.json` it writes. Media files need not be
+exported: a post whose photo or video was left out is still imported, its media recorded as
+`available: false`. Posts without a caption but with media are kept; service events (pins, title
+changes) and messages with neither text nor media are skipped and counted by reason. The export
+carries no channel username and no view counts, so no post URL is stored and the metrics hold
+reactions only. Each photo of an album is its own message in the export and is stored as one.
+Dates come from `date_unixtime`; the export's `date` is the exporting computer's local time.
+
+**Re-imports.** An item is identified by workspace, platform, publication (for Telegram, the
+channel's Bot API id, e.g. `-1001234567890`) and its id there. Importing the same export again
+changes nothing; importing a later export adds the new posts and updates stored ones whose text,
+media or reactions differ — the latest import wins. Identity is never changed.
+
+**Records.** Every run is logged in `publication_history_imports` with its file's SHA-256, its
+counts and its outcome. A failed or interrupted (Ctrl+C) import is marked `failed` and writes no
+items: they are stored in one transaction. `--dry-run` reads and checks the file, reports how many
+posts are new, and writes nothing.
+
+**Size.** The file is read whole into memory, up to 256 MB. A chat export's JSON holds only text
+(media files sit beside it), so this is tens of thousands of posts.
+
+**Other platforms.** History is platform-neutral: the tables, the import service and the report
+know nothing of Telegram. Telegram Desktop JSON is only the first adapter; another format is a new
+file in [`src/lib/history/adapters/`](src/lib/history/adapters/) that turns its export into
+`HistoricalPublicationItem`s, registered in `adapters/index.ts`.
+
 ## Configuration reference
 
 | Variable | Default | Description |
@@ -1129,7 +1168,12 @@ src/
       repository.ts            Atomic claim and state transitions
       locks.ts                 Advisory lock
       retry.ts                 Backoff with jitter
-scripts/                       migrate, run-sync, telegram-check
+    history/
+      types.ts                 Canonical history item, adapter contract
+      import-history.ts        Import service: adapter → repository → report
+      repository.ts            Upserts, import records
+      adapters/telegram-json.ts  Telegram Desktop JSON export
+scripts/                       migrate, run-sync, telegram-check, import-history
 tests/                         Unit + integration suites
 ```
 

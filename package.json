@@ -23,7 +23,8 @@
     "webhook:info": "tsx scripts/setup-webhook.ts info",
     "webhook:delete": "tsx scripts/setup-webhook.ts delete",
     "radar:backfill": "tsx scripts/radar-backfill.ts",
-    "radar:report": "tsx scripts/radar-report.ts"
+    "radar:report": "tsx scripts/radar-report.ts",
+    "history:import": "tsx scripts/import-history.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",

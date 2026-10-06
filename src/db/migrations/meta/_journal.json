@@ -99,6 +99,13 @@
       "when": 1791295612263,
       "tag": "0013_review_media",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791310011652,
+      "tag": "0014_publication_history",
+      "breakpoints": true
     }
   ]
 }

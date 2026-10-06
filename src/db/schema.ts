@@ -3,6 +3,7 @@ import {
   bigint,
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -460,6 +461,144 @@ export const radarEvaluations = pgTable(
 );
 
 export type RadarEvaluation = typeof radarEvaluations.$inferSelect;
+
+/** What kind of thing a publication put out. Platform-neutral on purpose. */
+export const HISTORY_CONTENT_TYPES = [
+  'post',
+  'newsletter_issue',
+  'article',
+  'video',
+  'podcast_episode',
+  'other',
+] as const;
+export type HistoryContentType = (typeof HISTORY_CONTENT_TYPES)[number];
+
+export const HISTORY_IMPORT_STATUSES = ['processing', 'completed', 'failed'] as const;
+export type HistoryImportStatus = (typeof HISTORY_IMPORT_STATUSES)[number];
+
+/** One attachment of a historical item: what it was, never the file itself. */
+export interface HistoricalMediaItem {
+  type: 'photo' | 'video' | 'audio' | 'document' | 'animation' | 'sticker' | 'other';
+  /** Where the file sits inside the export, if the export included it. */
+  relativePath: string | null;
+  /** False when the export names the file but left it out. */
+  available: boolean;
+  mimeType?: string | null;
+  width?: number | null;
+  height?: number | null;
+  durationSeconds?: number | null;
+  fileSizeBytes?: number | null;
+}
+
+/**
+ * One run of a history import: who loaded what into which workspace, and how
+ * it went. Written before anything is parsed, so a failed import leaves a
+ * record too.
+ */
+export const publicationHistoryImports = pgTable(
+  'publication_history_imports',
+  {
+    id: serial('id').primaryKey(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    /** The adapter that read the file, e.g. `telegram-json`. */
+    adapter: text('adapter').notNull(),
+    /** Known once the file is parsed; null if parsing failed. */
+    platform: text('platform'),
+    publicationKey: text('publication_key'),
+    originalFilename: text('original_filename').notNull(),
+    fileSha256: text('file_sha256').notNull(),
+    status: text('status', { enum: HISTORY_IMPORT_STATUSES }).notNull().default('processing'),
+    itemsSeen: integer('items_seen').notNull().default(0),
+    itemsImported: integer('items_imported').notNull().default(0),
+    itemsUpdated: integer('items_updated').notNull().default(0),
+    /** Already stored exactly as the file has them. */
+    itemsUnchanged: integer('items_unchanged').notNull().default(0),
+    itemsSkipped: integer('items_skipped').notNull().default(0),
+    itemsFailed: integer('items_failed').notNull().default(0),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    errorMessage: text('error_message'),
+    /** Skip reasons, warnings and what the export says about the publication. */
+    metadata: jsonb('metadata').$type<Record<string, unknown>>(),
+  },
+  (table) => [
+    index('publication_history_imports_workspace_idx').on(table.workspaceId),
+    check(
+      'publication_history_imports_status_check',
+      sql`${table.status} IN ('processing', 'completed', 'failed')`,
+    ),
+  ],
+);
+
+export type PublicationHistoryImport = typeof publicationHistoryImports.$inferSelect;
+
+/**
+ * What a workspace itself has published in the past — its channel's posts, and
+ * later its newsletter issues, articles or videos — imported from an export.
+ *
+ * Not to be confused with `sources` (accounts the bot watches) or
+ * `processed_posts` (what it found there and put through review): this is the
+ * publication's own back catalogue.
+ *
+ * Platform-specific identity lives in `platform` + `publication_key` +
+ * `external_id`, never in columns named for one platform, so one workspace can
+ * hold a Telegram channel's history beside a newsletter's.
+ */
+export const publicationHistoryItems = pgTable(
+  'publication_history_items',
+  {
+    id: serial('id').primaryKey(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    /** Where it was published: `telegram` today. */
+    platform: text('platform').notNull(),
+    /** Which channel, newsletter or feed on that platform. */
+    publicationKey: text('publication_key').notNull(),
+    /** The item's id on the platform, as text whatever its native type. */
+    externalId: text('external_id').notNull(),
+    contentType: text('content_type', { enum: HISTORY_CONTENT_TYPES }).notNull(),
+    title: text('title'),
+    /** Plain text, formatting removed: what a reader would read. */
+    text: text('text'),
+    publishedAt: timestamp('published_at', { withTimezone: true }).notNull(),
+    editedAt: timestamp('edited_at', { withTimezone: true }),
+    /** Only when the export allows building it reliably; never guessed. */
+    canonicalUrl: text('canonical_url'),
+    media: jsonb('media').$type<HistoricalMediaItem[]>().notNull().default(sql`'[]'::jsonb`),
+    metrics: jsonb('metrics').$type<Record<string, unknown>>(),
+    /** Useful provenance from the source, not the whole raw record. */
+    metadata: jsonb('metadata').$type<Record<string, unknown>>(),
+    /** The import that last inserted or changed this row. */
+    importId: integer('import_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // Named here: the generated name is longer than Postgres's 63 characters.
+    foreignKey({
+      name: 'publication_history_items_import_id_fk',
+      columns: [table.importId],
+      foreignColumns: [publicationHistoryImports.id],
+    }).onDelete('set null'),
+    // Re-importing the same export, or a later one that overlaps it, updates
+    // rows instead of duplicating them.
+    uniqueIndex('publication_history_items_identity_key').on(
+      table.workspaceId,
+      table.platform,
+      table.publicationKey,
+      table.externalId,
+    ),
+    check(
+      'publication_history_items_content_type_check',
+      sql`${table.contentType} IN ('post', 'newsletter_issue', 'article', 'video', 'podcast_episode', 'other')`,
+    ),
+  ],
+);
+
+export type PublicationHistoryItem = typeof publicationHistoryItems.$inferSelect;
 
 /** One media item of a reviewed post, as far as it is known. */
 export interface ReviewMediaItem {

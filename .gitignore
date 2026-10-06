@@ -12,3 +12,6 @@ next-env.d.ts
 coverage
 .DS_Store
 .serena/
+
+# Telegram chat exports (history imports): media and private data, never committed
+ChatExport_*/
