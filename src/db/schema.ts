@@ -3,6 +3,7 @@ import {
   bigint,
   boolean,
   check,
+  customType,
   foreignKey,
   index,
   integer,
@@ -443,6 +444,13 @@ export const radarEvaluations = pgTable(
      * can be traced to the exact context it was made with.
      */
     publicationHistoryProfileId: integer('publication_history_profile_id'),
+    /**
+     * The similar past publications the prompt carried, and how the search for
+     * them went — null for a prompt version that does not retrieve them.
+     */
+    historyRetrieval: jsonb('history_retrieval').$type<HistoryRetrievalRecord>(),
+    /** What the model said about those publications, when the prompt asked. */
+    historicalAssessment: jsonb('historical_assessment').$type<HistoricalAssessment>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -473,6 +481,30 @@ export const radarEvaluations = pgTable(
 );
 
 export type RadarEvaluation = typeof radarEvaluations.$inferSelect;
+
+/**
+ * How the search for a post's similar past publications went: `ok` with the
+ * matches shown, or why there were none — the post has no text, the
+ * workspace has no embedded history from before the post, embeddings are not
+ * configured, or the search failed and the post was scored without it.
+ */
+export const HISTORY_RETRIEVAL_STATUSES = ['ok', 'no_text', 'no_history', 'unavailable', 'failed'] as const;
+export type HistoryRetrievalStatus = (typeof HISTORY_RETRIEVAL_STATUSES)[number];
+
+export interface HistoryRetrievalRecord {
+  status: HistoryRetrievalStatus;
+  /** Null when no embedding model was configured. */
+  embeddingModel: string | null;
+  /** `publication_history_items` ids, most similar first, with cosine similarity. */
+  matches: { id: number; similarity: number }[];
+  error?: string;
+}
+
+export interface HistoricalAssessment {
+  relevant: boolean;
+  possiblyAlreadyCovered: boolean;
+  explanation: string;
+}
 
 /** What kind of thing a publication put out. Platform-neutral on purpose. */
 export const HISTORY_CONTENT_TYPES = [
@@ -652,6 +684,86 @@ export const publicationHistoryProfiles = pgTable(
 );
 
 export type PublicationHistoryProfileRow = typeof publicationHistoryProfiles.$inferSelect;
+
+/**
+ * A pgvector `vector` of any length. Deliberately without a fixed dimension:
+ * each row records its model and `dimensions`, and every search filters on
+ * both, so vectors of different models are never compared — and trying
+ * text-embedding-3-large (3072) beside text-embedding-3-small (1536) needs no
+ * migration. The cost is that an approximate (HNSW) index, which needs a fixed
+ * dimension, would have to be a per-model expression index; searches are
+ * exact scans, which a workspace's history is small enough for.
+ */
+const vector = customType<{ data: number[]; driverData: string }>({
+  dataType: () => 'vector',
+  toDriver: (value) => `[${value.join(',')}]`,
+  fromDriver: (value) => JSON.parse(value) as number[],
+});
+
+/**
+ * Text embeddings of publication history items, one per item per embedding
+ * model, for finding the past publications most similar to a new post.
+ *
+ * `content_fingerprint` hashes the exact text that was embedded: when an item's
+ * title or text changes on a later import, the fingerprint no longer matches
+ * and the item is embedded again; otherwise the vector is reused. Items with no
+ * text (photo- or video-only) have no row.
+ */
+export const publicationHistoryEmbeddings = pgTable(
+  'publication_history_embeddings',
+  {
+    id: serial('id').primaryKey(),
+    publicationHistoryItemId: integer('publication_history_item_id').notNull(),
+    model: text('model').notNull(),
+    dimensions: integer('dimensions').notNull(),
+    contentFingerprint: text('content_fingerprint').notNull(),
+    embedding: vector('embedding').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // Named here: the generated name is longer than Postgres's 63 characters.
+    foreignKey({
+      name: 'publication_history_embeddings_item_id_fk',
+      columns: [table.publicationHistoryItemId],
+      foreignColumns: [publicationHistoryItems.id],
+    }).onDelete('cascade'),
+    uniqueIndex('publication_history_embeddings_item_model_key').on(
+      table.publicationHistoryItemId,
+      table.model,
+    ),
+    check('publication_history_embeddings_dimensions_check', sql`vector_dims(${table.embedding}) = ${table.dimensions}`),
+  ],
+);
+
+/**
+ * The embedding of a post's text as Radar searched history with it. Kept so a
+ * backfill can reproduce, when it reads results back, exactly the search its
+ * requests were built from, and so a post is not embedded twice.
+ */
+export const radarCandidateEmbeddings = pgTable(
+  'radar_candidate_embeddings',
+  {
+    id: serial('id').primaryKey(),
+    processedPostId: integer('processed_post_id').notNull(),
+    model: text('model').notNull(),
+    dimensions: integer('dimensions').notNull(),
+    contentFingerprint: text('content_fingerprint').notNull(),
+    embedding: vector('embedding').notNull(),
+    inputTokens: integer('input_tokens'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // Named here: the generated name is longer than Postgres's 63 characters.
+    foreignKey({
+      name: 'radar_candidate_embeddings_post_id_fk',
+      columns: [table.processedPostId],
+      foreignColumns: [processedPosts.id],
+    }).onDelete('cascade'),
+    uniqueIndex('radar_candidate_embeddings_post_model_key').on(table.processedPostId, table.model),
+    check('radar_candidate_embeddings_dimensions_check', sql`vector_dims(${table.embedding}) = ${table.dimensions}`),
+  ],
+);
 
 /** One media item of a reviewed post, as far as it is known. */
 export interface ReviewMediaItem {

@@ -168,6 +168,8 @@ export async function recordBackfillEvaluation(
         latencyMs: row.latencyMs ?? null,
         error: row.error ?? null,
         publicationHistoryProfileId: row.publicationHistoryProfileId ?? null,
+        historyRetrieval: row.historyRetrieval ?? null,
+        historicalAssessment: row.historicalAssessment ?? null,
         createdAt: new Date(),
       },
       where: ne(radarEvaluations.status, 'ok'),

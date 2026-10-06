@@ -16,6 +16,7 @@ import { acquireSyncLock } from '@/lib/sync/locks';
 import { attributePostsToSource, getSyncState } from '@/lib/sync/repository';
 import { defaultSleep } from '@/lib/sync/retry';
 import { createRadarProvider } from '@/lib/radar/providers';
+import { createEmbeddingProvider } from '@/lib/history/embeddings/provider';
 import {
   lastSyncKey,
   loadLastSyncTimes,
@@ -126,7 +127,13 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
     const radarRun =
       env.REQUIRE_APPROVAL && !env.DRY_RUN
         ? (options.radarRun ??
-          (radarProvider ? createRadarRun({ provider: radarProvider, notAfter: deadline }) : null))
+          (radarProvider
+            ? createRadarRun({
+                provider: radarProvider,
+                embeddings: createEmbeddingProvider(env),
+                notAfter: deadline,
+              })
+            : null))
         : null;
 
     // Sources, posts and cursors are all scoped to it, so it has to exist first.

@@ -1,3 +1,4 @@
+import type { EmbeddingProvider } from '@/lib/history/embeddings/provider';
 import type { HistoryNotes, PublicationProfile } from '@/lib/history/profile/schema';
 import { fakeOpenAi, responsesResponse } from './radar-fakes';
 
@@ -69,4 +70,30 @@ export function fakeProfiler(options: { profile?: (candidates: number[]) => unkn
     );
   });
   return { ...fake, calls };
+}
+
+/** The subjects the fake embeddings tell apart, one dimension each. */
+const EMBEDDING_TOPICS = ['mars', 'webb', 'moon', 'rocket', 'film'];
+
+/**
+ * Embeddings without a model: a text's vector counts the topic words it
+ * contains, plus a small constant so no vector is zero. Texts sharing words
+ * point the same way, so cosine similarity orders them predictably.
+ */
+export function fakeEmbedding(text: string): number[] {
+  const lower = text.toLowerCase();
+  return [...EMBEDDING_TOPICS.map((topic) => lower.split(topic).length - 1), 0.1];
+}
+
+export function fakeEmbeddings(options: { model?: string; fail?: () => boolean } = {}) {
+  const calls: string[][] = [];
+  const provider: EmbeddingProvider = {
+    model: options.model ?? 'text-embedding-3-small',
+    async embed(texts) {
+      calls.push(texts);
+      if (options.fail?.()) throw new Error('embeddings API is down');
+      return { vectors: texts.map(fakeEmbedding), inputTokens: texts.join(' ').split(/\s+/).length };
+    },
+  };
+  return { provider, calls };
 }

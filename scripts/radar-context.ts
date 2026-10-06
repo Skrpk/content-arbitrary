@@ -1,25 +1,34 @@
 /**
  * Print the exact context Shadow Radar would build for a post — instructions,
- * editorial profile, publication-history profile, past decisions, the post —
- * without calling any model. For inspecting and debugging the prompt.
+ * editorial profile, publication-history profile, past decisions, similar
+ * past publications, the post — without asking Radar's model. For inspecting
+ * and debugging the prompt.
  *
- *   npm run radar:context -- --workspace 2 [--post <processed post id>]
+ *   npm run radar:context -- --workspace 2 [--post <processed post id>] [--prompt radar-v1]
  *
- * Without --post, the workspace's most recent post. The context is built as of
- * the post's arrival, as a backfill would: only decisions made before it, and
- * a history profile only if it was made from publications before it.
+ * Without --post, the workspace's most recent post; without --prompt, the
+ * retrieval prompt, whose similar-publication search embeds the post once
+ * (a fraction of a cent, stored and reused). The context is built as of the
+ * post's arrival, as a backfill would: only decisions made before it, a
+ * history profile only if it was made from publications before it, and only
+ * publications from before it in the search.
  */
 import 'dotenv/config';
 import { and, desc, eq, isNotNull } from 'drizzle-orm';
 import { processedPosts, workspaces } from '../src/db/schema';
 import { getDb, getSql } from '../src/lib/db';
+import { getEnv } from '../src/lib/env';
+import { createEmbeddingProvider } from '../src/lib/history/embeddings/provider';
+import { retrieveSimilarPublications } from '../src/lib/history/embeddings/retrieval';
 import { loadRadarPublicationProfile } from '../src/lib/history/profile/repository';
 import {
   buildSystemPrompt,
   buildUserContent,
   describeStoredMedia,
+  isRadarPromptVersion,
   RADAR_EXAMPLES_PER_CLASS,
-  RADAR_PROMPT_VERSION,
+  RADAR_PROMPT_RETRIEVAL,
+  usesHistoryRetrieval,
 } from '../src/lib/radar/prompt';
 import { loadRadarHistory } from '../src/lib/radar/repository';
 
@@ -33,6 +42,8 @@ async function main() {
   if (!Number.isSafeInteger(workspaceId) || workspaceId <= 0) {
     throw new Error('Pass the workspace: --workspace <id>');
   }
+  const promptVersion = argument('prompt') ?? RADAR_PROMPT_RETRIEVAL;
+  if (!isRadarPromptVersion(promptVersion)) throw new Error(`Unknown prompt version "${promptVersion}"`);
   const db = getDb();
   const [workspace] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId));
   if (!workspace) throw new Error(`No workspace ${workspaceId}`);
@@ -60,11 +71,30 @@ async function main() {
     perClass: RADAR_EXAMPLES_PER_CLASS,
   });
   const publication = await loadRadarPublicationProfile(db, { workspaceId, arrivedAt: post.createdAt });
+  const retrieval = usesHistoryRetrieval(promptVersion)
+    ? await retrieveSimilarPublications({
+        db,
+        embeddings: createEmbeddingProvider(getEnv()),
+        workspaceId,
+        processedPostId: post.id,
+        candidateText: post.sourceText,
+        before: post.createdAt,
+      })
+    : null;
 
-  console.log(`# Radar context · ${RADAR_PROMPT_VERSION} · post ${post.id} · as of ${post.createdAt.toISOString()}`);
+  console.log(`# Radar context · ${promptVersion} · post ${post.id} · as of ${post.createdAt.toISOString()}`);
   console.log(`# Past decisions shown: ${history.examples.length} · history profile: ${publication ? `#${publication.id}` : 'none'}`);
+  if (retrieval) {
+    const found = retrieval.matches.map((match) => `#${match.itemId} (${match.similarity.toFixed(3)})`).join(', ');
+    console.log(
+      `# Similar publications: ${retrieval.status}` +
+        (retrieval.embeddingModel ? ` · ${retrieval.embeddingModel}` : '') +
+        (found ? ` · ${found}` : '') +
+        (retrieval.error ? ` · ${retrieval.error}` : ''),
+    );
+  }
   console.log('\n## Instructions (system)\n');
-  console.log(buildSystemPrompt(workspace.editorialProfile, history.approvalRate, publication?.profile));
+  console.log(buildSystemPrompt(workspace.editorialProfile, history.approvalRate, publication?.profile, promptVersion));
   console.log('\n## Message (user)\n');
   const content = buildUserContent(
     {
@@ -73,6 +103,8 @@ async function main() {
       media: describeStoredMedia(post.telegramMethod, post.mediaCount),
     },
     history.examples,
+    undefined,
+    retrieval?.matches ?? null,
   );
   for (const part of content) console.log(part.type === 'text' ? part.text : '[image]');
 }

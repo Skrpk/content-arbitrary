@@ -4,15 +4,19 @@ import { describeError } from '@/lib/errors';
 import { scrub, type Logger } from '@/lib/logger';
 import { RadarError } from '@/lib/radar/output';
 import {
+  LIVE_RADAR_PROMPT_VERSIONS,
   RADAR_EXAMPLES_PER_CLASS,
-  RADAR_PROMPT_VERSION,
+  usesHistoryRetrieval,
   type RadarImage,
   type RadarItem,
+  type RadarPromptVersion,
 } from '@/lib/radar/prompt';
 import type { RadarProvider } from '@/lib/radar/providers';
 import { findEvaluatedVariants, insertRadarEvaluation, loadRadarHistory } from '@/lib/radar/repository';
 import { loadRadarPublicationProfile } from '@/lib/history/profile/repository';
 import type { PublicationProfile } from '@/lib/history/profile/schema';
+import type { EmbeddingProvider } from '@/lib/history/embeddings/provider';
+import { retrieveSimilarPublications, toRetrievalRecord } from '@/lib/history/embeddings/retrieval';
 
 /**
  * Shadow Radar: score a post and record the prediction, and nothing else.
@@ -26,6 +30,8 @@ const LIVE_CALL_TIMEOUT_MS = 20_000;
 const LIVE_RUN_BUDGET_MS = 120_000;
 /** After this many failures in a row, Radar stops trying for the rest of the run. */
 const LIVE_MAX_CONSECUTIVE_FAILURES = 3;
+/** Finding similar past publications is one embedding call and one query; it gets this long at most. */
+const RETRIEVAL_TIMEOUT_MS = 5_000;
 
 /**
  * Radar's state for one sync run, shared by every tenant in it: the provider,
@@ -33,6 +39,10 @@ const LIVE_MAX_CONSECUTIVE_FAILURES = 3;
  */
 export interface RadarRun {
   provider: RadarProvider;
+  /** For the retrieval prompt's similar past publications; without it that prompt runs without them. */
+  embeddings: EmbeddingProvider | null;
+  /** Every post is scored with each of these. */
+  promptVersions: readonly RadarPromptVersion[];
   deadline: number;
   consecutiveFailures: number;
   now: () => number;
@@ -40,6 +50,8 @@ export interface RadarRun {
 
 export function createRadarRun(options: {
   provider: RadarProvider;
+  embeddings?: EmbeddingProvider | null;
+  promptVersions?: readonly RadarPromptVersion[];
   now?: () => number;
   budgetMs?: number;
   /** Never past this (epoch ms) — the sync's own deadline. */
@@ -49,6 +61,8 @@ export function createRadarRun(options: {
   const ownDeadline = now() + (options.budgetMs ?? LIVE_RUN_BUDGET_MS);
   return {
     provider: options.provider,
+    embeddings: options.embeddings ?? null,
+    promptVersions: options.promptVersions ?? LIVE_RADAR_PROMPT_VERSIONS,
     deadline: options.notAfter === undefined ? ownDeadline : Math.min(ownDeadline, options.notAfter),
     consecutiveFailures: 0,
     now,
@@ -82,13 +96,15 @@ export async function runLiveRadar(
         remaining <= 0 ? 'run budget exhausted' : 'stopped after repeated failures this run';
       logger.warn('radar.skipped', { processedPostId: subject.processedPostId, reason });
       await Promise.all(
-        variants.map((variant) =>
-          insertRadarEvaluation(db, {
-            ...setup(subject, run.provider, 'live', variant),
-            status: 'skipped',
-            imageIncluded: false,
-            error: reason,
-          }),
+        run.promptVersions.flatMap((version) =>
+          variants.map((variant) =>
+            insertRadarEvaluation(db, {
+              ...setup(subject, run.provider, 'live', variant, version),
+              status: 'skipped',
+              imageIncluded: false,
+              error: reason,
+            }),
+          ),
         ),
       );
       return;
@@ -99,6 +115,8 @@ export async function runLiveRadar(
       // Only what was decided before this post arrived — which, live, is now.
       before: new Date(run.now()),
       timeoutMs: Math.min(LIVE_CALL_TIMEOUT_MS, remaining),
+      embeddings: run.embeddings,
+      promptVersions: run.promptVersions,
       logger,
     });
 
@@ -115,22 +133,34 @@ export async function runLiveRadar(
 }
 
 /**
- * Score every variant this post does not have yet under the current setup,
- * recording each as `ok` or `failed`.
+ * Score every prompt version and variant this post does not have yet under
+ * the current setup, recording each as `ok` or `failed`.
  */
 export async function scoreAndRecord(
   db: Database,
   provider: RadarProvider,
   subject: RadarSubject,
-  options: { mode: RadarMode; before: Date; timeoutMs: number; logger: Logger },
+  options: {
+    mode: RadarMode;
+    before: Date;
+    timeoutMs: number;
+    logger: Logger;
+    embeddings?: EmbeddingProvider | null;
+    promptVersions?: readonly RadarPromptVersion[];
+  },
 ): Promise<('ok' | 'failed' | 'exists')[]> {
-  const done = await findEvaluatedVariants(db, {
-    processedPostId: subject.processedPostId,
-    mode: options.mode,
-    model: provider.model,
-    promptVersion: RADAR_PROMPT_VERSION,
-  });
-  const pending = variantsFor(subject.image).filter((variant) => !done.has(variant));
+  const pending: { version: RadarPromptVersion; variant: RadarVariant }[] = [];
+  for (const version of options.promptVersions ?? LIVE_RADAR_PROMPT_VERSIONS) {
+    const done = await findEvaluatedVariants(db, {
+      processedPostId: subject.processedPostId,
+      mode: options.mode,
+      model: provider.model,
+      promptVersion: version,
+    });
+    for (const variant of variantsFor(subject.image)) {
+      if (!done.has(variant)) pending.push({ version, variant });
+    }
+  }
   if (pending.length === 0) return ['exists'];
 
   const history = await loadRadarHistory(db, {
@@ -143,9 +173,25 @@ export async function scoreAndRecord(
   const publication = await publicationContext(db, subject.workspaceId, options.before, options.logger);
   const publicationHistoryProfileId = publication?.id ?? null;
 
+  // Searched once for every version that shows it; never stops the scoring.
+  const retrieval = pending.some(({ version }) => usesHistoryRetrieval(version))
+    ? await retrieveSimilarPublications({
+        db,
+        embeddings: options.embeddings ?? null,
+        workspaceId: subject.workspaceId,
+        processedPostId: subject.processedPostId,
+        candidateText: subject.item.text,
+        before: options.before,
+        timeoutMs: Math.min(RETRIEVAL_TIMEOUT_MS, options.timeoutMs),
+        logger: options.logger,
+      })
+    : null;
+
   return Promise.all(
-    pending.map(async (variant): Promise<'ok' | 'failed'> => {
+    pending.map(async ({ version, variant }): Promise<'ok' | 'failed'> => {
       const image = variant === 'text_image' ? subject.image : undefined;
+      const shown = usesHistoryRetrieval(version) ? retrieval : null;
+      const historyRetrieval = shown ? toRetrievalRecord(shown) : null;
       const startedAt = Date.now();
       try {
         const prediction = await provider.score(
@@ -156,16 +202,20 @@ export async function scoreAndRecord(
             examples: history.examples,
             image,
             publicationProfile: publication?.profile ?? null,
+            promptVersion: version,
+            similarPublications: shown?.matches ?? null,
           },
           { timeoutMs: options.timeoutMs },
         );
 
         await insertRadarEvaluation(db, {
-          ...setup(subject, provider, options.mode, variant),
+          ...setup(subject, provider, options.mode, variant, version),
           status: 'ok',
           imageIncluded: Boolean(image),
           examplePostIds,
           publicationHistoryProfileId,
+          historyRetrieval,
+          historicalAssessment: shown ? prediction.historicalAssessment : null,
           score: prediction.score,
           predictedDecision: prediction.predictedDecision,
           topicFit: prediction.topicFit,
@@ -181,6 +231,7 @@ export async function scoreAndRecord(
         options.logger.info('radar.scored', {
           processedPostId: subject.processedPostId,
           mode: options.mode,
+          promptVersion: version,
           variant,
           latencyMs: Date.now() - startedAt,
         });
@@ -188,11 +239,12 @@ export async function scoreAndRecord(
       } catch (error) {
         const usage = error instanceof RadarError ? error.usage : undefined;
         await insertRadarEvaluation(db, {
-          ...setup(subject, provider, options.mode, variant),
+          ...setup(subject, provider, options.mode, variant, version),
           status: 'failed',
           imageIncluded: Boolean(image),
           examplePostIds,
           publicationHistoryProfileId,
+          historyRetrieval,
           inputTokens: usage?.inputTokens,
           outputTokens: usage?.outputTokens,
           latencyMs: Date.now() - startedAt,
@@ -203,6 +255,7 @@ export async function scoreAndRecord(
         options.logger.warn('radar.failed', {
           processedPostId: subject.processedPostId,
           mode: options.mode,
+          promptVersion: version,
           variant,
           error: describeError(error),
         });
@@ -236,13 +289,19 @@ function variantsFor(image: RadarImage | undefined): RadarVariant[] {
   return image ? ['text', 'text_image'] : ['text'];
 }
 
-function setup(subject: RadarSubject, provider: RadarProvider, mode: RadarMode, variant: RadarVariant) {
+function setup(
+  subject: RadarSubject,
+  provider: RadarProvider,
+  mode: RadarMode,
+  variant: RadarVariant,
+  promptVersion: RadarPromptVersion,
+) {
   return {
     workspaceId: subject.workspaceId,
     processedPostId: subject.processedPostId,
     mode,
     variant,
     model: provider.model,
-    promptVersion: RADAR_PROMPT_VERSION,
+    promptVersion,
   };
 }

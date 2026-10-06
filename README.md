@@ -904,10 +904,18 @@ most recent approvals and 10 most recent rejections with their reasons, the shar
 approve, and the post: its source, text and kind of media. Each post is scored twice when it has a picture — on the text alone and on the
 text with its first photo (or a video's still) — to find out whether the image is worth paying for.
 
+**Two prompts, side by side.** Every post is scored with both `radar-v1` (the baseline above) and
+`radar-v2-history-retrieval`, which adds the channel's [five most similar past
+publications](#similar-past-publications) and asks what they show — so the effect of retrieval is
+measured on the same posts, not on two different sets. `LIVE_RADAR_PROMPT_VERSIONS` in
+[`src/lib/radar/prompt.ts`](src/lib/radar/prompt.ts) is the list; drop one there to stop it.
+
 **What it records**, in `radar_evaluations`: a 0–100 score (the probability the editor publishes
 it), the predicted decision and rejection reason, three sub-scores, a one-sentence reason, which
 past decisions and which publication-history profile it was shown, the model and prompt version,
-and the tokens it cost. Failed and
+and the tokens it cost. The retrieval prompt's rows also record which past publications it was
+shown, with their similarity (`history_retrieval`), and what the model made of them
+(`historical_assessment`: relevant, possibly already covered, why). Failed and
 skipped attempts are rows too, so coverage is visible.
 
 **Limits.** It runs inside the sync, so it has a 20-second timeout per call and two minutes per
@@ -937,7 +945,7 @@ compares them rather than mixing them. Luna's list price is a tenth of Haiku's.
 ### Scoring past decisions
 
 ```bash
-npm run radar:backfill -- --workspace 2
+npm run radar:backfill -- --workspace 2 [--prompt radar-v1,radar-v2-history-retrieval]
 ```
 
 Scores posts the editor has already decided, each with only the decisions made before it arrived —
@@ -957,6 +965,12 @@ to X's URL, a video's still from X. Posts decided before that column existed hav
 scored on their text;
 `--text-only` skips that, `--limit N` stops after scoring N posts (the oldest first).
 
+Both prompt versions go into the same batch by default; `--prompt` picks some. The retrieval prompt
+needs `OPENAI_API_KEY` for embeddings and the history embedded (`npm run history:embed`) first.
+A post whose similarity search fails has its retrieval request held back and retried by the next
+run, so a retrieval score is never one made without retrieval by accident. Do not re-embed history
+while a batch is pending: what a result is recorded as having been shown is read again at ingest.
+
 A resumed batch is read with the provider it was submitted to, whatever `RADAR_PROVIDER` says now.
 
 To keep Radar to backfills only, leave the API keys out of Vercel and set them just in your local
@@ -966,6 +980,7 @@ To keep Radar to backfills only, leave the API keys out of Vercel and set them j
 
 ```bash
 npm run radar:report -- --workspace 2
+npm run radar:report -- --workspace 2 --compare radar-v1,radar-v2-history-retrieval
 ```
 
 Per mode (live, backfill) and variant: how often the editor approved, the mean score of approved
@@ -975,16 +990,24 @@ review work hiding the posts below it would save and how many approved posts it 
 A live score made after the editor had already decided is not counted. Text against text-and-image
 is compared on the same posts only.
 
-Change the prompt and bump `RADAR_PROMPT_VERSION` in
-[`src/lib/radar/prompt.ts`](src/lib/radar/prompt.ts): results of different prompts are reported
-separately and never mixed — and so are scores made with different history profiles, or none.
-`radar-v0` is the prompt before publication history; `radar-v1` adds it and puts the editorial
-profile explicitly first.
+For the retrieval prompt it adds how the search went (matches found, no history, no text,
+failed) and how often its "possibly already covered" flag agreed with the editor's
+`already_covered` rejections. `--compare` puts two prompt versions side by side on exactly the
+posts both scored, per mode, variant and model: AUC, mean scores, precision at 80, recall and work
+saved at each threshold, approvals scored under 50 — and which of those one version rescued and
+the other missed — and the cost.
 
-To see exactly what Radar would be shown for a post — no model is called:
+A prompt change gets a new version in [`src/lib/radar/prompt.ts`](src/lib/radar/prompt.ts):
+results of different prompts are reported separately and never mixed — and so are scores made
+with different history profiles, or none. `radar-v0` is the prompt before publication history;
+`radar-v1` adds it and puts the editorial profile explicitly first; `radar-v2-history-retrieval`
+is `radar-v1` plus similar past publications.
+
+To see exactly what Radar would be shown for a post — Radar's model is not called; the retrieval
+prompt's search embeds the post once:
 
 ```bash
-npm run radar:context -- --workspace 2 [--post <processed post id>]
+npm run radar:context -- --workspace 2 [--post <processed post id>] [--prompt radar-v1]
 ```
 
 ## Publication history
@@ -1002,17 +1025,13 @@ Three kinds of evidence describe a channel, and Radar keeps them apart:
 ```bash
 npm run history:import -- --workspace 2 --adapter telegram-json --file ./result.json
 npm run history:profile -- --workspace 2
+npm run history:embed -- --workspace 2
 npm run radar:report -- --workspace 2
 ```
 
 ### Importing history
 
 A workspace's own back catalogue is imported from an export file into `publication_history_items`.
-
-```bash
-npm run history:import -- --workspace 2 --adapter telegram-json --file ./result.json
-npm run history:import -- --workspace 2 --adapter telegram-json --file ./result.json --dry-run
-```
 
 ```bash
 npm run history:import -- --workspace 2 --adapter telegram-json --file ./result.json
@@ -1081,6 +1100,54 @@ today from history that includes posts published after an old candidate arrived 
 the candidate is scored without one. So most past posts are backfilled without a profile until
 there are profiles made at earlier points in time; that is deliberate.
 
+### Similar past publications
+
+```bash
+npm run history:embed -- --workspace 2 [--dry-run]
+```
+
+The profile is a summary; it loses the concrete posts. So each history item with text is also
+embedded — OpenAI's `HISTORY_EMBEDDING_MODEL`, `text-embedding-3-small` by default (1,536
+dimensions, $0.02 per million tokens; `text-embedding-3-large` is 3,072 and $0.13) — into
+`publication_history_embeddings`, and the retrieval prompt shows Radar the five past publications
+nearest to the new post, with their dates and similarity.
+
+**What is embedded** is the title and the text, whitespace evened out, cut at 6,000 characters —
+not the platform, type, dates, ids or metrics: those are the same across a channel's history, or
+not meaning, and would only pull every vector the same way. A new post is embedded the same way
+from its text. Items without text (photo or video alone) get no vector and stay in history as
+they are; media is not embedded yet.
+
+**Incremental.** Each vector stores a SHA-256 fingerprint of the exact text embedded. A run embeds
+only items with no vector for the current model, or whose title or text changed since — run it
+after every import; an unchanged history costs nothing. An item that lost its text loses its
+vector.
+
+**Models never mix.** Vectors are stored per item per model, with their length, and the search
+only compares vectors of the same model and length. The column has no fixed dimension, so trying
+another model needs no migration — set `HISTORY_EMBEDDING_MODEL`, run `history:embed` again, and
+the old vectors stay for the old model. The search is an exact scan; a workspace's history is
+small enough not to need an approximate index.
+
+**The search** is one query, with every boundary in it: only the workspace's own history, only
+publications from strictly before the post arrived — live and in a backfill alike, so a backfill
+never sees what the channel published later — and the five most similar by cosine similarity,
+with no threshold. The prompt tells the model that the five are the nearest of whatever exists and
+may be unrelated, that similarity ranks them without settling anything, and to tell a recurring
+topic (a sign of fit) from the same story (a likely repeat) and from a new development of a known
+story (not a repeat). Each post's vector is stored in `radar_candidate_embeddings`, so it is
+embedded once, and a backfill can read back exactly what its requests were shown.
+
+**Never in the way.** A post without text, a workspace without embedded history, a missing
+`OPENAI_API_KEY`, an API or database error: the retrieval prompt then runs without matches, its
+row says why (`history_retrieval.status`), and the baseline is unaffected. Live, the search gets
+five seconds.
+
+**Cost.** One embedding call per new post (a few hundred tokens), and the history once: VECTOR's
+83 posts with text, about 24,000 characters, cost a fraction of a cent. `history:embed` prints the
+tokens and the cost; the per-post calls are logged (`radar.history_retrieved`) and their tokens
+stored with the post's vector.
+
 ## Configuration reference
 
 | Variable | Default | Description |
@@ -1102,7 +1169,8 @@ there are profiles made at earlier points in time; that is deliberate.
 | `ADMIN_SECRET` | falls back to `CRON_SECRET` | Protects `/api/status`. |
 | `RADAR_PROVIDER` | `openai` | [Shadow Radar](#shadow-radar)'s model: `openai` (GPT-6 Luna) or `anthropic` (Claude Haiku 4.5). |
 | `RADAR_MODEL` | provider's default | Overrides the chosen provider's model id. |
-| `OPENAI_API_KEY` | — | Needed for Radar with `RADAR_PROVIDER=openai`. Without the chosen provider's key, Radar is off. |
+| `OPENAI_API_KEY` | — | Needed for Radar with `RADAR_PROVIDER=openai`. Without the chosen provider's key, Radar is off. Also used for history embeddings, whatever the provider. |
+| `HISTORY_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI model for [similar past publications](#similar-past-publications). Vectors are kept per model; after changing it, run `npm run history:embed` again. |
 | `ANTHROPIC_API_KEY` | — | Needed for Radar with `RADAR_PROVIDER=anthropic`. |
 | `CAPTION_PREFIX` | empty | Text prepended, separated by a blank line. |
 | `CAPTION_SUFFIX` | empty | Text appended, separated by a blank line. |
@@ -1240,8 +1308,9 @@ src/
       repository.ts            Upserts, import records
       adapters/telegram-json.ts  Telegram Desktop JSON export
       profile/                 History → editorial profile: sources, prompts, map/reduce, store
+      embeddings/              Embedded text and fingerprint, OpenAI embeddings, backfill, search
 scripts/                       migrate, run-sync, telegram-check, import-history, history-profile,
-                               radar-backfill, radar-report, radar-context
+                               history-embed, radar-backfill, radar-report, radar-context
 tests/                         Unit + integration suites
 ```
 
@@ -1256,12 +1325,12 @@ npm test
 208 tests. The unit suite runs anywhere. The integration suites need a real PostgreSQL,
 because the guarantees under test — UNIQUE races, `ON CONFLICT` semantics, advisory locks —
 only exist in the database; they are **skipped** rather than failed when no database is
-configured.
+configured. The database needs the pgvector extension, hence the `pgvector/pgvector` image.
 
 ```bash
 docker run -d --name ca-test-pg \
   -e POSTGRES_PASSWORD=test -e POSTGRES_DB=content_arbitrary_test \
-  -p 55432:5432 postgres:16-alpine
+  -p 55432:5432 pgvector/pgvector:pg16
 
 DATABASE_URL=postgresql://postgres:test@localhost:55432/content_arbitrary_test \
   npm run db:migrate

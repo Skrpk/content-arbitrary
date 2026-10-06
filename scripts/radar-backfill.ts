@@ -6,8 +6,15 @@
  * The provider is RADAR_PROVIDER (openai by default, or anthropic), with its
  * API key; a resumed batch is read with the provider it was submitted to.
  *
- *   npm run radar:backfill -- --workspace 2 [--min-per-class 5] [--limit 200] [--text-only] [--no-wait]
+ *   npm run radar:backfill -- --workspace 2 [--prompt radar-v1,radar-v2-history-retrieval]
+ *       [--min-per-class 5] [--limit 200] [--text-only] [--no-wait]
  *   npm run radar:backfill -- --workspace 2 --resume <batch id>
+ *
+ * Every prompt version by default, in the same batch, so the baseline and the
+ * retrieval prompt are scored on exactly the same posts; --prompt picks some.
+ * The retrieval prompt needs OPENAI_API_KEY for embeddings, and the history
+ * embedded first (npm run history:embed); do not re-embed history while a
+ * batch is pending, or what is recorded as shown may differ from what was.
  *
  * Without --no-wait it submits, waits for the batch and reads the results in.
  * If it is interrupted while waiting, --resume picks the batch up again; do not
@@ -23,7 +30,13 @@ import { getDb, getSql } from '../src/lib/db';
 import { getEnv } from '../src/lib/env';
 import { createLogger } from '../src/lib/logger';
 import { ingestRadarBatch, submitRadarBackfill, waitForBatch } from '../src/lib/radar/backfill';
-import { RADAR_PROMPT_VERSION } from '../src/lib/radar/prompt';
+import { createEmbeddingProvider } from '../src/lib/history/embeddings/provider';
+import {
+  isRadarPromptVersion,
+  RADAR_PROMPT_VERSIONS,
+  usesHistoryRetrieval,
+  type RadarPromptVersion,
+} from '../src/lib/radar/prompt';
 import { createRadarProvider, providerOfBatch } from '../src/lib/radar/providers';
 import { TelegramClient } from '../src/lib/telegram/client';
 
@@ -63,14 +76,22 @@ async function main() {
       throw new Error(`Workspace ${workspaceId} has no editorial_profile; Radar needs one`);
     }
 
+    const promptVersions = parsePromptVersions(argument('prompt'));
+    const embeddings = createEmbeddingProvider(env);
+    if (promptVersions.some(usesHistoryRetrieval) && !embeddings) {
+      throw new Error('The retrieval prompt needs OPENAI_API_KEY for embeddings; or pass --prompt radar-v1');
+    }
+
     console.log(
-      `Radar backfill: workspace ${workspaceId}, ${provider.name} ${provider.model}, ${RADAR_PROMPT_VERSION}`,
+      `Radar backfill: workspace ${workspaceId}, ${provider.name} ${provider.model}, ${promptVersions.join(' + ')}`,
     );
     const submitted = await submitRadarBackfill({
       db,
       provider,
       telegram: new TelegramClient(),
       textOnly: process.argv.includes('--text-only'),
+      promptVersions,
+      embeddings,
       workspaceId,
       profile: workspace.editorialProfile,
       minPerClass: Number(argument('min-per-class') ?? 5),
@@ -95,10 +116,30 @@ async function main() {
   for (const batchId of batchIds) {
     console.log(`Waiting for ${batchId} (if interrupted: --resume ${batchId})`);
     await waitForBatch(provider, batchId, { onStatus: (status) => console.log(`  ${status}`) });
-    console.log(await ingestRadarBatch({ db, provider, batchId, workspaceId, logger }));
+    console.log(
+      await ingestRadarBatch({
+        db,
+        provider,
+        batchId,
+        workspaceId,
+        embeddingModel: env.HISTORY_EMBEDDING_MODEL,
+        logger,
+      }),
+    );
   }
 
   console.log(`Next: npm run radar:report -- --workspace ${workspaceId}`);
+}
+
+function parsePromptVersions(value: string | undefined): RadarPromptVersion[] {
+  if (!value) return [...RADAR_PROMPT_VERSIONS];
+  const versions = value.split(',').map((version) => version.trim());
+  for (const version of versions) {
+    if (!isRadarPromptVersion(version)) {
+      throw new Error(`Unknown prompt version "${version}"; known: ${RADAR_PROMPT_VERSIONS.join(', ')}`);
+    }
+  }
+  return versions as RadarPromptVersion[];
 }
 
 main()

@@ -1,7 +1,13 @@
 import { z } from 'zod';
-import { REJECTION_REASONS, type RejectionReason } from '@/db/schema';
+import { REJECTION_REASONS, type HistoricalAssessment, type RejectionReason } from '@/db/schema';
 import type { PublicationProfile } from '@/lib/history/profile/schema';
-import type { RadarExample, RadarImage, RadarItem } from '@/lib/radar/prompt';
+import type {
+  RadarExample,
+  RadarImage,
+  RadarItem,
+  RadarPromptVersion,
+  RadarSimilarPublication,
+} from '@/lib/radar/prompt';
 import { truncateToLength } from '@/lib/telegram/format-caption';
 
 /**
@@ -24,6 +30,30 @@ export const radarOutputSchema = z.object({
 
 export type RadarOutput = z.infer<typeof radarOutputSchema>;
 
+const historicalContextSchema = z.object({
+  relevant: z.boolean(),
+  possibly_already_covered: z.boolean(),
+  explanation: z.string(),
+});
+
+/**
+ * The retrieval prompt's answer: the same, with what the similar past
+ * publications show first — before the reason, so the score follows from it.
+ */
+export const radarRetrievalOutputSchema = z.object({
+  historical_context: historicalContextSchema.nullable(),
+  ...radarOutputSchema.shape,
+});
+
+/**
+ * What any answer is read with, whichever version asked: a batch result
+ * arrives without its request, and the baseline's answer simply has no
+ * historical_context.
+ */
+const anyRadarOutputSchema = radarOutputSchema.extend({
+  historical_context: historicalContextSchema.nullable().optional(),
+});
+
 export interface RadarInput {
   profile: string;
   approvalRate: number | null;
@@ -32,6 +62,10 @@ export interface RadarInput {
   image?: RadarImage;
   /** What the channel's own past posts show it publishes; absent until one is generated. */
   publicationProfile?: PublicationProfile | null;
+  /** Which prompt to build; the baseline when absent. */
+  promptVersion?: RadarPromptVersion;
+  /** Retrieval prompt only: the most similar past publications, possibly none. */
+  similarPublications?: RadarSimilarPublication[] | null;
 }
 
 export interface TokenUsage {
@@ -47,6 +81,8 @@ export interface RadarPrediction extends TokenUsage {
   importance: number;
   reason: string;
   predictedRejectionReason: RejectionReason | null;
+  /** Only from the retrieval prompt, and only when it was shown past publications. */
+  historicalAssessment: HistoricalAssessment | null;
 }
 
 export class RadarError extends Error {
@@ -70,7 +106,8 @@ export function parseStructured<T>(schema: z.ZodType<T>, text: string, usage: To
 
 /** Check the model's JSON text against the schema and turn it into a prediction. */
 export function toPrediction(text: string, usage: TokenUsage): RadarPrediction {
-  const output: RadarOutput = parseStructured(radarOutputSchema, text, usage);
+  const output = parseStructured(anyRadarOutputSchema, text, usage);
+  const context = output.historical_context;
 
   return {
     // No provider enforces numeric ranges, so they are enforced here.
@@ -82,6 +119,13 @@ export function toPrediction(text: string, usage: TokenUsage): RadarPrediction {
     reason: truncateToLength(output.reason.trim(), 500),
     predictedRejectionReason:
       output.predicted_decision === 'reject' ? output.predicted_rejection_reason : null,
+    historicalAssessment: context
+      ? {
+          relevant: context.relevant,
+          possiblyAlreadyCovered: context.possibly_already_covered,
+          explanation: truncateToLength(context.explanation.trim(), 500),
+        }
+      : null,
     ...usage,
   };
 }

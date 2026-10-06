@@ -1,14 +1,23 @@
 import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
-import { processedPosts, type RadarVariant, type ReviewMediaItem } from '@/db/schema';
+import {
+  processedPosts,
+  type HistoryRetrievalRecord,
+  type RadarVariant,
+  type ReviewMediaItem,
+} from '@/db/schema';
 import { describeError } from '@/lib/errors';
 import { scrub, type Logger } from '@/lib/logger';
 import type { TelegramClient } from '@/lib/telegram/client';
 import {
   describeStoredMedia,
   RADAR_EXAMPLES_PER_CLASS,
-  RADAR_PROMPT_VERSION,
+  RADAR_PROMPT_BASELINE,
+  RADAR_PROMPT_RETRIEVAL,
+  RADAR_PROMPT_VERSIONS,
+  usesHistoryRetrieval,
   type RadarImage,
+  type RadarPromptVersion,
 } from '@/lib/radar/prompt';
 import type { RadarProvider } from '@/lib/radar/providers';
 import {
@@ -17,6 +26,12 @@ import {
   recordBackfillEvaluation,
 } from '@/lib/radar/repository';
 import { loadRadarPublicationProfile } from '@/lib/history/profile/repository';
+import type { EmbeddingProvider } from '@/lib/history/embeddings/provider';
+import {
+  replaySimilarPublications,
+  retrieveSimilarPublications,
+  toRetrievalRecord,
+} from '@/lib/history/embeddings/retrieval';
 
 /**
  * Score posts the editor has already decided, as Radar would have scored them
@@ -27,7 +42,9 @@ import { loadRadarPublicationProfile } from '@/lib/history/profile/repository';
  * hindsight. Posts that arrived before there was enough history are left out.
  * The same goes for the publication-history profile: a post gets one only if
  * every publication it was made from predates the post's arrival; otherwise
- * it is scored without one.
+ * it is scored without one. The retrieval prompt's similar past publications
+ * are searched with the same cutoff, in the query itself: only what the
+ * channel had published before the post arrived.
  *
  * It runs in two halves, so either can be repeated on its own: submit builds
  * the requests and sends them as one or more batches; ingest reads a finished
@@ -52,6 +69,12 @@ export interface SubmitSummary {
   /** Posts sent for scoring; each is one request, or two with a photo. */
   posts: number;
   requests: number;
+  /**
+   * Posts whose similar-publication search failed: their retrieval-prompt
+   * requests are held back, so the next submit retries them rather than
+   * recording a retrieval score made without retrieval.
+   */
+  retrievalFailed: number;
   batchIds: string[];
 }
 
@@ -61,27 +84,46 @@ export interface IngestSummary {
 }
 
 /**
- * `p<processed post id>-<variant>[-h<history profile id>]`: what ties a batch
- * result back to its post, and to the publication-history profile its prompt
- * carried — which a later profile must not be mistaken for at ingest.
+ * A prompt version's mark in a custom id. Batch custom ids are limited to 64
+ * characters, so the version is abbreviated; the baseline has none, which
+ * also reads batches submitted before there were two versions correctly.
+ */
+const PROMPT_TAGS: Record<RadarPromptVersion, string> = {
+  [RADAR_PROMPT_BASELINE]: '',
+  [RADAR_PROMPT_RETRIEVAL]: 'v2r',
+};
+
+/**
+ * `p<processed post id>-<variant>[-h<history profile id>][-<prompt tag>]`:
+ * what ties a batch result back to its post, to the publication-history
+ * profile its prompt carried — which a later profile must not be mistaken for
+ * at ingest — and to the prompt version that asked.
  */
 export function radarCustomId(
   processedPostId: number,
   variant: RadarVariant,
   historyProfileId?: number | null,
+  promptVersion: RadarPromptVersion = RADAR_PROMPT_BASELINE,
 ): string {
-  return `p${processedPostId}-${variant}${historyProfileId ? `-h${historyProfileId}` : ''}`;
+  const tag = PROMPT_TAGS[promptVersion];
+  return `p${processedPostId}-${variant}${historyProfileId ? `-h${historyProfileId}` : ''}${tag ? `-${tag}` : ''}`;
 }
 
-function parseCustomId(
-  customId: string,
-): { processedPostId: number; variant: RadarVariant; historyProfileId: number | null } | null {
-  const match = /^p(\d+)-(text|text_image)(?:-h(\d+))?$/.exec(customId);
-  return match
+function parseCustomId(customId: string): {
+  processedPostId: number;
+  variant: RadarVariant;
+  historyProfileId: number | null;
+  promptVersion: RadarPromptVersion;
+} | null {
+  const match = /^p(\d+)-(text|text_image)(?:-h(\d+))?(?:-([a-z0-9]+))?$/.exec(customId);
+  if (!match) return null;
+  const promptVersion = RADAR_PROMPT_VERSIONS.find((version) => PROMPT_TAGS[version] === (match[4] ?? ''));
+  return promptVersion
     ? {
         processedPostId: Number(match[1]),
         variant: match[2] as RadarVariant,
         historyProfileId: match[3] ? Number(match[3]) : null,
+        promptVersion,
       }
     : null;
 }
@@ -93,6 +135,10 @@ export async function submitRadarBackfill(input: {
   telegram?: TelegramClient;
   /** Score the text only, never the image. */
   textOnly?: boolean;
+  /** Which prompts to score with; every version by default, so they compare on the same posts. */
+  promptVersions?: readonly RadarPromptVersion[];
+  /** For the retrieval prompt's similar past publications. */
+  embeddings?: EmbeddingProvider | null;
   workspaceId: number;
   profile: string;
   /** Fewest approvals and fewest rejections a post needs behind it to be scored. */
@@ -129,8 +175,10 @@ export async function submitRadarBackfill(input: {
     alreadyScored: 0,
     posts: 0,
     requests: 0,
+    retrievalFailed: 0,
     batchIds: [],
   };
+  const versions = input.promptVersions ?? RADAR_PROMPT_VERSIONS;
 
   const maxBytes = input.maxBatchBytes ?? MAX_BATCH_BYTES;
   let pending: unknown[] = [];
@@ -152,15 +200,20 @@ export async function submitRadarBackfill(input: {
   for (const post of candidates) {
     if (input.limit !== undefined && summary.posts >= input.limit) break;
 
-    const done = await findEvaluatedVariants(input.db, {
-      processedPostId: post.id,
-      mode: 'backfill',
-      model: input.provider.model,
-      promptVersion: RADAR_PROMPT_VERSION,
-      scoredOnly: true,
-    });
     const wantsImage = !input.textOnly && hasReviewImage(post.reviewMedia);
-    if (done.has('text') && (done.has('text_image') || !wantsImage)) {
+    const wanted: RadarVariant[] = wantsImage ? ['text', 'text_image'] : ['text'];
+    const missing: { version: RadarPromptVersion; variant: RadarVariant }[] = [];
+    for (const version of versions) {
+      const done = await findEvaluatedVariants(input.db, {
+        processedPostId: post.id,
+        mode: 'backfill',
+        model: input.provider.model,
+        promptVersion: version,
+        scoredOnly: true,
+      });
+      for (const variant of wanted) if (!done.has(variant)) missing.push({ version, variant });
+    }
+    if (missing.length === 0) {
       summary.alreadyScored += 1;
       continue;
     }
@@ -177,28 +230,43 @@ export async function submitRadarBackfill(input: {
       continue;
     }
 
-    const image =
-      wantsImage && !done.has('text_image')
-        ? await reviewImage(input.telegram, post.reviewMedia, input.logger)
-        : undefined;
+    const image = missing.some(({ variant }) => variant === 'text_image')
+      ? await reviewImage(input.telegram, post.reviewMedia, input.logger)
+      : undefined;
 
-    const variants = (['text', ...(image ? ['text_image'] : [])] as RadarVariant[]).filter(
-      (candidate) => !done.has(candidate),
-    );
+    // The image variant is dropped when the image is not available.
+    let requests = missing.filter(({ variant }) => variant === 'text' || image);
     const publication = await loadRadarPublicationProfile(input.db, {
       workspaceId: input.workspaceId,
       arrivedAt: post.createdAt,
       logger: input.logger,
     });
-    if (variants.length === 0) {
-      // Only the image variant was missing, and the image is not available.
+    if (requests.length === 0) {
       summary.alreadyScored += 1;
       continue;
     }
 
+    const retrieval = requests.some(({ version }) => usesHistoryRetrieval(version))
+      ? await retrieveSimilarPublications({
+          db: input.db,
+          embeddings: input.embeddings ?? null,
+          workspaceId: input.workspaceId,
+          processedPostId: post.id,
+          candidateText: post.sourceText,
+          before: post.createdAt,
+          logger: input.logger,
+        })
+      : null;
+    if (retrieval?.status === 'failed') {
+      summary.retrievalFailed += 1;
+      requests = requests.filter(({ version }) => !usesHistoryRetrieval(version));
+      if (requests.length === 0) continue;
+    }
+
     summary.posts += 1;
-    for (const variant of variants) {
-      const request = input.provider.batchEntry(radarCustomId(post.id, variant, publication?.id), {
+    for (const { version, variant } of requests) {
+      const customId = radarCustomId(post.id, variant, publication?.id, version);
+      const request = input.provider.batchEntry(customId, {
         profile: input.profile,
         approvalRate: history.approvalRate,
         item: {
@@ -209,6 +277,8 @@ export async function submitRadarBackfill(input: {
         examples: history.examples,
         image: variant === 'text_image' ? image : undefined,
         publicationProfile: publication?.profile ?? null,
+        promptVersion: version,
+        similarPublications: usesHistoryRetrieval(version) ? (retrieval?.matches ?? []) : null,
       });
 
       const bytes = JSON.stringify(request).length;
@@ -253,10 +323,16 @@ export async function ingestRadarBatch(input: {
   provider: RadarProvider;
   batchId: string;
   workspaceId: number;
+  /** The embedding model the requests were searched with; needed to record what they were shown. */
+  embeddingModel?: string | null;
   logger: Logger;
 }): Promise<IngestSummary> {
   const summary: IngestSummary = { scored: 0, failed: 0 };
-  const posts = new Map<number, { examplePostIds: number[] } | null>();
+  const posts = new Map<
+    number,
+    { createdAt: Date; sourceText: string | null; examplePostIds: number[] } | null
+  >();
+  const retrievals = new Map<number, HistoryRetrievalRecord>();
 
   for await (const result of input.provider.batchResults(input.batchId)) {
     const key = parseCustomId(result.customId);
@@ -269,7 +345,7 @@ export async function ingestRadarBatch(input: {
     // the request was built from, read again with the same cutoff.
     if (!posts.has(key.processedPostId)) {
       const [post] = await input.db
-        .select({ createdAt: processedPosts.createdAt })
+        .select({ createdAt: processedPosts.createdAt, sourceText: processedPosts.sourceText })
         .from(processedPosts)
         .where(
           and(eq(processedPosts.id, key.processedPostId), eq(processedPosts.workspaceId, input.workspaceId)),
@@ -278,6 +354,7 @@ export async function ingestRadarBatch(input: {
         key.processedPostId,
         post
           ? {
+              ...post,
               examplePostIds: (
                 await loadRadarHistory(input.db, {
                   workspaceId: input.workspaceId,
@@ -297,16 +374,41 @@ export async function ingestRadarBatch(input: {
       continue;
     }
 
+    // Like the examples, what the search found is read again: the same
+    // search, from the vector stored when the request was built.
+    let historyRetrieval: HistoryRetrievalRecord | null = null;
+    if (usesHistoryRetrieval(key.promptVersion)) {
+      if (!retrievals.has(key.processedPostId)) {
+        retrievals.set(
+          key.processedPostId,
+          input.embeddingModel
+            ? toRetrievalRecord(
+                await replaySimilarPublications({
+                  db: input.db,
+                  model: input.embeddingModel,
+                  workspaceId: input.workspaceId,
+                  processedPostId: key.processedPostId,
+                  candidateText: post.sourceText,
+                  before: post.createdAt,
+                }),
+              )
+            : { status: 'unavailable', embeddingModel: null, matches: [] },
+        );
+      }
+      historyRetrieval = retrievals.get(key.processedPostId)!;
+    }
+
     const base = {
       workspaceId: input.workspaceId,
       processedPostId: key.processedPostId,
       mode: 'backfill' as const,
       variant: key.variant,
       model: input.provider.model,
-      promptVersion: RADAR_PROMPT_VERSION,
+      promptVersion: key.promptVersion,
       imageIncluded: key.variant === 'text_image',
       examplePostIds: post.examplePostIds,
       publicationHistoryProfileId: key.historyProfileId,
+      historyRetrieval,
     };
 
     if (result.ok) {
@@ -321,6 +423,7 @@ export async function ingestRadarBatch(input: {
         importance: prediction.importance,
         reason: prediction.reason,
         predictedRejectionReason: prediction.predictedRejectionReason,
+        historicalAssessment: historyRetrieval ? prediction.historicalAssessment : null,
         inputTokens: prediction.inputTokens,
         outputTokens: prediction.outputTokens,
       });

@@ -187,6 +187,18 @@ const schema = z
     /** Overrides the provider's default model id. */
     RADAR_MODEL: z.string().trim().min(1).optional().or(z.literal('').transform(() => undefined)),
     OPENAI_API_KEY: z.string().min(1).optional().or(z.literal('').transform(() => undefined)),
+    /**
+     * The OpenAI model that embeds publication history and new posts for
+     * Radar's similar-publication search. Always OpenAI, whatever
+     * RADAR_PROVIDER is, and only with OPENAI_API_KEY set. Vectors are stored
+     * per model and never compared across models, so changing this needs
+     * `npm run history:embed` again before searches find anything.
+     */
+    HISTORY_EMBEDDING_MODEL: z
+      .string()
+      .trim()
+      .optional()
+      .transform((value) => (value ? value : 'text-embedding-3-small')),
     ANTHROPIC_API_KEY: z.string().min(1).optional().or(z.literal('').transform(() => undefined)),
 
     CRON_SECRET: z.string().min(16, 'CRON_SECRET must be at least 16 characters'),
@@ -324,6 +336,7 @@ export function redactedEnvSummary(env: Env = getEnv()) {
     hasWebhookSecret: Boolean(env.TELEGRAM_WEBHOOK_SECRET),
     radarProvider: env.RADAR_PROVIDER,
     radarModel: env.RADAR_MODEL ?? null,
+    historyEmbeddingModel: env.HISTORY_EMBEDDING_MODEL,
     hasOpenAiApiKey: Boolean(env.OPENAI_API_KEY),
     hasAnthropicApiKey: Boolean(env.ANTHROPIC_API_KEY),
     // Not a secret, and whether editing is available depends on it.

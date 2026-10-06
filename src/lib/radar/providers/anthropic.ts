@@ -4,19 +4,23 @@ import {
   parseStructured,
   RadarError,
   radarOutputSchema,
+  radarRetrievalOutputSchema,
   toPrediction,
   type RadarInput,
   type RadarPrediction,
   type TokenUsage,
 } from '@/lib/radar/output';
-import { buildSystemPrompt, buildUserContent, type RadarPart } from '@/lib/radar/prompt';
+import { buildSystemPrompt, buildUserContent, usesHistoryRetrieval, type RadarPart } from '@/lib/radar/prompt';
 import type { RadarBatchResult, RadarProvider } from '@/lib/radar/providers/types';
 
 export const ANTHROPIC_RADAR_MODEL = 'claude-haiku-4-5';
 
 // Sent to constrain the answer; the answer is parsed by toPrediction, after
 // the stop reason is checked, so a refusal is reported as one.
-const outputFormat = zodOutputFormat(radarOutputSchema);
+const outputFormats = {
+  baseline: zodOutputFormat(radarOutputSchema),
+  retrieval: zodOutputFormat(radarRetrievalOutputSchema),
+};
 
 export function createAnthropicRadar(options: {
   apiKey?: string;
@@ -29,14 +33,16 @@ export function createAnthropicRadar(options: {
   const request = (input: RadarInput): Anthropic.MessageCreateParamsNonStreaming => ({
     model,
     max_tokens: 1024,
-    system: buildSystemPrompt(input.profile, input.approvalRate, input.publicationProfile),
+    system: buildSystemPrompt(input.profile, input.approvalRate, input.publicationProfile, input.promptVersion),
     messages: [
       {
         role: 'user',
-        content: buildUserContent(input.item, input.examples, input.image).map(toAnthropicBlock),
+        content: buildUserContent(input.item, input.examples, input.image, input.similarPublications).map(
+          toAnthropicBlock,
+        ),
       },
     ],
-    output_config: { format: outputFormat },
+    output_config: { format: retrievalPrompt(input) ? outputFormats.retrieval : outputFormats.baseline },
   });
 
   return {
@@ -149,4 +155,8 @@ function toAnthropicBlock(part: RadarPart): Anthropic.ContentBlockParam {
         ? { type: 'url', url: image.url }
         : { type: 'base64', media_type: image.mediaType, data: image.data },
   };
+}
+
+function retrievalPrompt(input: RadarInput): boolean {
+  return input.promptVersion !== undefined && usesHistoryRetrieval(input.promptVersion);
 }

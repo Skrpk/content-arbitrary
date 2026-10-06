@@ -276,7 +276,10 @@ describe('Radar report and history profiles', () => {
       outputTokens: 10,
       evaluatedAt: new Date('2026-10-01T10:00:00Z'),
       publicationHistoryProfileId,
+      historyRetrieval: null,
+      historicalAssessment: null,
       approved: false,
+      rejectionReason: null,
       reviewedAt: new Date('2026-10-01T11:00:00Z'),
     });
 

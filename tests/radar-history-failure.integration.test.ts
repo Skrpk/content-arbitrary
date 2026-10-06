@@ -4,6 +4,7 @@ import postgres from 'postgres';
 import * as schema from '@/db/schema';
 import { DEFAULT_WORKSPACE_ID, processedPosts, radarEvaluations } from '@/db/schema';
 import { createRadarRun, runLiveRadar } from '@/lib/radar/shadow';
+import { RADAR_PROMPT_BASELINE } from '@/lib/radar/prompt';
 import { createTestLogger, ensureTestWorkspace } from './helpers';
 import { fakeAnthropic, messageResponse, radarOutput } from './radar-fakes';
 
@@ -14,6 +15,8 @@ vi.mock('@/lib/history/profile/repository', async (importOriginal) => ({
     throw new Error('connection terminated unexpectedly');
   }),
 }));
+
+const BASELINE_ONLY = [RADAR_PROMPT_BASELINE] as const;
 
 /** A failure to read the publication profile costs Radar its context, not its score. */
 
@@ -57,7 +60,7 @@ describeIfDb('live Radar when the publication profile cannot be read', () => {
     const logger = createTestLogger();
 
     await runLiveRadar(
-      createRadarRun({ provider }),
+      createRadarRun({ promptVersions: BASELINE_ONLY, provider }),
       db,
       {
         workspaceId: DEFAULT_WORKSPACE_ID,

@@ -26,7 +26,8 @@
     "radar:report": "tsx scripts/radar-report.ts",
     "radar:context": "tsx scripts/radar-context.ts",
     "history:import": "tsx scripts/import-history.ts",
-    "history:profile": "tsx scripts/history-profile.ts"
+    "history:profile": "tsx scripts/history-profile.ts",
+    "history:embed": "tsx scripts/history-embed.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",

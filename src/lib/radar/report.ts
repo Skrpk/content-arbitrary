@@ -3,6 +3,8 @@ import type { Database } from '@/lib/db';
 import {
   processedPosts,
   radarEvaluations,
+  type HistoricalAssessment,
+  type HistoryRetrievalRecord,
   type RadarMode,
   type RadarStatus,
   type RadarVariant,
@@ -33,8 +35,13 @@ export interface ReportRow {
   evaluatedAt: Date;
   /** The publication-history profile the prompt carried, if any. */
   publicationHistoryProfileId: number | null;
+  /** Retrieval prompt only: what the similar-publication search found. */
+  historyRetrieval: HistoryRetrievalRecord | null;
+  historicalAssessment: HistoricalAssessment | null;
   /** The editor's decision; null while the post is undecided. */
   approved: boolean | null;
+  /** Why the editor turned it down, if they did. */
+  rejectionReason: string | null;
   reviewedAt: Date | null;
 }
 
@@ -86,6 +93,9 @@ export async function loadReportRows(db: Database, workspaceId: number): Promise
       outputTokens: radarEvaluations.outputTokens,
       evaluatedAt: radarEvaluations.createdAt,
       publicationHistoryProfileId: radarEvaluations.publicationHistoryProfileId,
+      historyRetrieval: radarEvaluations.historyRetrieval,
+      historicalAssessment: radarEvaluations.historicalAssessment,
+      rejectionReason: processedPosts.rejectionReason,
       postStatus: processedPosts.status,
       reviewedAt: processedPosts.reviewedAt,
     })
@@ -191,6 +201,9 @@ function formatGroup(key: string, rows: ReportRow[]): string {
     }
   }
 
+  const retrieval = formatRetrieval(rows);
+  if (retrieval) lines.push('', ...retrieval);
+
   const inputTokens = sum(rows.map((row) => row.inputTokens ?? 0));
   const outputTokens = sum(rows.map((row) => row.outputTokens ?? 0));
   // The backfill goes through the batch APIs, billed at half the list price.
@@ -241,6 +254,132 @@ function formatPairedComparison(rows: ReportRow[]): string | null {
   }
 
   return lines.length > 0 ? lines.join('\n') : null;
+}
+
+/**
+ * How the similar-publication search went for a retrieval prompt's rows, and
+ * how its "possibly already covered" flag lines up with the editor's
+ * already_covered rejections.
+ */
+function formatRetrieval(rows: ReportRow[]): string[] | null {
+  const searched = rows.filter((row) => row.historyRetrieval !== null);
+  if (searched.length === 0) return null;
+
+  const byStatus = new Map<string, number>();
+  for (const row of searched) {
+    const status = row.historyRetrieval!.status;
+    byStatus.set(status, (byStatus.get(status) ?? 0) + 1);
+  }
+  const top = searched
+    .map((row) => row.historyRetrieval!.matches[0]?.similarity)
+    .filter((value): value is number => value !== undefined);
+  const lines = [
+    `History retrieval: ${[...byStatus.entries()].map(([status, total]) => `${status} ${total}`).join(', ')}` +
+      (top.length > 0 ? ` · top similarity median ${median(top).toFixed(2)}` : ''),
+  ];
+
+  const decided = usable(rows);
+  const flagged = decided.filter((row) => row.historicalAssessment?.possiblyAlreadyCovered);
+  const repeats = decided.filter((row) => row.rejectionReason === 'already_covered');
+  if (flagged.length > 0 || repeats.length > 0) {
+    const flaggedRepeats = flagged.filter((row) => row.rejectionReason === 'already_covered').length;
+    lines.push(
+      `Flagged "possibly already covered": ${flagged.length} — ` +
+        `${flagged.filter((row) => !row.approved).length} rejected, ${flaggedRepeats} of them as already_covered; ` +
+        `editor's already_covered rejections: ${repeats.length}, flagged ${flaggedRepeats}`,
+    );
+  }
+  return lines;
+}
+
+/**
+ * Two prompt versions on exactly the posts both scored, per mode, variant and
+ * model — the only comparison that says what the difference between the
+ * prompts did, rather than what the difference between two sets of posts did.
+ */
+export function formatPromptComparison(rows: ReportRow[], versions: [string, string]): string {
+  const [first, second] = versions;
+  const sections: string[] = [];
+  const setups = new Set(
+    rows.filter((row) => versions.includes(row.promptVersion)).map((row) => [row.mode, row.variant, row.model].join(' · ')),
+  );
+
+  for (const setupKey of [...setups].sort()) {
+    const inSetup = usable(rows).filter((row) => [row.mode, row.variant, row.model].join(' · ') === setupKey);
+    const byPost = (version: string) =>
+      new Map(inSetup.filter((row) => row.promptVersion === version).map((row) => [row.processedPostId, row]));
+    const a = byPost(first);
+    const b = byPost(second);
+    const posts = [...a.keys()].filter((id) => b.has(id));
+    if (posts.length === 0) continue;
+
+    const sides = [posts.map((id) => a.get(id)!), posts.map((id) => b.get(id)!)];
+    const approvedCount = sides[0]!.filter((row) => row.approved).length;
+    const column = (values: string[]) => values.map((value) => value.padStart(14)).join('');
+    const line = (label: string, compute: (side: ReportRow[]) => string) =>
+      `${label.padEnd(30)}${column(sides.map(compute))}`;
+
+    const lines = [
+      `== ${first} vs ${second} · ${setupKey}`,
+      `Same ${posts.length} posts, ${approvedCount} approved, ${posts.length - approvedCount} rejected`,
+      `${''.padEnd(30)}${column(['A', 'B'])}`,
+      line('Separation (AUC)', (side) => {
+        const approved = side.filter((row) => row.approved).map((row) => row.score!);
+        const rejected = side.filter((row) => !row.approved).map((row) => row.score!);
+        return approved.length > 0 && rejected.length > 0 ? auc(approved, rejected).toFixed(2) : 'n/a';
+      }),
+      line('Mean score, approved', (side) => meanOf(side.filter((row) => row.approved))),
+      line('Mean score, rejected', (side) => meanOf(side.filter((row) => !row.approved))),
+      line('Precision@80', (side) => {
+        const high = side.filter((row) => row.score! >= 80);
+        return `${high.filter((row) => row.approved).length}/${high.length} ${percent(high.filter((row) => row.approved).length, high.length)}`;
+      }),
+      ...THRESHOLDS.map((threshold) =>
+        line(`Recall@${threshold} · work saved`, (side) => {
+          const kept = side.filter((row) => row.approved && row.score! >= threshold).length;
+          const hidden = side.filter((row) => row.score! < threshold).length;
+          return `${percent(kept, approvedCount)} · ${percent(hidden, side.length)}`;
+        }),
+      ),
+      line('Missed approvals (<50)', (side) => String(side.filter((row) => row.approved && row.score! < 50).length)),
+      line('Tokens in / out', (side) => {
+        const input = sum(side.map((row) => row.inputTokens ?? 0));
+        const output = sum(side.map((row) => row.outputTokens ?? 0));
+        return `${Math.round(input / 1000)}k/${Math.round(output / 1000)}k`;
+      }),
+      line('Cost', (side) => {
+        const cost = costUsd(
+          side[0]!.model,
+          { inputTokens: sum(side.map((row) => row.inputTokens ?? 0)), outputTokens: sum(side.map((row) => row.outputTokens ?? 0)) },
+          { batch: side[0]!.mode === 'backfill' },
+        );
+        return cost === null ? 'n/a' : `$${cost.toFixed(4)}`;
+      }),
+      `A = ${first}, B = ${second}`,
+    ];
+
+    const missed = (side: ReportRow[]) =>
+      side.filter((row) => row.approved && row.score! < 50).map((row) => row.processedPostId);
+    const missedA = new Set(missed(sides[0]!));
+    const missedB = new Set(missed(sides[1]!));
+    const fixed = [...missedA].filter((id) => !missedB.has(id));
+    const broke = [...missedB].filter((id) => !missedA.has(id));
+    if (fixed.length > 0 || broke.length > 0) {
+      lines.push(
+        `Approvals B rescued from <50: ${fixed.length > 0 ? fixed.join(', ') : 'none'}; ` +
+          `newly missed by B: ${broke.length > 0 ? broke.join(', ') : 'none'}`,
+      );
+    }
+    sections.push(lines.join('\n'));
+  }
+
+  return sections.length > 0
+    ? sections.join('\n\n')
+    : `No posts decided and scored by both ${first} and ${second} yet.`;
+}
+
+function meanOf(rows: ReportRow[]): string {
+  return rows.length === 0 ? 'n/a' : mean(rows.map((row) => row.score!)).toFixed(1);
 }
 
 /**

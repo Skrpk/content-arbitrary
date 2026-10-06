@@ -24,6 +24,7 @@ const expected = {
   importance: 70,
   reason: 'Схоже на те, що редактор публікує.',
   predictedRejectionReason: null,
+  historicalAssessment: null,
 };
 
 describe('OpenAI provider (GPT-6 Luna)', () => {

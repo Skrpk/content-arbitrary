@@ -18,9 +18,12 @@ import { insertPublicationProfile } from '@/lib/history/profile/repository';
 import { RadarError } from '@/lib/radar/output';
 import { ingestRadarBatch, submitRadarBackfill, waitForBatch } from '@/lib/radar/backfill';
 import { createRadarRun, runLiveRadar } from '@/lib/radar/shadow';
+import { RADAR_PROMPT_BASELINE } from '@/lib/radar/prompt';
 import { createTestLogger, ensureTestWorkspace } from './helpers';
 import { fakeProfiler, profileFixture } from './history-fakes';
 import { fakeAnthropic, fakeBatchProvider, messageResponse, radarOutput } from './radar-fakes';
+
+const BASELINE_ONLY = [RADAR_PROMPT_BASELINE] as const;
 
 /**
  * From publication history to a stored profile, and from the profile into
@@ -271,7 +274,7 @@ describeIfDb('live Radar with a publication profile', () => {
     const post = await decidedPost({ decision: 'pending', createdAt: day(40) });
     const { provider, requests } = fakeAnthropic(() => messageResponse(radarOutput()));
 
-    await runLiveRadar(createRadarRun({ provider }), db, subject(post.id), createTestLogger());
+    await runLiveRadar(createRadarRun({ promptVersions: BASELINE_ONLY, provider }), db, subject(post.id), createTestLogger());
 
     const system = requests[0]!.system as string;
     expect(system).toContain('<editorial_profile>\nSpace and sci-fi.\n</editorial_profile>');
@@ -288,7 +291,7 @@ describeIfDb('live Radar with a publication profile', () => {
     const post = await decidedPost({ decision: 'pending', createdAt: day(40) });
     const { provider, requests } = fakeAnthropic(() => messageResponse(radarOutput({ score: 64 })));
 
-    await runLiveRadar(createRadarRun({ provider }), db, subject(post.id), createTestLogger());
+    await runLiveRadar(createRadarRun({ promptVersions: BASELINE_ONLY, provider }), db, subject(post.id), createTestLogger());
 
     expect(requests[0]!.system as string).not.toContain('publication_history');
     const [row] = await db.select().from(radarEvaluations);
@@ -312,7 +315,7 @@ describeIfDb('live Radar with a publication profile', () => {
     const { provider, requests } = fakeAnthropic(() => messageResponse(radarOutput()));
     const logger = createTestLogger();
 
-    await runLiveRadar(createRadarRun({ provider }), db, subject(post.id), logger);
+    await runLiveRadar(createRadarRun({ promptVersions: BASELINE_ONLY, provider }), db, subject(post.id), logger);
 
     expect(requests[0]!.system as string).not.toContain('publication_history');
     expect((await db.select().from(radarEvaluations))[0]).toMatchObject({ status: 'ok', publicationHistoryProfileId: null });
@@ -334,6 +337,7 @@ describeIfDb('backfill and the publication profile', () => {
 
     const fake = fakeBatchProvider('openai', () => ({ output: radarOutput() }));
     const submitted = await submitRadarBackfill({
+      promptVersions: BASELINE_ONLY,
       db,
       provider: fake.provider,
       workspaceId: DEFAULT_WORKSPACE_ID,

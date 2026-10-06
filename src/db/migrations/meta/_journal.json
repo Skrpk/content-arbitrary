@@ -113,6 +113,13 @@
       "when": 1791312363009,
       "tag": "0015_publication_history_profiles",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1791314418503,
+      "tag": "0016_history_embeddings",
+      "breakpoints": true
     }
   ]
 }

@@ -14,7 +14,10 @@ import {
 } from '@/db/schema';
 import { ingestRadarBatch, submitRadarBackfill, waitForBatch } from '@/lib/radar/backfill';
 import { loadRadarHistory } from '@/lib/radar/repository';
-import { RADAR_PROMPT_VERSION } from '@/lib/radar/prompt';
+import { RADAR_PROMPT_BASELINE } from '@/lib/radar/prompt';
+
+/** These tests are about one prompt; both side by side are tested in radar-retrieval. */
+const BASELINE_ONLY = [RADAR_PROMPT_BASELINE] as const;
 import { formatRadarReport, loadReportRows } from '@/lib/radar/report';
 import { createRadarRun, runLiveRadar, type RadarSubject } from '@/lib/radar/shadow';
 import { markAwaitingApproval, rejectWithReason } from '@/lib/sync/repository';
@@ -178,7 +181,7 @@ describeIfDb('runLiveRadar', () => {
     const { provider, requests } = fakeAnthropic(() => messageResponse(radarOutput({ score: 77 })));
 
     await runLiveRadar(
-      createRadarRun({ provider }),
+      createRadarRun({ promptVersions: BASELINE_ONLY, provider }),
       db,
       subject(post.id, { image: { kind: 'url', url: 'https://pbs.twimg.com/media/a.jpg' } }),
       createTestLogger(),
@@ -192,7 +195,7 @@ describeIfDb('runLiveRadar', () => {
     expect(rows[0]).toMatchObject({
       mode: 'live',
       model: 'claude-haiku-4-5',
-      promptVersion: RADAR_PROMPT_VERSION,
+      promptVersion: RADAR_PROMPT_BASELINE,
       examplePostIds: [example.id],
       inputTokens: 1200,
       outputTokens: 90,
@@ -208,7 +211,7 @@ describeIfDb('runLiveRadar', () => {
     const post = await decidedPost({ decision: 'pending' });
     const { provider, requests } = fakeAnthropic(() => messageResponse(radarOutput()));
 
-    await runLiveRadar(createRadarRun({ provider }), db, subject(post.id), createTestLogger());
+    await runLiveRadar(createRadarRun({ promptVersions: BASELINE_ONLY, provider }), db, subject(post.id), createTestLogger());
 
     expect(requests).toHaveLength(1);
     expect((await evaluations()).map((row) => row.variant)).toEqual(['text']);
@@ -217,7 +220,7 @@ describeIfDb('runLiveRadar', () => {
   it('never scores the same post twice under the same setup', async () => {
     const post = await decidedPost({ decision: 'pending' });
     const { provider, requests } = fakeAnthropic(() => messageResponse(radarOutput()));
-    const run = createRadarRun({ provider });
+    const run = createRadarRun({ promptVersions: BASELINE_ONLY, provider });
 
     await runLiveRadar(run, db, subject(post.id), createTestLogger());
     await runLiveRadar(run, db, subject(post.id), createTestLogger());
@@ -233,7 +236,7 @@ describeIfDb('runLiveRadar', () => {
     );
 
     await expect(
-      runLiveRadar(createRadarRun({ provider }), db, subject(post.id), createTestLogger()),
+      runLiveRadar(createRadarRun({ promptVersions: BASELINE_ONLY, provider }), db, subject(post.id), createTestLogger()),
     ).resolves.toBeUndefined();
 
     const [row] = await evaluations();
@@ -245,7 +248,7 @@ describeIfDb('runLiveRadar', () => {
     const post = await decidedPost({ decision: 'pending' });
     const { provider, requests } = fakeAnthropic(() => messageResponse(radarOutput()));
 
-    await runLiveRadar(createRadarRun({ provider, budgetMs: 0 }), db, subject(post.id), createTestLogger());
+    await runLiveRadar(createRadarRun({ promptVersions: BASELINE_ONLY, provider, budgetMs: 0 }), db, subject(post.id), createTestLogger());
 
     expect(requests).toHaveLength(0);
     expect(await evaluations()).toMatchObject([{ status: 'skipped', error: 'run budget exhausted' }]);
@@ -253,7 +256,7 @@ describeIfDb('runLiveRadar', () => {
 
   it('stops for the rest of the run after repeated failures', async () => {
     const { provider, requests } = fakeAnthropic(() => new Response('{}', { status: 500 }));
-    const run = createRadarRun({ provider });
+    const run = createRadarRun({ promptVersions: BASELINE_ONLY, provider });
 
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const post = await decidedPost({ decision: 'pending' });
@@ -359,7 +362,7 @@ describeIfDb('Radar in the sync', () => {
         logger: createTestLogger(),
         sleep: instantSleep,
         skipLock: true,
-        radarRun: createRadarRun({ provider: radar.provider }),
+        radarRun: createRadarRun({ promptVersions: BASELINE_ONLY, provider: radar.provider }),
       }),
     );
 
@@ -431,6 +434,7 @@ describe.each(['openai', 'anthropic'] as const)('Radar backfill through the %s b
       extra: Partial<Parameters<typeof submitRadarBackfill>[0]> = {},
     ) {
       const submitted = await submitRadarBackfill({
+        promptVersions: BASELINE_ONLY,
         db,
         provider: fake.provider,
         workspaceId: DEFAULT_WORKSPACE_ID,
@@ -681,6 +685,7 @@ describe.each(['openai', 'anthropic'] as const)('Radar backfill through the %s b
       await decidedPost({ decision: 'reject', reviewedAt: at(12), createdAt: at(10) });
       const fake = fakeBatchProvider(providerName, () => ({ output: radarOutput() }));
       const { batchIds } = await submitRadarBackfill({
+        promptVersions: BASELINE_ONLY,
         db,
         provider: fake.provider,
         workspaceId: DEFAULT_WORKSPACE_ID,

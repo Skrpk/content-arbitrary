@@ -5,12 +5,13 @@ import {
   parseStructured,
   RadarError,
   radarOutputSchema,
+  radarRetrievalOutputSchema,
   toPrediction,
   type RadarInput,
   type RadarPrediction,
   type TokenUsage,
 } from '@/lib/radar/output';
-import { buildSystemPrompt, buildUserContent, type RadarPart } from '@/lib/radar/prompt';
+import { buildSystemPrompt, buildUserContent, usesHistoryRetrieval, type RadarPart } from '@/lib/radar/prompt';
 import type { RadarBatchResult, RadarProvider } from '@/lib/radar/providers/types';
 
 export const OPENAI_RADAR_MODEL = 'gpt-6-luna';
@@ -24,7 +25,10 @@ const REASONING_EFFORT = 'low' as const;
 /** Headroom for the reasoning as well as the answer, which both count here. */
 const MAX_OUTPUT_TOKENS = 4000;
 
-const textFormat = zodTextFormat(radarOutputSchema, 'radar_prediction');
+const textFormats = {
+  baseline: zodTextFormat(radarOutputSchema, 'radar_prediction'),
+  retrieval: zodTextFormat(radarRetrievalOutputSchema, 'radar_prediction'),
+};
 
 const ENDED_BATCH_STATUSES = new Set(['completed', 'failed', 'expired', 'cancelled']);
 
@@ -74,14 +78,16 @@ export function createOpenAiRadar(options: {
 
   const request = (input: RadarInput): OpenAI.Responses.ResponseCreateParamsNonStreaming => ({
     model,
-    instructions: buildSystemPrompt(input.profile, input.approvalRate, input.publicationProfile),
+    instructions: buildSystemPrompt(input.profile, input.approvalRate, input.publicationProfile, input.promptVersion),
     input: [
       {
         role: 'user',
-        content: buildUserContent(input.item, input.examples, input.image).map(toOpenAiPart),
+        content: buildUserContent(input.item, input.examples, input.image, input.similarPublications).map(
+          toOpenAiPart,
+        ),
       },
     ],
-    text: { format: textFormat },
+    text: { format: retrievalPrompt(input) ? textFormats.retrieval : textFormats.baseline },
     reasoning: { effort: REASONING_EFFORT },
     max_output_tokens: MAX_OUTPUT_TOKENS,
     // Nothing to come back to: do not keep the post on OpenAI's side.
@@ -250,4 +256,8 @@ function toOpenAiPart(part: RadarPart): OpenAI.Responses.ResponseInputContent {
     // fraction of the tokens.
     detail: 'low',
   };
+}
+
+function retrievalPrompt(input: RadarInput): boolean {
+  return input.promptVersion !== undefined && usesHistoryRetrieval(input.promptVersion);
 }
