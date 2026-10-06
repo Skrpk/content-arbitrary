@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { REJECTION_REASONS, type RejectionReason } from '@/db/schema';
 import type { RadarExample, RadarImage, RadarItem } from '@/lib/radar/prompt';
+import { truncateToLength } from '@/lib/telegram/format-caption';
 
 /**
  * What Radar answers, whichever model gives the answer.
@@ -71,7 +72,7 @@ export function toPrediction(text: string, usage: TokenUsage): RadarPrediction {
     topicFit: clampPercent(output.topic_fit),
     editorialFit: clampPercent(output.editorial_fit),
     importance: clampPercent(output.importance),
-    reason: output.reason.trim().slice(0, 500),
+    reason: truncateToLength(output.reason.trim(), 500),
     predictedRejectionReason:
       output.predicted_decision === 'reject' ? output.predicted_rejection_reason : null,
     ...usage,

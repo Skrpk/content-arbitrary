@@ -1,5 +1,6 @@
 import type { RejectionReason } from '@/db/schema';
 import type { NormalizedMedia } from '@/types';
+import { truncateToLength } from '@/lib/telegram/format-caption';
 
 /**
  * Shadow Radar's prompt: the editor's profile and past decisions, and the post
@@ -158,9 +159,13 @@ function formatExample(example: RadarExample): string {
   return `<example ${attributes.join(' ')}>\n${text}${note}\n</example>`;
 }
 
+/**
+ * Cut between characters, never inside one: half an emoji is a lone surrogate,
+ * which JSON.stringify writes as an escape OpenAI rejects as invalid JSON.
+ */
 function clip(text: string, max: number): string {
   const trimmed = text.trim();
-  return trimmed.length <= max ? trimmed : `${trimmed.slice(0, max)}…`;
+  return trimmed.length <= max ? trimmed : `${truncateToLength(trimmed, max)}…`;
 }
 
 /**

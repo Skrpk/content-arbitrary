@@ -95,6 +95,21 @@ describe('Radar user content', () => {
     expect(text).toContain('source="@evilx"');
   });
 
+  it('never cuts a long text inside an emoji', () => {
+    // 🌍 is two UTF-16 units; at these lengths the cut falls between them.
+    const content = buildUserContent(
+      { sourceUsername: 'a', text: `${'a'.repeat(1999)}🌍 tail`, media: 'photo' },
+      [example({ text: `${'b'.repeat(399)}🌍 tail` })],
+    );
+    const json = JSON.stringify(content);
+
+    // Half an emoji is serialised as an escaped lone surrogate, which OpenAI
+    // rejects as invalid JSON.
+    expect(json).not.toMatch(/\\ud[89a-f][0-9a-f]{2}/i);
+    expect(textOf(content)).toContain(`${'b'.repeat(399)}…`);
+    expect(textOf(content)).toContain(`${'a'.repeat(1999)}…`);
+  });
+
   it('says so when there is no history yet', () => {
     expect(textOf(buildUserContent({ sourceUsername: 'a', text: 't', media: 'video' }, []))).toContain(
       'no past decisions yet',
