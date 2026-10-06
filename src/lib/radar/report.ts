@@ -31,6 +31,8 @@ export interface ReportRow {
   inputTokens: number | null;
   outputTokens: number | null;
   evaluatedAt: Date;
+  /** The publication-history profile the prompt carried, if any. */
+  publicationHistoryProfileId: number | null;
   /** The editor's decision; null while the post is undecided. */
   approved: boolean | null;
   reviewedAt: Date | null;
@@ -45,6 +47,18 @@ const PRICE_PER_MILLION: Record<string, { input: number; output: number }> = {
   [OPENAI_RADAR_MODEL]: { input: 0.1, output: 0.5 },
   [ANTHROPIC_RADAR_MODEL]: { input: 1, output: 5 },
 };
+
+/** List-price cost in USD of `usage` on `model`, or null for a model not priced here. */
+export function costUsd(
+  model: string,
+  usage: { inputTokens: number; outputTokens: number },
+  options: { batch?: boolean } = {},
+): number | null {
+  const price = PRICE_PER_MILLION[model];
+  if (!price) return null;
+  const cost = (usage.inputTokens * price.input + usage.outputTokens * price.output) / 1_000_000;
+  return options.batch ? cost * 0.5 : cost;
+}
 
 const BUCKETS = [
   { label: '90-100', min: 90, max: 100 },
@@ -71,6 +85,7 @@ export async function loadReportRows(db: Database, workspaceId: number): Promise
       inputTokens: radarEvaluations.inputTokens,
       outputTokens: radarEvaluations.outputTokens,
       evaluatedAt: radarEvaluations.createdAt,
+      publicationHistoryProfileId: radarEvaluations.publicationHistoryProfileId,
       postStatus: processedPosts.status,
       reviewedAt: processedPosts.reviewedAt,
     })
@@ -96,7 +111,7 @@ export function formatRadarReport(rows: ReportRow[]): string {
 
   const groups = new Map<string, ReportRow[]>();
   for (const row of rows) {
-    const key = [row.mode, row.variant, row.model, row.promptVersion].join(' · ');
+    const key = [row.mode, row.variant, row.model, row.promptVersion, historyLabel(row)].join(' · ');
     groups.set(key, [...(groups.get(key) ?? []), row]);
   }
 
@@ -178,12 +193,9 @@ function formatGroup(key: string, rows: ReportRow[]): string {
 
   const inputTokens = sum(rows.map((row) => row.inputTokens ?? 0));
   const outputTokens = sum(rows.map((row) => row.outputTokens ?? 0));
-  const price = PRICE_PER_MILLION[rows[0]!.model];
   // The backfill goes through the batch APIs, billed at half the list price.
   const batch = rows[0]!.mode === 'backfill';
-  const cost = price
-    ? ((inputTokens * price.input + outputTokens * price.output) / 1_000_000) * (batch ? 0.5 : 1)
-    : null;
+  const cost = costUsd(rows[0]!.model, { inputTokens, outputTokens }, { batch });
   lines.push(
     '',
     `Tokens: ${inputTokens} in, ${outputTokens} out` +
@@ -199,12 +211,10 @@ function formatGroup(key: string, rows: ReportRow[]): string {
  */
 function formatPairedComparison(rows: ReportRow[]): string | null {
   const lines: string[] = [];
-  const setups = new Set(rows.map((row) => [row.mode, row.model, row.promptVersion].join(' · ')));
+  const setups = new Set(rows.map(setupOf));
 
   for (const setupKey of [...setups].sort()) {
-    const inSetup = usable(rows).filter(
-      (row) => [row.mode, row.model, row.promptVersion].join(' · ') === setupKey,
-    );
+    const inSetup = usable(rows).filter((row) => setupOf(row) === setupKey);
     const textByPost = new Map(
       inSetup.filter((row) => row.variant === 'text').map((row) => [row.processedPostId, row]),
     );
@@ -231,6 +241,21 @@ function formatPairedComparison(rows: ReportRow[]): string | null {
   }
 
   return lines.length > 0 ? lines.join('\n') : null;
+}
+
+/**
+ * Everything that shaped a score except the variant. Scores made with
+ * different context — another prompt, another history profile or none — are
+ * never pooled.
+ */
+function setupOf(row: ReportRow): string {
+  return [row.mode, row.model, row.promptVersion, historyLabel(row)].join(' · ');
+}
+
+function historyLabel(row: ReportRow): string {
+  return row.publicationHistoryProfileId === null
+    ? 'no history profile'
+    : `history profile #${row.publicationHistoryProfileId}`;
 }
 
 /**

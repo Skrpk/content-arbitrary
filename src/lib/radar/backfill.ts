@@ -16,6 +16,7 @@ import {
   loadRadarHistory,
   recordBackfillEvaluation,
 } from '@/lib/radar/repository';
+import { loadRadarPublicationProfile } from '@/lib/history/profile/repository';
 
 /**
  * Score posts the editor has already decided, as Radar would have scored them
@@ -24,6 +25,9 @@ import {
  * Each post sees only the decisions made before it was first synced — what a
  * live Radar would have had — so the backfill measures prediction, not
  * hindsight. Posts that arrived before there was enough history are left out.
+ * The same goes for the publication-history profile: a post gets one only if
+ * every publication it was made from predates the post's arrival; otherwise
+ * it is scored without one.
  *
  * It runs in two halves, so either can be repeated on its own: submit builds
  * the requests and sends them as one or more batches; ingest reads a finished
@@ -56,14 +60,30 @@ export interface IngestSummary {
   failed: number;
 }
 
-/** `p<processed post id>-<variant>`: what ties a batch result back to its post. */
-export function radarCustomId(processedPostId: number, variant: RadarVariant): string {
-  return `p${processedPostId}-${variant}`;
+/**
+ * `p<processed post id>-<variant>[-h<history profile id>]`: what ties a batch
+ * result back to its post, and to the publication-history profile its prompt
+ * carried — which a later profile must not be mistaken for at ingest.
+ */
+export function radarCustomId(
+  processedPostId: number,
+  variant: RadarVariant,
+  historyProfileId?: number | null,
+): string {
+  return `p${processedPostId}-${variant}${historyProfileId ? `-h${historyProfileId}` : ''}`;
 }
 
-function parseCustomId(customId: string): { processedPostId: number; variant: RadarVariant } | null {
-  const match = /^p(\d+)-(text|text_image)$/.exec(customId);
-  return match ? { processedPostId: Number(match[1]), variant: match[2] as RadarVariant } : null;
+function parseCustomId(
+  customId: string,
+): { processedPostId: number; variant: RadarVariant; historyProfileId: number | null } | null {
+  const match = /^p(\d+)-(text|text_image)(?:-h(\d+))?$/.exec(customId);
+  return match
+    ? {
+        processedPostId: Number(match[1]),
+        variant: match[2] as RadarVariant,
+        historyProfileId: match[3] ? Number(match[3]) : null,
+      }
+    : null;
 }
 
 export async function submitRadarBackfill(input: {
@@ -165,6 +185,11 @@ export async function submitRadarBackfill(input: {
     const variants = (['text', ...(image ? ['text_image'] : [])] as RadarVariant[]).filter(
       (candidate) => !done.has(candidate),
     );
+    const publication = await loadRadarPublicationProfile(input.db, {
+      workspaceId: input.workspaceId,
+      arrivedAt: post.createdAt,
+      logger: input.logger,
+    });
     if (variants.length === 0) {
       // Only the image variant was missing, and the image is not available.
       summary.alreadyScored += 1;
@@ -173,7 +198,7 @@ export async function submitRadarBackfill(input: {
 
     summary.posts += 1;
     for (const variant of variants) {
-      const request = input.provider.batchEntry(radarCustomId(post.id, variant), {
+      const request = input.provider.batchEntry(radarCustomId(post.id, variant, publication?.id), {
         profile: input.profile,
         approvalRate: history.approvalRate,
         item: {
@@ -183,6 +208,7 @@ export async function submitRadarBackfill(input: {
         },
         examples: history.examples,
         image: variant === 'text_image' ? image : undefined,
+        publicationProfile: publication?.profile ?? null,
       });
 
       const bytes = JSON.stringify(request).length;
@@ -280,6 +306,7 @@ export async function ingestRadarBatch(input: {
       promptVersion: RADAR_PROMPT_VERSION,
       imageIncluded: key.variant === 'text_image',
       examplePostIds: post.examplePostIds,
+      publicationHistoryProfileId: key.historyProfileId,
     };
 
     if (result.ok) {

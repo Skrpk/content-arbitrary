@@ -438,9 +438,21 @@ export const radarEvaluations = pgTable(
     outputTokens: integer('output_tokens'),
     latencyMs: integer('latency_ms'),
     error: text('error'),
+    /**
+     * The publication-history profile the prompt carried, if any — so a score
+     * can be traced to the exact context it was made with.
+     */
+    publicationHistoryProfileId: integer('publication_history_profile_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    // Named here: the generated name is longer than Postgres's 63 characters.
+    foreignKey({
+      name: 'radar_evaluations_history_profile_id_fk',
+      columns: [table.publicationHistoryProfileId],
+      foreignColumns: [publicationHistoryProfiles.id],
+    }).onDelete('set null'),
+    index('radar_evaluations_history_profile_idx').on(table.publicationHistoryProfileId),
     // One prediction per post per setup: a retried post is not scored twice.
     uniqueIndex('radar_evaluations_post_setup_key').on(
       table.processedPostId,
@@ -599,6 +611,47 @@ export const publicationHistoryItems = pgTable(
 );
 
 export type PublicationHistoryItem = typeof publicationHistoryItems.$inferSelect;
+
+/**
+ * A compact, structured portrait of what a workspace's publication history
+ * shows the channel publishes — its topics, angles, tone and format — distilled
+ * by a model from `publication_history_items`. Shadow Radar reads the newest
+ * one as background context.
+ *
+ * Append-only: a profile is never edited; a new one is generated when history
+ * or the profiling prompt changes. `source_fingerprint` + `prompt_version` +
+ * `model` identify what it was made from, so an unchanged history is not
+ * profiled twice. `history_cutoff_at` is the newest publication it saw: a
+ * profile may only inform a prediction about a post that arrived after it.
+ */
+export const publicationHistoryProfiles = pgTable(
+  'publication_history_profiles',
+  {
+    id: serial('id').primaryKey(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    /** Validated on read against the profile schema in src/lib/history/profile. */
+    profile: jsonb('profile').$type<Record<string, unknown>>().notNull(),
+    /** History items the profile was made from. */
+    sourceItemCount: integer('source_item_count').notNull(),
+    sourceFingerprint: text('source_fingerprint').notNull(),
+    historyCutoffAt: timestamp('history_cutoff_at', { withTimezone: true }).notNull(),
+    model: text('model').notNull(),
+    promptVersion: text('prompt_version').notNull(),
+    inputTokens: integer('input_tokens'),
+    outputTokens: integer('output_tokens'),
+    /** How it was made: batches, model calls, what the history held. */
+    metadata: jsonb('metadata').$type<Record<string, unknown>>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('publication_history_profiles_workspace_idx').on(table.workspaceId, table.historyCutoffAt),
+    index('publication_history_profiles_fingerprint_idx').on(table.workspaceId, table.sourceFingerprint),
+  ],
+);
+
+export type PublicationHistoryProfileRow = typeof publicationHistoryProfiles.$inferSelect;
 
 /** One media item of a reviewed post, as far as it is known. */
 export interface ReviewMediaItem {

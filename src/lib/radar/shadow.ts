@@ -11,6 +11,8 @@ import {
 } from '@/lib/radar/prompt';
 import type { RadarProvider } from '@/lib/radar/providers';
 import { findEvaluatedVariants, insertRadarEvaluation, loadRadarHistory } from '@/lib/radar/repository';
+import { loadRadarPublicationProfile } from '@/lib/history/profile/repository';
+import type { PublicationProfile } from '@/lib/history/profile/schema';
 
 /**
  * Shadow Radar: score a post and record the prediction, and nothing else.
@@ -138,6 +140,8 @@ export async function scoreAndRecord(
     perClass: RADAR_EXAMPLES_PER_CLASS,
   });
   const examplePostIds = history.examples.map((example) => example.postId);
+  const publication = await publicationContext(db, subject.workspaceId, options.before, options.logger);
+  const publicationHistoryProfileId = publication?.id ?? null;
 
   return Promise.all(
     pending.map(async (variant): Promise<'ok' | 'failed'> => {
@@ -151,6 +155,7 @@ export async function scoreAndRecord(
             item: subject.item,
             examples: history.examples,
             image,
+            publicationProfile: publication?.profile ?? null,
           },
           { timeoutMs: options.timeoutMs },
         );
@@ -160,6 +165,7 @@ export async function scoreAndRecord(
           status: 'ok',
           imageIncluded: Boolean(image),
           examplePostIds,
+          publicationHistoryProfileId,
           score: prediction.score,
           predictedDecision: prediction.predictedDecision,
           topicFit: prediction.topicFit,
@@ -186,6 +192,7 @@ export async function scoreAndRecord(
           status: 'failed',
           imageIncluded: Boolean(image),
           examplePostIds,
+          publicationHistoryProfileId,
           inputTokens: usage?.inputTokens,
           outputTokens: usage?.outputTokens,
           latencyMs: Date.now() - startedAt,
@@ -203,6 +210,25 @@ export async function scoreAndRecord(
       }
     }),
   );
+}
+
+/**
+ * The publication-history profile for a post that arrived at `arrivedAt`, or
+ * null. Optional context: failing to read it means scoring without it, never
+ * not scoring — and never holding up the post.
+ */
+async function publicationContext(
+  db: Database,
+  workspaceId: number,
+  arrivedAt: Date,
+  logger: Logger,
+): Promise<{ id: number; profile: PublicationProfile } | null> {
+  try {
+    return await loadRadarPublicationProfile(db, { workspaceId, arrivedAt, logger });
+  } catch (error) {
+    logger.warn('radar.history_profile_unavailable', { workspaceId, error: describeError(error) });
+    return null;
+  }
 }
 
 function variantsFor(image: RadarImage | undefined): RadarVariant[] {

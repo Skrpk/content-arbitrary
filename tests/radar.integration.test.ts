@@ -14,6 +14,7 @@ import {
 } from '@/db/schema';
 import { ingestRadarBatch, submitRadarBackfill, waitForBatch } from '@/lib/radar/backfill';
 import { loadRadarHistory } from '@/lib/radar/repository';
+import { RADAR_PROMPT_VERSION } from '@/lib/radar/prompt';
 import { formatRadarReport, loadReportRows } from '@/lib/radar/report';
 import { createRadarRun, runLiveRadar, type RadarSubject } from '@/lib/radar/shadow';
 import { markAwaitingApproval, rejectWithReason } from '@/lib/sync/repository';
@@ -191,7 +192,7 @@ describeIfDb('runLiveRadar', () => {
     expect(rows[0]).toMatchObject({
       mode: 'live',
       model: 'claude-haiku-4-5',
-      promptVersion: 'radar-v0',
+      promptVersion: RADAR_PROMPT_VERSION,
       examplePostIds: [example.id],
       inputTokens: 1200,
       outputTokens: 90,

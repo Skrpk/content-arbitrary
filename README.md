@@ -39,7 +39,7 @@ X account ──► /api/cron/sync ──► media download ──► Telegram B
 - [R. When X does not return the media you expect](#r-when-x-does-not-return-the-media-you-expect)
 - [Multiple channels](#multiple-channels)
 - [Shadow Radar](#shadow-radar)
-- [Publication history imports](#publication-history-imports)
+- [Publication history](#publication-history)
 - [Configuration reference](#configuration-reference)
 - [Architecture decisions](#architecture-decisions)
 - [Project structure](#project-structure)
@@ -898,14 +898,16 @@ exactly as it would have been. Whether the scores are any good is then measured 
 decisions the editor makes on their own.
 
 **What it sees.** The tenant's `editorial_profile` (a few lines, in the editor's words, on what the
-channel publishes and what it turns down), the editor's 10 most recent approvals and 10 most recent
-rejections with their reasons, the share of posts they approve, and the post: its source, text and
-kind of media. Each post is scored twice when it has a picture — on the text alone and on the
+channel publishes and what it turns down), the
+[publication-history profile](#publication-history) when one has been generated, the editor's 10
+most recent approvals and 10 most recent rejections with their reasons, the share of posts they
+approve, and the post: its source, text and kind of media. Each post is scored twice when it has a picture — on the text alone and on the
 text with its first photo (or a video's still) — to find out whether the image is worth paying for.
 
 **What it records**, in `radar_evaluations`: a 0–100 score (the probability the editor publishes
 it), the predicted decision and rejection reason, three sub-scores, a one-sentence reason, which
-past decisions it was shown, the model and prompt version, and the tokens it cost. Failed and
+past decisions and which publication-history profile it was shown, the model and prompt version,
+and the tokens it cost. Failed and
 skipped attempts are rows too, so coverage is visible.
 
 **Limits.** It runs inside the sync, so it has a 20-second timeout per call and two minutes per
@@ -975,13 +977,42 @@ is compared on the same posts only.
 
 Change the prompt and bump `RADAR_PROMPT_VERSION` in
 [`src/lib/radar/prompt.ts`](src/lib/radar/prompt.ts): results of different prompts are reported
-separately and never mixed.
+separately and never mixed — and so are scores made with different history profiles, or none.
+`radar-v0` is the prompt before publication history; `radar-v1` adds it and puts the editorial
+profile explicitly first.
 
-## Publication history imports
+To see exactly what Radar would be shown for a post — no model is called:
 
-A workspace's own back catalogue — what its channel has already published — can be imported from
-an export file into `publication_history_items`. It is stored and nothing more: no part of the
-bot reads it yet.
+```bash
+npm run radar:context -- --workspace 2 [--post <processed post id>]
+```
+
+## Publication history
+
+Three kinds of evidence describe a channel, and Radar keeps them apart:
+
+- **Editorial profile** (`workspaces.editorial_profile`): what the editor says the channel should
+  publish now. The current policy, and the first thing Radar weighs.
+- **Approval history** (`processed_posts`): what the editor approves and rejects when offered
+  candidates, with reasons. The strongest evidence of current taste.
+- **Publication history** (`publication_history_items`): what the channel has published, imported
+  from its own export. Background: who the channel has been. It is positive-only — a subject
+  missing from it says nothing about whether the editor would take it.
+
+```bash
+npm run history:import -- --workspace 2 --adapter telegram-json --file ./result.json
+npm run history:profile -- --workspace 2
+npm run radar:report -- --workspace 2
+```
+
+### Importing history
+
+A workspace's own back catalogue is imported from an export file into `publication_history_items`.
+
+```bash
+npm run history:import -- --workspace 2 --adapter telegram-json --file ./result.json
+npm run history:import -- --workspace 2 --adapter telegram-json --file ./result.json --dry-run
+```
 
 ```bash
 npm run history:import -- --workspace 2 --adapter telegram-json --file ./result.json
@@ -1014,6 +1045,41 @@ posts are new, and writes nothing.
 know nothing of Telegram. Telegram Desktop JSON is only the first adapter; another format is a new
 file in [`src/lib/history/adapters/`](src/lib/history/adapters/) that turns its export into
 `HistoricalPublicationItem`s, registered in `adapters/index.ts`.
+
+### Profiling history
+
+```bash
+npm run history:profile -- --workspace 2 [--force] [--dry-run]
+```
+
+Distils the imported history into a compact, structured profile in `publication_history_profiles`:
+a summary, core topics with their strength, recurring angles, content patterns, tone, format,
+hooks, recurring names, 5–10 representative post ids, observations and caveats. The history is
+never sent whole: posts (each cut to 1,200 characters) are packed into batches of about 24,000
+characters, a model writes notes on each batch, notes are merged while they are too many for one
+request, and the profile is written from the final notes and from facts measured in code (median
+length, share with media, links, emoji). The prompts tell the model that every post is one the
+channel chose to publish — evidence of what it does, never of what it avoids — and nothing is
+inferred from reactions. Media is described by type only; no images are looked at.
+
+It uses `RADAR_PROVIDER`'s model and key. A profile is identified by a fingerprint of the history
+(each item's identity, date, text and media types), `PUBLICATION_PROFILE_PROMPT_VERSION` and the
+model: when all three are unchanged the command says the profile is up to date and spends nothing,
+unless `--force`. When history has changed since the newest profile, it says so. `--dry-run` prints
+the profile without storing it (the model calls are still made). Profiles are never edited; each
+run that generates one adds a row. Nothing regenerates them automatically: import, then profile.
+
+**In Radar.** Every live score from then on carries the newest profile, as background below the
+editorial profile, and records its id in `radar_evaluations.publication_history_profile_id`. With
+no profile, or one that cannot be read, Radar scores exactly as without it; it never delays or
+changes the post.
+
+**No hindsight in backfills.** A profile records `history_cutoff_at`, the newest publication it was
+made from. A score — live or backfill — may only use a profile whose cutoff is at or before the
+moment the post arrived. Live, that is always the newest profile; in a backfill, a profile built
+today from history that includes posts published after an old candidate arrived is left out, and
+the candidate is scored without one. So most past posts are backfilled without a profile until
+there are profiles made at earlier points in time; that is deliberate.
 
 ## Configuration reference
 
@@ -1173,7 +1239,9 @@ src/
       import-history.ts        Import service: adapter → repository → report
       repository.ts            Upserts, import records
       adapters/telegram-json.ts  Telegram Desktop JSON export
-scripts/                       migrate, run-sync, telegram-check, import-history
+      profile/                 History → editorial profile: sources, prompts, map/reduce, store
+scripts/                       migrate, run-sync, telegram-check, import-history, history-profile,
+                               radar-backfill, radar-report, radar-context
 tests/                         Unit + integration suites
 ```
 

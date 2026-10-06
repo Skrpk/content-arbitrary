@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { REJECTION_REASONS, type RejectionReason } from '@/db/schema';
+import type { PublicationProfile } from '@/lib/history/profile/schema';
 import type { RadarExample, RadarImage, RadarItem } from '@/lib/radar/prompt';
 import { truncateToLength } from '@/lib/telegram/format-caption';
 
@@ -29,6 +30,8 @@ export interface RadarInput {
   item: RadarItem;
   examples: RadarExample[];
   image?: RadarImage;
+  /** What the channel's own past posts show it publishes; absent until one is generated. */
+  publicationProfile?: PublicationProfile | null;
 }
 
 export interface TokenUsage {
@@ -56,14 +59,18 @@ export class RadarError extends Error {
   }
 }
 
-/** Check the model's JSON text against the schema and turn it into a prediction. */
-export function toPrediction(text: string, usage: TokenUsage): RadarPrediction {
-  let output: RadarOutput;
+/** Check a model's JSON text against `schema`; a mismatch is a RadarError. */
+export function parseStructured<T>(schema: z.ZodType<T>, text: string, usage: TokenUsage): T {
   try {
-    output = radarOutputSchema.parse(JSON.parse(text));
+    return schema.parse(JSON.parse(text));
   } catch (error) {
     throw new RadarError(`answer did not match the schema: ${(error as Error).message}`, usage);
   }
+}
+
+/** Check the model's JSON text against the schema and turn it into a prediction. */
+export function toPrediction(text: string, usage: TokenUsage): RadarPrediction {
+  const output: RadarOutput = parseStructured(radarOutputSchema, text, usage);
 
   return {
     // No provider enforces numeric ranges, so they are enforced here.

@@ -2,11 +2,13 @@ import OpenAI, { toFile } from 'openai';
 import { zodTextFormat } from 'openai/helpers/zod';
 import { z } from 'zod';
 import {
+  parseStructured,
   RadarError,
   radarOutputSchema,
   toPrediction,
   type RadarInput,
   type RadarPrediction,
+  type TokenUsage,
 } from '@/lib/radar/output';
 import { buildSystemPrompt, buildUserContent, type RadarPart } from '@/lib/radar/prompt';
 import type { RadarBatchResult, RadarProvider } from '@/lib/radar/providers/types';
@@ -72,7 +74,7 @@ export function createOpenAiRadar(options: {
 
   const request = (input: RadarInput): OpenAI.Responses.ResponseCreateParamsNonStreaming => ({
     model,
-    instructions: buildSystemPrompt(input.profile, input.approvalRate),
+    instructions: buildSystemPrompt(input.profile, input.approvalRate, input.publicationProfile),
     input: [
       {
         role: 'user',
@@ -97,6 +99,23 @@ export function createOpenAiRadar(options: {
         maxRetries: 1,
       });
       return parseResponseBody(response);
+    },
+
+    async complete(completion) {
+      const response = await client.responses.create(
+        {
+          model,
+          instructions: completion.instructions,
+          input: [{ role: 'user', content: [{ type: 'input_text', text: completion.input }] }],
+          text: { format: zodTextFormat(completion.schema, completion.schemaName) },
+          reasoning: { effort: REASONING_EFFORT },
+          max_output_tokens: completion.maxOutputTokens,
+          store: false,
+        },
+        { timeout: completion.timeoutMs, maxRetries: 2 },
+      );
+      const { text, usage } = responseText(response);
+      return { output: parseStructured(completion.schema, text, usage), usage };
     },
 
     batchEntry: (customId, input) => ({
@@ -182,6 +201,12 @@ function toBatchResult(line: string): RadarBatchResult {
 }
 
 function parseResponseBody(body: unknown): RadarPrediction {
+  const { text, usage } = responseText(body);
+  return toPrediction(text, usage);
+}
+
+/** The answer's text, once the response is known to be a finished, unrefused one. */
+function responseText(body: unknown): { text: string; usage: TokenUsage } {
   const parsed = responseBodySchema.safeParse(body);
   if (!parsed.success) {
     throw new RadarError(`unexpected response shape: ${parsed.error.message}`);
@@ -212,7 +237,7 @@ function parseResponseBody(body: unknown): RadarPrediction {
     .filter((part) => part.type === 'output_text')
     .map((part) => part.text ?? '')
     .join('');
-  return toPrediction(text, usage);
+  return { text, usage };
 }
 
 function toOpenAiPart(part: RadarPart): OpenAI.Responses.ResponseInputContent {

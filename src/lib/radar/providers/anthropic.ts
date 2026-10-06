@@ -1,11 +1,13 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import {
+  parseStructured,
   RadarError,
   radarOutputSchema,
   toPrediction,
   type RadarInput,
   type RadarPrediction,
+  type TokenUsage,
 } from '@/lib/radar/output';
 import { buildSystemPrompt, buildUserContent, type RadarPart } from '@/lib/radar/prompt';
 import type { RadarBatchResult, RadarProvider } from '@/lib/radar/providers/types';
@@ -27,7 +29,7 @@ export function createAnthropicRadar(options: {
   const request = (input: RadarInput): Anthropic.MessageCreateParamsNonStreaming => ({
     model,
     max_tokens: 1024,
-    system: buildSystemPrompt(input.profile, input.approvalRate),
+    system: buildSystemPrompt(input.profile, input.approvalRate, input.publicationProfile),
     messages: [
       {
         role: 'user',
@@ -48,6 +50,21 @@ export function createAnthropicRadar(options: {
         maxRetries: 1,
       });
       return parseMessage(message);
+    },
+
+    async complete(completion) {
+      const message = await client.messages.create(
+        {
+          model,
+          max_tokens: completion.maxOutputTokens,
+          system: completion.instructions,
+          messages: [{ role: 'user', content: completion.input }],
+          output_config: { format: zodOutputFormat(completion.schema) },
+        },
+        { timeout: completion.timeoutMs, maxRetries: 2 },
+      );
+      const { text, usage } = messageText(message);
+      return { output: parseStructured(completion.schema, text, usage), usage };
     },
 
     batchEntry: (customId, input) => ({ custom_id: customId, params: request(input) }),
@@ -101,6 +118,12 @@ export function createAnthropicRadar(options: {
 }
 
 function parseMessage(message: Anthropic.Message): RadarPrediction {
+  const { text, usage } = messageText(message);
+  return toPrediction(text, usage);
+}
+
+/** The answer's text, once the message is known to have finished normally. */
+function messageText(message: Anthropic.Message): { text: string; usage: TokenUsage } {
   const usage = {
     inputTokens: message.usage.input_tokens,
     outputTokens: message.usage.output_tokens,
@@ -113,7 +136,7 @@ function parseMessage(message: Anthropic.Message): RadarPrediction {
   }
 
   const text = message.content.find((block) => block.type === 'text')?.text ?? '';
-  return toPrediction(text, usage);
+  return { text, usage };
 }
 
 function toAnthropicBlock(part: RadarPart): Anthropic.ContentBlockParam {

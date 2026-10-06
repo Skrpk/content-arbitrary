@@ -1,7 +1,7 @@
 import { ne } from 'drizzle-orm';
 import { resetEnvCache, type Env, getEnv } from '@/lib/env';
 import type { Database } from '@/lib/db';
-import { DEFAULT_WORKSPACE_ID, workspaces } from '@/db/schema';
+import { DEFAULT_WORKSPACE_ID, publicationHistoryProfiles, workspaces } from '@/db/schema';
 import type { TelegramDestination } from '@/lib/workspace';
 import { createLogger, type Logger } from '@/lib/logger';
 
@@ -81,6 +81,9 @@ export async function ensureTestWorkspace(db: Database): Promise<void> {
   // the code under test decides to do. Extra workspaces a test created go too,
   // taking their sources and cursors with them via ON DELETE CASCADE.
   await db.delete(workspaces).where(ne(workspaces.id, DEFAULT_WORKSPACE_ID));
+  // A publication profile left on workspace 1 would silently enter every
+  // Radar prompt of the next test.
+  await db.delete(publicationHistoryProfiles);
   await db
     .insert(workspaces)
     .values({ id: DEFAULT_WORKSPACE_ID, name: 'default' })
