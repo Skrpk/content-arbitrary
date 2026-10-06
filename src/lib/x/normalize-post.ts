@@ -1,4 +1,4 @@
-import type { Mp4Variant, NormalizedMedia, NormalizedPost } from '@/types';
+import type { Mp4Variant, NormalizedMedia, NormalizedPost, PostMetrics } from '@/types';
 import type { XMedia, XPost, XUrlEntity } from '@/lib/x/schemas';
 
 /**
@@ -201,7 +201,20 @@ export function normalizePost(
         post.in_reply_to_user_id !== undefined,
       isRepost: referenced.some((reference) => reference.type === 'retweeted'),
       isQuote: referenced.some((reference) => reference.type === 'quoted'),
+      metrics: normalizeMetrics(post.public_metrics),
     },
     unsupported,
+  };
+}
+
+function normalizeMetrics(metrics: XPost['public_metrics']): PostMetrics | null {
+  if (!metrics) return null;
+  return {
+    likes: metrics.like_count ?? null,
+    reposts: metrics.retweet_count ?? null,
+    replies: metrics.reply_count ?? null,
+    quotes: metrics.quote_count ?? null,
+    bookmarks: metrics.bookmark_count ?? null,
+    impressions: metrics.impression_count ?? null,
   };
 }

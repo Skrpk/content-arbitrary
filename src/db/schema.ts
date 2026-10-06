@@ -190,6 +190,20 @@ export const processedPosts = pgTable(
      */
     sourceText: text('source_text'),
 
+    /**
+     * The post's public engagement as X reported it when we first fetched it,
+     * at `x_metrics_at` — a snapshot for analysis, never refreshed, so read it
+     * together with the post's age then (`x_metrics_at - x_created_at`). Null
+     * on rows that predate the columns, or where X sent no count.
+     */
+    xLikeCount: integer('x_like_count'),
+    xRepostCount: integer('x_repost_count'),
+    xReplyCount: integer('x_reply_count'),
+    xQuoteCount: integer('x_quote_count'),
+    xBookmarkCount: integer('x_bookmark_count'),
+    xImpressionCount: bigint('x_impression_count', { mode: 'number' }),
+    xMetricsAt: timestamp('x_metrics_at', { withTimezone: true }),
+
     status: postStatusEnum('status').notNull().default('pending'),
 
     telegramChatId: text('telegram_chat_id'),

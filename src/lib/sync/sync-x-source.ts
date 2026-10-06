@@ -156,6 +156,7 @@ export async function syncXSource(
         sourceId: source.id,
         workspaceId: source.workspaceId,
         sourceText: post.text,
+        metrics: post.metrics,
       });
 
       if (!claim.claimed || !claim.row) {

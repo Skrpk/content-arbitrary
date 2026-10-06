@@ -226,4 +226,26 @@ describe('requested fields', () => {
     expect(parsed.success).toBe(true);
     expect(parsed.data!.data![0]!.note_tweet?.text).toBe('The whole long post.');
   });
+
+  it('asks for public_metrics, so engagement can be stored with each post', async () => {
+    const fetchImpl = vi.fn(async () => json({ meta: { result_count: 0 } }));
+    await makeClient(fetchImpl as unknown as typeof fetch).getUserTimeline({
+      userId: '999',
+      maxResults: 5,
+      excludeReplies: true,
+      excludeReposts: true,
+    });
+
+    const url = new URL(String((fetchImpl.mock.calls[0] as unknown[])[0]));
+    expect(url.searchParams.get('tweet.fields')?.split(',')).toContain('public_metrics');
+  });
+
+  it('accepts public_metrics with a count missing rather than failing the timeline', () => {
+    const parsed = xTimelineResponseSchema.safeParse({
+      data: [{ id: '1', text: 'hi', public_metrics: { like_count: 3, retweet_count: 1 } }],
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data!.data![0]!.public_metrics?.like_count).toBe(3);
+  });
 });

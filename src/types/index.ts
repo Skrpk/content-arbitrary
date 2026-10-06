@@ -44,6 +44,18 @@ export interface NormalizedPost {
   isReply: boolean;
   isRepost: boolean;
   isQuote: boolean;
+  /** Engagement as X reported it in this fetch; null when X sent none. */
+  metrics?: PostMetrics | null;
+}
+
+/** A post's public engagement counts at one moment. A count X omitted is null. */
+export interface PostMetrics {
+  likes: number | null;
+  reposts: number | null;
+  replies: number | null;
+  quotes: number | null;
+  bookmarks: number | null;
+  impressions: number | null;
 }
 
 /** Outcome of one source's pass, so a failure can be attributed. */

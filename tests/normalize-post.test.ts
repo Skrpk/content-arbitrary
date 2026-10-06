@@ -335,6 +335,45 @@ describe('normalizePost', () => {
     expect(result.text).not.toContain('…');
   });
 
+  it('maps public_metrics to the post\'s engagement counts', () => {
+    const post = {
+      id: '1',
+      text: 'x',
+      public_metrics: {
+        like_count: 120,
+        retweet_count: 14,
+        reply_count: 9,
+        quote_count: 2,
+        bookmark_count: 30,
+        impression_count: 15000,
+      },
+    } as XPost;
+
+    expect(normalizePost(post, new Map(), 'user').post.metrics).toEqual({
+      likes: 120,
+      reposts: 14,
+      replies: 9,
+      quotes: 2,
+      bookmarks: 30,
+      impressions: 15000,
+    });
+  });
+
+  it('leaves a count X omitted as null, and the metrics null when X sent none', () => {
+    const partial = { id: '1', text: 'x', public_metrics: { like_count: 0 } } as XPost;
+    expect(normalizePost(partial, new Map(), 'user').post.metrics).toEqual({
+      likes: 0,
+      reposts: null,
+      replies: null,
+      quotes: null,
+      bookmarks: null,
+      impressions: null,
+    });
+
+    const none = { id: '1', text: 'x' } as XPost;
+    expect(normalizePost(none, new Map(), 'user').post.metrics).toBeNull();
+  });
+
   it('gives an empty text for a post with no text', () => {
     const post = {
       id: '1',

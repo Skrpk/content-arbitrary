@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, lt, lte, or, sql as rawSql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
+import type { PostMetrics } from '@/types';
 import {
   DEFAULT_WORKSPACE_ID,
   processedPosts,
@@ -63,10 +64,28 @@ export async function claimPost(
     workspaceId?: number;
     /** The author's full text, kept for analysis whatever becomes of the post. */
     sourceText?: string | null;
+    /** Engagement as this fetch saw it, kept for analysis like the text. */
+    metrics?: PostMetrics | null;
   },
 ): Promise<ClaimResult> {
   const staleBefore = new Date(Date.now() - PROCESSING_LEASE_MS);
   const workspaceId = input.workspaceId ?? DEFAULT_WORKSPACE_ID;
+  const metrics = input.metrics ?? null;
+  const metricsAt = metrics ? new Date() : null;
+  const metricColumns = {
+    xLikeCount: metrics?.likes ?? null,
+    xRepostCount: metrics?.reposts ?? null,
+    xReplyCount: metrics?.replies ?? null,
+    xQuoteCount: metrics?.quotes ?? null,
+    xBookmarkCount: metrics?.bookmarks ?? null,
+    xImpressionCount: metrics?.impressions ?? null,
+  };
+  // The first snapshot stands, as a whole: a retry hours later must not mix
+  // its counts into it. Only a row that has none yet takes this fetch's.
+  const keepFirstSnapshot = (
+    column: (typeof processedPosts)[keyof typeof metricColumns],
+    value: number | null,
+  ) => rawSql`CASE WHEN ${processedPosts.xMetricsAt} IS NULL THEN ${value} ELSE ${column} END`;
 
   const rows = await db
     .insert(processedPosts)
@@ -78,6 +97,8 @@ export async function claimPost(
       xAuthorUsername: input.xAuthorUsername,
       xCreatedAt: input.xCreatedAt,
       sourceText: input.sourceText ?? null,
+      ...metricColumns,
+      xMetricsAt: metricsAt,
       status: 'processing',
       lockedAt: new Date(),
     })
@@ -91,6 +112,16 @@ export async function claimPost(
         // Filled in once, for a row first seen before the column existed;
         // otherwise what was recorded the first time stands.
         sourceText: rawSql`coalesce(${processedPosts.sourceText}, ${input.sourceText ?? null})`,
+        xLikeCount: keepFirstSnapshot(processedPosts.xLikeCount, metricColumns.xLikeCount),
+        xRepostCount: keepFirstSnapshot(processedPosts.xRepostCount, metricColumns.xRepostCount),
+        xReplyCount: keepFirstSnapshot(processedPosts.xReplyCount, metricColumns.xReplyCount),
+        xQuoteCount: keepFirstSnapshot(processedPosts.xQuoteCount, metricColumns.xQuoteCount),
+        xBookmarkCount: keepFirstSnapshot(processedPosts.xBookmarkCount, metricColumns.xBookmarkCount),
+        xImpressionCount: keepFirstSnapshot(
+          processedPosts.xImpressionCount,
+          metricColumns.xImpressionCount,
+        ),
+        xMetricsAt: rawSql`coalesce(${processedPosts.xMetricsAt}, ${metricsAt?.toISOString() ?? null}::timestamptz)`,
         lockedAt: new Date(),
         updatedAt: new Date(),
       },

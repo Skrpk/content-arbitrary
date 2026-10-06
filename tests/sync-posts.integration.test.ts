@@ -50,13 +50,16 @@ const photoMedia = (key: string) => ({
   height: 800,
 });
 
-function timeline(posts: { id: string; text?: string; mediaKeys: string[] }[]) {
+function timeline(
+  posts: { id: string; text?: string; mediaKeys: string[]; publicMetrics?: Record<string, number> }[],
+) {
   return {
     data: posts.map((post) => ({
       id: post.id,
       text: post.text ?? `post ${post.id}`,
       created_at: '2026-01-15T10:00:00.000Z',
       attachments: { media_keys: post.mediaKeys },
+      ...(post.publicMetrics ? { public_metrics: post.publicMetrics } : {}),
     })),
     includes: {
       media: [...new Set(posts.flatMap((p) => p.mediaKeys))].map(photoMedia),
@@ -152,6 +155,52 @@ describeIfDb('syncPosts end to end', () => {
     const rows = await db.select().from(processedPosts);
     expect(rows).toHaveLength(3);
     expect(rows.every((r) => r.status === 'published')).toBe(true);
+  });
+
+  it('stores the engagement X reported with each post', async () => {
+    const xClient = makeXClient(
+      timeline([
+        {
+          id: '1750000000000000002',
+          mediaKeys: ['m_b'],
+          publicMetrics: {
+            like_count: 42,
+            retweet_count: 5,
+            reply_count: 3,
+            quote_count: 1,
+            bookmark_count: 8,
+            impression_count: 4100,
+          },
+        },
+        { id: '1750000000000000001', mediaKeys: ['m_a'] },
+      ]),
+    );
+    const { client, fetchImpl } = makeTelegramStub();
+
+    await withEnv({ DRY_RUN: 'false' }, (env) =>
+      syncPosts({
+        db,
+        env,
+        xClient,
+        telegramClient: client,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        logger: createTestLogger(),
+        sleep: instantSleep,
+        skipLock: true,
+      }),
+    );
+
+    const rows = await db.select().from(processedPosts).orderBy(processedPosts.xPostId);
+    expect(rows[0]).toMatchObject({ xLikeCount: null, xMetricsAt: null });
+    expect(rows[1]).toMatchObject({
+      xLikeCount: 42,
+      xRepostCount: 5,
+      xReplyCount: 3,
+      xQuoteCount: 1,
+      xBookmarkCount: 8,
+      xImpressionCount: 4100,
+    });
+    expect(rows[1]!.xMetricsAt).toBeInstanceOf(Date);
   });
 
   it('publishes oldest first so the channel keeps the original order', async () => {

@@ -65,6 +65,20 @@ export const xPostSchema = z.object({
       entities: z.object({ urls: z.array(xUrlEntitySchema).optional() }).optional(),
     })
     .optional(),
+  /**
+   * Engagement at the moment of the request. Kept for analysis only, so every
+   * count is optional: X dropping one must not fail the whole timeline.
+   */
+  public_metrics: z
+    .object({
+      retweet_count: z.number().optional(),
+      reply_count: z.number().optional(),
+      like_count: z.number().optional(),
+      quote_count: z.number().optional(),
+      bookmark_count: z.number().optional(),
+      impression_count: z.number().optional(),
+    })
+    .optional(),
 });
 
 export const xUserSchema = z.object({

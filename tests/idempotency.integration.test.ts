@@ -136,6 +136,70 @@ describeIfDb('duplicate protection', () => {
     expect(retry.row?.sourceText).toBe('Now known');
   });
 
+  it('records the metrics of the first fetch, and keeps that snapshot whole on a retry', async () => {
+    const firstSeen = {
+      likes: 10,
+      reposts: 2,
+      replies: 1,
+      quotes: 0,
+      bookmarks: null,
+      impressions: 900,
+    };
+    const first = await claimPost(db, { ...basePost, metrics: firstSeen });
+    expect(first.row).toMatchObject({
+      xLikeCount: 10,
+      xRepostCount: 2,
+      xReplyCount: 1,
+      xQuoteCount: 0,
+      xBookmarkCount: null,
+      xImpressionCount: 900,
+    });
+    expect(first.row?.xMetricsAt).toBeInstanceOf(Date);
+
+    await markFailed(db, {
+      id: first.row!.id,
+      errorMessage: 'Telegram 503',
+      permanent: false,
+      maxRetryAttempts: 5,
+    });
+    const retry = await claimPost(db, {
+      ...basePost,
+      metrics: { likes: 500, reposts: 80, replies: 40, quotes: 7, bookmarks: 60, impressions: 90000 },
+    });
+
+    expect(retry.claimed).toBe(true);
+    // Not even the count the first fetch lacked is filled from the later one:
+    // the counts belong to x_metrics_at, and that is the first fetch.
+    expect(retry.row).toMatchObject({
+      xLikeCount: 10,
+      xRepostCount: 2,
+      xReplyCount: 1,
+      xQuoteCount: 0,
+      xBookmarkCount: null,
+      xImpressionCount: 900,
+      xMetricsAt: first.row!.xMetricsAt,
+    });
+  });
+
+  it('fills in the metrics of a row first seen without them', async () => {
+    const first = await claimPost(db, basePost);
+    expect(first.row?.xLikeCount).toBeNull();
+    expect(first.row?.xMetricsAt).toBeNull();
+    await markFailed(db, {
+      id: first.row!.id,
+      errorMessage: 'Telegram 503',
+      permanent: false,
+      maxRetryAttempts: 5,
+    });
+
+    const retry = await claimPost(db, {
+      ...basePost,
+      metrics: { likes: 7, reposts: 1, replies: 0, quotes: 0, bookmarks: 2, impressions: 300 },
+    });
+    expect(retry.row).toMatchObject({ xLikeCount: 7, xBookmarkCount: 2, xImpressionCount: 300 });
+    expect(retry.row?.xMetricsAt).toBeInstanceOf(Date);
+  });
+
   it('enforces uniqueness of x_post_id per workspace at the database level', async () => {
     await db.insert(processedPosts).values({
       xPostId: basePost.xPostId,

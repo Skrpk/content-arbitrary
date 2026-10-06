@@ -736,6 +736,7 @@ What is recorded for every post, for later analysis:
 | `caption_edited_at` | When the caption was last saved in the editor. |
 | `reviewed_at` | When you pressed Approve or chose a reject reason; empty for posts published with no review. |
 | `rejection_reason` / `rejection_note` | Why it was rejected, and your own words for Other. |
+| `x_like_count`, `x_repost_count`, `x_reply_count`, `x_quote_count`, `x_bookmark_count`, `x_impression_count` / `x_metrics_at` | The post's public engagement as X reported it when the post was first fetched, and when that was. A snapshot, never refreshed: compare posts by their age at that moment (`x_metrics_at - x_created_at`), since a sync sees most posts within the hour. Comes with the same read, so it costs nothing extra. |
 
 ### How it works
 

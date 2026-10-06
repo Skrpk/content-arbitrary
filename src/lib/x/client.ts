@@ -40,6 +40,8 @@ const POST_FIELDS = [
   'author_id',
   // Without it a long-form post arrives cut at 280 characters.
   'note_tweet',
+  // Engagement counts, stored for analysis; part of the same read, no extra cost.
+  'public_metrics',
 ];
 const MEDIA_FIELDS = ['media_key', 'type', 'url', 'preview_image_url', 'width', 'height', 'duration_ms', 'variants', 'alt_text'];
 const EXPANSIONS = ['attachments.media_keys', 'author_id'];
