@@ -737,6 +737,7 @@ What is recorded for every post, for later analysis:
 | `caption_edited_at` | When the caption was last saved in the editor. |
 | `reviewed_at` | When you pressed Approve or chose a reject reason; empty for posts published with no review. |
 | `rejection_reason` / `rejection_note` | Why it was rejected, and your own words for Other. |
+| `review_media` | The media you were shown — Telegram's file id per item, with X's photo URL or video still. Kept after the decision (unlike `approval_payload`), so Radar's backfill can show a model the same picture. |
 | `x_like_count`, `x_repost_count`, `x_reply_count`, `x_quote_count`, `x_bookmark_count`, `x_impression_count` / `x_metrics_at` | The post's public engagement as X reported it when the post was first fetched, and when that was. A snapshot, never refreshed: compare posts by their age at that moment (`x_metrics_at - x_created_at`), since a sync sees most posts within the hour. Comes with the same read, so it costs nothing extra. |
 
 ### How it works
@@ -946,7 +947,9 @@ results in. If it is interrupted while waiting, pick the batch up with `--resume
 a score already recorded is never requested or changed again.
 
 Posts that arrived before there were five approvals and five rejections behind them are left out
-(`--min-per-class N`). Photos are fetched from Telegram (videos are scored on their text);
+(`--min-per-class N`). The picture comes from `review_media`: a photo from Telegram, falling back
+to X's URL, a video's still from X. Posts decided before that column existed have none and are
+scored on their text;
 `--text-only` skips that, `--limit N` stops after scoring N posts (the oldest first).
 
 A resumed batch is read with the provider it was submitted to, whatever `RADAR_PROVIDER` says now.
@@ -1170,6 +1173,13 @@ publishing each post exactly once; and the pool-starvation deadlock regression.
   `MAX_POSTS_PER_RUN` posts from the last `X_FETCH_LIMIT`, not the account's whole history.
   To skip the backlog entirely, set `sync_state.last_seen_post_id` to the newest post id before
   the first live run.
+- **A run has a time budget.** `/api/cron/sync` may run for 800 s (the Pro plan's maximum), but
+  stops taking new posts after 560 s (`SYNC_TIME_BUDGET_MS`) and leaves the rest to the next run,
+  with each source's cursor stopping at the last post it finished — nothing it did not reach is
+  skipped. The response then carries `timeBudgetReached: true`. Requests have their own limits:
+  30 s for X, 120 s for a media download and for a Telegram call. A Telegram call that times out
+  is not resent in the same run, since it may have gone through; the post is retried by a later
+  run.
 - **The channel is append-only.** Deleting a Telegram message does not change the database; the
   post stays `published` and will not be re-sent. Delete its `processed_posts` row to republish.
 - **`npm audit`** reports moderate advisories from `drizzle-kit`'s bundled esbuild. These are

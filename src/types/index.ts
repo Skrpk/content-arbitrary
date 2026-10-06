@@ -73,6 +73,8 @@ export interface SourceSyncSummary {
   awaitingApproval: number;
   failed: number;
   skipped: number;
+  /** Stopped before the end of its batch to stay inside the run's time budget. */
+  stoppedForTime?: boolean;
   error?: string;
 }
 
@@ -95,6 +97,11 @@ export interface SyncSummary {
   runId: string;
   /** Set when the run exited early because another invocation held the lock. */
   lockBusy?: boolean;
+  /**
+   * Set when the run stopped taking new posts to stay inside its time budget.
+   * Whatever it did not reach is picked up by the next run.
+   */
+  timeBudgetReached?: boolean;
   error?: string;
 }
 

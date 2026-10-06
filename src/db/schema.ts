@@ -233,6 +233,13 @@ export const processedPosts = pgTable(
      * between review and approval.
      */
     approvalPayload: jsonb('approval_payload').$type<ApprovalPayload>(),
+    /**
+     * The media the reviewer was shown, kept after the decision — unlike
+     * approval_payload, which is dropped once the post is published or
+     * rejected. Radar's backfill needs it to show a model the picture the
+     * editor saw. Null on posts reviewed before the column existed.
+     */
+    reviewMedia: jsonb('review_media').$type<ReviewMediaItem[]>(),
     /** Message in the admin's private chat carrying the Approve button. */
     adminChatId: text('admin_chat_id'),
     adminMessageId: bigint('admin_message_id', { mode: 'number' }),
@@ -453,6 +460,17 @@ export const radarEvaluations = pgTable(
 );
 
 export type RadarEvaluation = typeof radarEvaluations.$inferSelect;
+
+/** One media item of a reviewed post, as far as it is known. */
+export interface ReviewMediaItem {
+  kind: 'photo' | 'video';
+  /** Telegram's copy, from the review send; the reliable one to fetch. */
+  fileId?: string;
+  /** X's URL of a photo. */
+  url?: string;
+  /** X's still image of a video. */
+  previewUrl?: string;
+}
 
 /** One asset already uploaded to Telegram, addressable by file_id. */
 export interface ApprovalMediaItem {

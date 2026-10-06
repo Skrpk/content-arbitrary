@@ -40,11 +40,14 @@ export function createRadarRun(options: {
   provider: RadarProvider;
   now?: () => number;
   budgetMs?: number;
+  /** Never past this (epoch ms) — the sync's own deadline. */
+  notAfter?: number;
 }): RadarRun {
   const now = options.now ?? Date.now;
+  const ownDeadline = now() + (options.budgetMs ?? LIVE_RUN_BUDGET_MS);
   return {
     provider: options.provider,
-    deadline: now() + (options.budgetMs ?? LIVE_RUN_BUDGET_MS),
+    deadline: options.notAfter === undefined ? ownDeadline : Math.min(ownDeadline, options.notAfter),
     consecutiveFailures: 0,
     now,
   };

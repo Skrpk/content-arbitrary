@@ -249,3 +249,24 @@ describe('requested fields', () => {
     expect(parsed.data!.data![0]!.public_metrics?.like_count).toBe(3);
   });
 });
+
+describe('request timeouts', () => {
+  it('retries a timeline read that timed out, since reading twice is harmless', async () => {
+    const timedOut = new Error('The operation was aborted due to timeout');
+    timedOut.name = 'TimeoutError';
+    const fetchImpl = vi
+      .fn()
+      .mockRejectedValueOnce(timedOut)
+      .mockResolvedValueOnce(json({ meta: { result_count: 0 } }));
+
+    await makeClient(fetchImpl as unknown as typeof fetch).getUserTimeline({
+      userId: '999',
+      maxResults: 5,
+      excludeReplies: true,
+      excludeReposts: true,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(((fetchImpl.mock.calls[0] as unknown[])[1] as RequestInit).signal).toBeInstanceOf(AbortSignal);
+  });
+});

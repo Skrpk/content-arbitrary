@@ -15,7 +15,9 @@ import { syncPosts } from '@/lib/sync/sync-posts';
 // none of which are available on the Edge runtime.
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300;
+// The Pro plan's maximum. The run stops taking new posts well before it
+// (SYNC_TIME_BUDGET_MS), so this is headroom, not the plan.
+export const maxDuration = 800;
 
 export async function GET(request: Request): Promise<Response> {
   const auth = authorizeCron(request);
@@ -51,6 +53,7 @@ export async function GET(request: Request): Promise<Response> {
         durationMs: summary.durationMs,
         runId: summary.runId,
         ...(summary.lockBusy ? { lockBusy: true } : {}),
+        ...(summary.timeBudgetReached ? { timeBudgetReached: true } : {}),
         ...(summary.error ? { error: summary.error } : {}),
       },
       {

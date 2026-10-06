@@ -29,6 +29,9 @@ export interface TimelineQuery {
   excludeReposts: boolean;
 }
 
+/** How long one X API request may take before it is abandoned and retried. */
+export const X_REQUEST_TIMEOUT_MS = 30_000;
+
 /** Fields we request. Requesting less is cheaper and faster. */
 const POST_FIELDS = [
   'id',
@@ -99,6 +102,8 @@ export class XClient {
           },
           // Never serve a cached timeline: a stale response means missed posts.
           cache: 'no-store',
+          // A read is safe to repeat, so a timeout is retried like any network error.
+          signal: AbortSignal.timeout(X_REQUEST_TIMEOUT_MS),
         });
 
         if (response.ok) return (await response.json()) as unknown;

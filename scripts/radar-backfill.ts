@@ -69,7 +69,8 @@ async function main() {
     const submitted = await submitRadarBackfill({
       db,
       provider,
-      telegram: process.argv.includes('--text-only') ? undefined : new TelegramClient(),
+      telegram: new TelegramClient(),
+      textOnly: process.argv.includes('--text-only'),
       workspaceId,
       profile: workspace.editorialProfile,
       minPerClass: Number(argument('min-per-class') ?? 5),

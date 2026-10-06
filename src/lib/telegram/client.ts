@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { getEnv } from '@/lib/env';
-import { TelegramApiError } from '@/lib/errors';
+import { isTimeout, TelegramApiError } from '@/lib/errors';
 import type { Logger } from '@/lib/logger';
 import type { InlineKeyboardMarkup } from '@/lib/telegram/send-media';
 import { withRetry } from '@/lib/sync/retry';
@@ -15,6 +15,13 @@ import { withRetry } from '@/lib/sync/retry';
  */
 
 /** PhotoSize entries are ordered smallest → largest; we want the last. */
+/**
+ * How long one Bot API call may take, uploads included (a 50 MB video is the
+ * largest). A call that hangs past this is abandoned rather than allowed to
+ * hold the run until the platform kills it.
+ */
+export const TELEGRAM_REQUEST_TIMEOUT_MS = 120_000;
+
 const photoSizeSchema = z.object({
   file_id: z.string(),
   width: z.number().optional(),
@@ -162,14 +169,26 @@ export class TelegramClient {
       async () => {
         const isMultipart = body instanceof FormData;
 
-        const response = await this.fetchImpl(this.endpoint(method), {
-          method: 'POST',
-          headers: isMultipart ? undefined : { 'content-type': 'application/json' },
-          body: isMultipart ? body : JSON.stringify(body),
-          cache: 'no-store',
-        });
-
-        const rawText = await response.text();
+        let response: Response;
+        let rawText: string;
+        try {
+          response = await this.fetchImpl(this.endpoint(method), {
+            method: 'POST',
+            headers: isMultipart ? undefined : { 'content-type': 'application/json' },
+            body: isMultipart ? body : JSON.stringify(body),
+            cache: 'no-store',
+            signal: AbortSignal.timeout(TELEGRAM_REQUEST_TIMEOUT_MS),
+          });
+          rawText = await response.text();
+        } catch (error) {
+          if (!isTimeout(error)) throw error;
+          // Telegram may have acted on it anyway, so it is not resent here —
+          // that could post twice. It stays transient: a later run retries.
+          throw new TelegramApiError(
+            `Telegram ${method} timed out after ${TELEGRAM_REQUEST_TIMEOUT_MS / 1000}s`,
+            { transient: true, code: 'telegram_timeout', cause: error },
+          );
+        }
         let raw: unknown;
         try {
           raw = JSON.parse(rawText);
@@ -248,6 +267,7 @@ export class TelegramClient {
         // A flood wait longer than this means we should stop and let the next
         // cron run pick the work up, rather than hold the function open.
         maxRetryAfterMs: 120_000,
+        retryIf: (error) => !(error instanceof TelegramApiError && error.code === 'telegram_timeout'),
       },
     );
   }
@@ -369,6 +389,7 @@ export class TelegramClient {
 
     const response = await this.fetchImpl(`${this.baseUrl}/file/bot${this.token}/${file.file_path}`, {
       cache: 'no-store',
+      signal: AbortSignal.timeout(TELEGRAM_REQUEST_TIMEOUT_MS),
     });
     if (!response.ok) {
       throw new TelegramApiError(`Telegram file download failed (HTTP ${response.status})`, {

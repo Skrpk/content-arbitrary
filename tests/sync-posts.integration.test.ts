@@ -330,6 +330,99 @@ describeIfDb('syncPosts end to end', () => {
     expect(byId.get('1750000000000000002')?.errorMessage).toContain('IMAGE_PROCESS_FAILED');
   });
 
+  it('stops taking new posts when its time is up, and leaves them for the next run', async () => {
+    const posts = timeline([
+      { id: '1750000000000000003', mediaKeys: ['3_c'] },
+      { id: '1750000000000000002', mediaKeys: ['3_b'] },
+      { id: '1750000000000000001', mediaKeys: ['3_a'] },
+    ]);
+
+    // The clock jumps past the deadline as soon as the first post is sent.
+    let clock = 0;
+    const first = makeTelegramStub({
+      failFor: () => {
+        clock = 10_000;
+        return null;
+      },
+    });
+
+    const summary = await withEnv({ DRY_RUN: 'false' }, (env) =>
+      syncPosts({
+        db,
+        env,
+        xClient: makeXClient(posts),
+        telegramClient: first.client,
+        fetchImpl: first.fetchImpl as unknown as typeof fetch,
+        logger: createTestLogger(),
+        sleep: instantSleep,
+        skipLock: true,
+        now: () => clock,
+        deadline: 5_000,
+      }),
+    );
+
+    expect(summary.timeBudgetReached).toBe(true);
+    expect(summary.published).toBe(1);
+    expect(summary.sources[0]).toMatchObject({ stoppedForTime: true, newPosts: 1 });
+    expect((await db.select().from(processedPosts)).map((row) => row.xPostId)).toEqual([
+      '1750000000000000001',
+    ]);
+    // The cursor stops at the post it finished, not at the newest one it saw.
+    expect((await getSyncState(db, 'x:1234567890'))?.lastSeenPostId).toBe('1750000000000000001');
+
+    // The next run, with time to spare, picks up the two it did not reach.
+    const second = makeTelegramStub();
+    const next = await withEnv({ DRY_RUN: 'false' }, (env) =>
+      syncPosts({
+        db,
+        env,
+        xClient: makeXClient(posts),
+        telegramClient: second.client,
+        fetchImpl: second.fetchImpl as unknown as typeof fetch,
+        logger: createTestLogger(),
+        sleep: instantSleep,
+        skipLock: true,
+      }),
+    );
+
+    expect(next.timeBudgetReached).toBeUndefined();
+    expect(next.published).toBe(2);
+    const rows = await db.select().from(processedPosts);
+    expect(rows).toHaveLength(3);
+    expect(rows.every((row) => row.status === 'published')).toBe(true);
+  });
+
+  it('does nothing at all when it starts with no time left', async () => {
+    const { client, fetchImpl, getTelegramCalls } = makeTelegramStub();
+    const logger = createTestLogger();
+
+    const summary = await withEnv({ DRY_RUN: 'false' }, (env) =>
+      syncPosts({
+        db,
+        env,
+        xClient: makeXClient(timeline([{ id: '1750000000000000009', mediaKeys: ['3_a'] }])),
+        telegramClient: client,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        logger,
+        sleep: instantSleep,
+        skipLock: true,
+        now: () => 10_000,
+        deadline: 5_000,
+      }),
+    );
+
+    expect(summary.timeBudgetReached).toBe(true);
+    // Stopped before even opening a tenant, let alone a source.
+    expect(logger.entries).toContainEqual({
+      event: 'sync.time_budget_reached',
+      data: { nextWorkspaceId: 1 },
+    });
+    expect(summary.workspaces).toBe(0);
+    expect(getTelegramCalls()).toBe(0);
+    expect(await db.select().from(processedPosts)).toHaveLength(0);
+    expect(await getSyncState(db, 'x:1234567890')).toBeFalsy();
+  });
+
   it('advances the cursor only when nothing failed', async () => {
     const xClient = makeXClient(timeline([{ id: '1750000000000000009', mediaKeys: ['3_a'] }]));
     const { client, fetchImpl } = makeTelegramStub();

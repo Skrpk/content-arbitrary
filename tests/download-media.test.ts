@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { downloadMedia, formatBytes, toOriginalPhotoUrl } from '@/lib/x/download-media';
-import { MediaUnsupportedError } from '@/lib/errors';
+import { MediaUnsupportedError, XApiError } from '@/lib/errors';
 import {
   maxUploadBytesFor,
   photoDimensionsAreAcceptable,
@@ -214,5 +214,44 @@ describe('formatBytes', () => {
     [5 * 1024 * 1024, '5.0 MB'],
   ])('formats %i as %s', (input, expected) => {
     expect(formatBytes(input)).toBe(expected);
+  });
+});
+
+describe('download timeouts', () => {
+  it('gives a download a deadline, and reports running out of it as retryable', async () => {
+    const timedOut = new Error('The operation was aborted due to timeout');
+    timedOut.name = 'TimeoutError';
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      throw timedOut;
+    });
+
+    const failure = await downloadMedia(video, {
+      logger: createTestLogger(),
+      uploadMode: 'multipart',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    }).catch((error) => error);
+
+    expect(failure).toBeInstanceOf(XApiError);
+    expect(failure).toMatchObject({ code: 'media_timeout', transient: true });
+    expect(failure.message).toContain('7_1');
+  });
+
+  it('still honours a caller abort as well as its own deadline', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      if (init?.signal?.aborted) throw new DOMException('aborted', 'AbortError');
+      return bodyResponse(10, 'image/jpeg');
+    });
+
+    await expect(
+      downloadMedia(photo, {
+        logger: createTestLogger(),
+        uploadMode: 'multipart',
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow(/aborted/);
   });
 });

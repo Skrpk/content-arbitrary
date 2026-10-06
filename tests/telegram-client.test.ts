@@ -186,3 +186,33 @@ describe('error classification', () => {
     expect(result.map((m) => m.message_id)).toEqual([42, 43]);
   });
 });
+
+describe('request timeouts', () => {
+  const timedOut = () => {
+    const error = new Error('The operation was aborted due to timeout');
+    error.name = 'TimeoutError';
+    return error;
+  };
+
+  it('gives every call a deadline', async () => {
+    const fetchImpl = vi.fn(async () => telegramOk({ id: 1, is_bot: true, first_name: 'b', username: 'b' }));
+    await makeClient(fetchImpl as unknown as typeof fetch).getMe();
+
+    const init = (fetchImpl.mock.calls[0] as unknown[])[1] as RequestInit;
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('does not resend a call that timed out — it may have gone through — but leaves it retryable', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw timedOut();
+    });
+
+    const failure = await makeClient(fetchImpl as unknown as typeof fetch)
+      .call('sendMessage', { chat_id: 1, text: 'hi' }, z.unknown())
+      .catch((error) => error);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(failure).toBeInstanceOf(TelegramApiError);
+    expect(failure).toMatchObject({ code: 'telegram_timeout', transient: true });
+  });
+});

@@ -12,6 +12,12 @@ export interface RetryOptions {
   label?: string;
   /** Ceiling on an honoured Telegram `retry_after`; beyond this we give up now. */
   maxRetryAfterMs?: number;
+  /**
+   * Further narrows which transient errors are retried here and now. One that
+   * is refused still propagates as transient, so the post is retried by a
+   * later run instead.
+   */
+  retryIf?: (error: unknown) => boolean;
 }
 
 export const defaultSleep = (ms: number) =>
@@ -54,6 +60,7 @@ export async function withRetry<T>(operation: () => Promise<T>, options: RetryOp
     logger,
     label = 'operation',
     maxRetryAfterMs = 60_000,
+    retryIf,
   } = options;
 
   let lastError: unknown;
@@ -66,6 +73,11 @@ export async function withRetry<T>(operation: () => Promise<T>, options: RetryOp
 
       if (!isTransient(error)) {
         logger?.warn('retry.permanent_error', { label, attempt, error: describeError(error) });
+        throw error;
+      }
+
+      if (retryIf && !retryIf(error)) {
+        logger?.warn('retry.not_now', { label, attempt, error: describeError(error) });
         throw error;
       }
 

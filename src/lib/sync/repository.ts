@@ -8,6 +8,7 @@ import {
   telegramMessages,
   type ApprovalPayload,
   type PostStatus,
+  type ReviewMediaItem,
   type RejectionReason,
 } from '@/db/schema';
 
@@ -260,6 +261,8 @@ export async function markAwaitingApproval(
     payload: ApprovalPayload;
     adminChatId: string;
     adminMessageId: number;
+    /** What the reviewer is shown, kept for analysis after the decision. */
+    reviewMedia?: ReviewMediaItem[];
   },
 ): Promise<void> {
   await db
@@ -267,6 +270,7 @@ export async function markAwaitingApproval(
     .set({
       status: 'awaiting_approval',
       approvalPayload: input.payload,
+      ...(input.reviewMedia ? { reviewMedia: input.reviewMedia } : {}),
       originalCaption: rawSql`coalesce(${processedPosts.originalCaption}, ${input.payload.caption})`,
       caption: rawSql`coalesce(${processedPosts.caption}, ${input.payload.caption})`,
       adminChatId: input.adminChatId,

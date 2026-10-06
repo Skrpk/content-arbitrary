@@ -1,4 +1,4 @@
-import { MediaUnsupportedError, XApiError } from '@/lib/errors';
+import { isTimeout, MediaUnsupportedError, XApiError } from '@/lib/errors';
 import type { Logger } from '@/lib/logger';
 import { maxUploadBytesFor } from '@/lib/telegram/limits';
 import type { NormalizedMedia } from '@/types';
@@ -64,7 +64,35 @@ export function toOriginalPhotoUrl(url: string): string {
   }
 }
 
+/** How long downloading one asset may take, up to a 50 MB video. */
+export const MEDIA_DOWNLOAD_TIMEOUT_MS = 120_000;
+
+type DownloadOptions = Parameters<typeof downloadMediaOnce>[1];
+
+/**
+ * Download one asset, giving up after MEDIA_DOWNLOAD_TIMEOUT_MS — the body
+ * included — so a stalled CDN cannot hold the run until the platform kills it.
+ */
 export async function downloadMedia(
+  media: NormalizedMedia,
+  options: DownloadOptions,
+): Promise<DownloadedMedia> {
+  const timeout = AbortSignal.timeout(MEDIA_DOWNLOAD_TIMEOUT_MS);
+  const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+
+  try {
+    return await downloadMediaOnce(media, { ...options, signal });
+  } catch (error) {
+    if (!isTimeout(error)) throw error;
+    // A download is safe to repeat; the post is retried by a later run.
+    throw new XApiError(
+      `Downloading media ${media.mediaKey} timed out after ${MEDIA_DOWNLOAD_TIMEOUT_MS / 1000}s`,
+      { transient: true, code: 'media_timeout', cause: error },
+    );
+  }
+}
+
+async function downloadMediaOnce(
   media: NormalizedMedia,
   options: {
     logger: Logger;

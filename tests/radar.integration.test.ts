@@ -16,6 +16,7 @@ import { ingestRadarBatch, submitRadarBackfill, waitForBatch } from '@/lib/radar
 import { loadRadarHistory } from '@/lib/radar/repository';
 import { formatRadarReport, loadReportRows } from '@/lib/radar/report';
 import { createRadarRun, runLiveRadar, type RadarSubject } from '@/lib/radar/shadow';
+import { markAwaitingApproval, rejectWithReason } from '@/lib/sync/repository';
 import { syncPosts } from '@/lib/sync/sync-posts';
 import { TelegramClient } from '@/lib/telegram/client';
 import { XClient } from '@/lib/x/client';
@@ -62,7 +63,7 @@ async function decidedPost(input: {
   createdAt?: Date;
   text?: string;
   workspaceId?: number;
-  approvalPayload?: schema.ApprovalPayload;
+  reviewMedia?: schema.ReviewMediaItem[];
 }) {
   nextPostId += 1n;
   const status =
@@ -88,7 +89,9 @@ async function decidedPost(input: {
       reviewedAt: input.decision === 'pending' ? null : (input.reviewedAt ?? new Date('2026-10-01T10:00:00Z')),
       rejectionReason: input.decision === 'reject' ? 'too_minor' : null,
       createdAt: input.createdAt ?? new Date('2026-10-01T09:00:00Z'),
-      approvalPayload: input.approvalPayload ?? null,
+      // As in production: the payload is gone once the post is decided.
+      approvalPayload: null,
+      reviewMedia: input.reviewMedia ?? null,
     })
     .returning();
   return row!;
@@ -374,6 +377,8 @@ describeIfDb('Radar in the sync', () => {
 
     const [post] = await db.select().from(processedPosts);
     expect(post!.status).toBe('awaiting_approval');
+    // What the reviewer was shown, kept for later backfills.
+    expect(post!.reviewMedia).toEqual([{ kind: 'photo', fileId: 'ONE', url: 'https://cdn.example/a.jpg' }]);
 
     const rows = await evaluations();
     expect(rows.map((row) => [row.variant, row.score])).toEqual([
@@ -534,7 +539,7 @@ describe.each(['openai', 'anthropic'] as const)('Radar backfill through the %s b
         decision: 'approve',
         reviewedAt: at(12),
         createdAt: at(10),
-        approvalPayload: { method: 'sendPhoto', caption: 'c', items: [{ kind: 'photo', fileId: 'PHOTO_1' }] },
+        reviewMedia: [{ kind: 'photo', fileId: 'PHOTO_1', url: 'https://pbs.twimg.com/media/p1.jpg' }],
       });
 
       const telegramFetch = vi.fn(async (input: unknown) => {
@@ -581,6 +586,79 @@ describe.each(['openai', 'anthropic'] as const)('Radar backfill through the %s b
       expect((await evaluations()).map((row) => row.processedPostId).sort()).toEqual(
         scorable.slice(0, 2).map((post) => post.id).sort(),
       );
+    });
+
+    it("shows a video's still from X, and a photo from X when Telegram has lost it", async () => {
+      await history();
+      await decidedPost({
+        decision: 'approve',
+        reviewedAt: at(12),
+        createdAt: at(10),
+        text: 'Video post',
+        reviewMedia: [{ kind: 'video', fileId: 'VIDEO_1', previewUrl: 'https://pbs.twimg.com/thumb/v1.jpg' }],
+      });
+      await decidedPost({
+        decision: 'reject',
+        reviewedAt: at(13),
+        createdAt: at(11),
+        text: 'Photo post',
+        reviewMedia: [{ kind: 'photo', fileId: 'GONE', url: 'https://pbs.twimg.com/media/p2.jpg' }],
+      });
+      const telegram = new TelegramClient({
+        token: '123456:TEST',
+        baseUrl: 'https://api.telegram.example',
+        fetchImpl: vi.fn(async () =>
+          Response.json({ ok: false, error_code: 400, description: 'Bad Request: file not found' }, { status: 400 }),
+        ) as unknown as typeof fetch,
+        attempts: 1,
+        sleep: instantSleep,
+      });
+      const fake = fakeBatchProvider(providerName, () => ({ output: radarOutput() }));
+
+      await submitAndIngest(fake, { telegram });
+
+      const imageRequests = fake.submitted[0]!.filter((entry) => entry.customId.endsWith('-text_image'));
+      expect(imageRequests).toHaveLength(2);
+      expect(imageRequests.some((entry) => entry.json.includes('https://pbs.twimg.com/thumb/v1.jpg'))).toBe(true);
+      expect(imageRequests.some((entry) => entry.json.includes('https://pbs.twimg.com/media/p2.jpg'))).toBe(true);
+    });
+
+    it('leaves the image out with --text-only', async () => {
+      await history();
+      await decidedPost({
+        decision: 'approve',
+        reviewedAt: at(12),
+        createdAt: at(10),
+        reviewMedia: [{ kind: 'photo', url: 'https://pbs.twimg.com/media/p3.jpg' }],
+      });
+      const fake = fakeBatchProvider(providerName, () => ({ output: radarOutput() }));
+
+      await submitAndIngest(fake, { textOnly: true });
+
+      expect(fake.submitted[0]!.map((entry) => entry.customId.endsWith('-text'))).toEqual([true]);
+    });
+
+    it('still has the picture of a post decided through the real review flow', async () => {
+      await history();
+      // Queued for review the way the sync does it, then rejected by the reviewer.
+      const post = await decidedPost({ decision: 'pending', createdAt: at(10) });
+      await markAwaitingApproval(db, {
+        id: post.id,
+        payload: { method: 'sendPhoto', caption: 'c', items: [{ kind: 'photo', fileId: 'F1' }] },
+        adminChatId: '555001',
+        adminMessageId: 1,
+        reviewMedia: [{ kind: 'photo', fileId: 'F1', url: 'https://pbs.twimg.com/media/f1.jpg' }],
+      });
+      await rejectWithReason(db, { id: post.id, workspaceId: DEFAULT_WORKSPACE_ID, reason: 'too_minor' });
+
+      const [decided] = await db.select().from(processedPosts).where(eq(processedPosts.id, post.id));
+      expect(decided!.approvalPayload).toBeNull();
+      expect(decided!.reviewMedia).toEqual([{ kind: 'photo', fileId: 'F1', url: 'https://pbs.twimg.com/media/f1.jpg' }]);
+
+      const fake = fakeBatchProvider(providerName, () => ({ output: radarOutput() }));
+      await submitAndIngest(fake);
+
+      expect(fake.submitted[0]!.map((entry) => entry.customId)).toEqual([`p${post.id}-text`, `p${post.id}-text_image`]);
     });
 
     it('splits a large backfill into several batches', async () => {

@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
-import { processedPosts, type ApprovalPayload, type RadarVariant } from '@/db/schema';
+import { processedPosts, type RadarVariant, type ReviewMediaItem } from '@/db/schema';
 import { describeError } from '@/lib/errors';
 import { scrub, type Logger } from '@/lib/logger';
 import type { TelegramClient } from '@/lib/telegram/client';
@@ -69,8 +69,10 @@ function parseCustomId(customId: string): { processedPostId: number; variant: Ra
 export async function submitRadarBackfill(input: {
   db: Database;
   provider: RadarProvider;
-  /** Fetches the stored photos for the text_image variant; without it only text is scored. */
+  /** Fetches the reviewer's copy of a photo; without it, X's URL is used. */
   telegram?: TelegramClient;
+  /** Score the text only, never the image. */
+  textOnly?: boolean;
   workspaceId: number;
   profile: string;
   /** Fewest approvals and fewest rejections a post needs behind it to be scored. */
@@ -88,7 +90,7 @@ export async function submitRadarBackfill(input: {
       sourceText: processedPosts.sourceText,
       method: processedPosts.telegramMethod,
       mediaCount: processedPosts.mediaCount,
-      approvalPayload: processedPosts.approvalPayload,
+      reviewMedia: processedPosts.reviewMedia,
     })
     .from(processedPosts)
     .where(
@@ -137,7 +139,7 @@ export async function submitRadarBackfill(input: {
       promptVersion: RADAR_PROMPT_VERSION,
       scoredOnly: true,
     });
-    const wantsImage = Boolean(input.telegram) && hasStoredPhoto(post.approvalPayload);
+    const wantsImage = !input.textOnly && hasReviewImage(post.reviewMedia);
     if (done.has('text') && (done.has('text_image') || !wantsImage)) {
       summary.alreadyScored += 1;
       continue;
@@ -156,8 +158,8 @@ export async function submitRadarBackfill(input: {
     }
 
     const image =
-      input.telegram && wantsImage && !done.has('text_image')
-        ? await storedImage(input.telegram, post.approvalPayload, input.logger)
+      wantsImage && !done.has('text_image')
+        ? await reviewImage(input.telegram, post.reviewMedia, input.logger)
         : undefined;
 
     const variants = (['text', ...(image ? ['text_image'] : [])] as RadarVariant[]).filter(
@@ -311,32 +313,40 @@ export async function ingestRadarBatch(input: {
   return summary;
 }
 
-function hasStoredPhoto(payload: ApprovalPayload | null): boolean {
-  return payload?.items[0]?.kind === 'photo';
+/** Whether the post's first item has a picture to show: a photo, or a video's still. */
+function hasReviewImage(media: ReviewMediaItem[] | null): boolean {
+  const first = media?.[0];
+  if (!first) return false;
+  return first.kind === 'photo' ? Boolean(first.fileId || first.url) : Boolean(first.previewUrl);
 }
 
 /**
- * The post's first photo, as the reviewer received it. A video has no stored
- * still, so a video post is scored on its text only.
+ * The picture the reviewer saw first. A photo is fetched from Telegram — its
+ * copy does not expire — and handed over inline; failing that, and for a
+ * video's still, the model is given X's URL, as live scoring is.
  */
-async function storedImage(
-  telegram: TelegramClient,
-  payload: ApprovalPayload | null,
+async function reviewImage(
+  telegram: TelegramClient | undefined,
+  media: ReviewMediaItem[] | null,
   logger: Logger,
 ): Promise<RadarImage | undefined> {
-  const first = payload?.items[0];
-  if (!first || first.kind !== 'photo') return undefined;
+  const first = media?.[0];
+  if (!first) return undefined;
 
-  try {
-    const { bytes, filePath } = await telegram.downloadFile(first.fileId);
-    const mediaType = mediaTypeFor(filePath);
-    if (!mediaType || bytes.byteLength > MAX_IMAGE_BYTES) return undefined;
-    return { kind: 'base64', mediaType, data: Buffer.from(bytes).toString('base64') };
-  } catch (error) {
-    // Scored on its text alone rather than not at all.
-    logger.warn('radar.backfill_image_unavailable', { error: describeError(error) });
-    return undefined;
+  if (first.kind === 'photo' && first.fileId && telegram) {
+    try {
+      const { bytes, filePath } = await telegram.downloadFile(first.fileId);
+      const mediaType = mediaTypeFor(filePath);
+      if (mediaType && bytes.byteLength <= MAX_IMAGE_BYTES) {
+        return { kind: 'base64', mediaType, data: Buffer.from(bytes).toString('base64') };
+      }
+    } catch (error) {
+      logger.warn('radar.backfill_image_unavailable', { error: describeError(error) });
+    }
   }
+
+  const url = first.kind === 'photo' ? first.url : first.previewUrl;
+  return url ? { kind: 'url', url } : undefined;
 }
 
 function mediaTypeFor(filePath: string): 'image/jpeg' | 'image/png' | 'image/webp' | undefined {

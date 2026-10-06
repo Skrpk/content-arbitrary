@@ -49,6 +49,14 @@ import type { SyncSummary } from '@/types';
  * account keep separate cursors and are therefore billed separately for it.
  */
 
+/**
+ * How long a run keeps taking new posts. Kept well inside the cron route's
+ * maxDuration (800 s), so a post already under way when the budget runs out —
+ * downloads and sends each time out at 120 s — still finishes before the
+ * platform would kill the function.
+ */
+export const SYNC_TIME_BUDGET_MS = 560_000;
+
 export interface SyncOptions {
   db?: Database;
   env?: Env;
@@ -62,6 +70,9 @@ export interface SyncOptions {
   skipLock?: boolean;
   /** Overrides Shadow Radar's run (and so its API client); injected by tests. */
   radarRun?: RadarRun;
+  /** Overrides when the run stops taking new posts (epoch ms); injected by tests. */
+  deadline?: number;
+  now?: () => number;
 }
 
 export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary> {
@@ -70,7 +81,9 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
   const logger = (options.logger ?? createLogger({ app: 'content-arbitrary' })).child({ runId });
   const db = options.db ?? getDb();
   const sleep = options.sleep ?? defaultSleep;
-  const startedAt = Date.now();
+  const now = options.now ?? Date.now;
+  const startedAt = now();
+  const deadline = options.deadline ?? startedAt + SYNC_TIME_BUDGET_MS;
 
   const summary: SyncSummary = {
     checked: 0,
@@ -106,7 +119,8 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
     const radarProvider = env.REQUIRE_APPROVAL && !env.DRY_RUN ? createRadarProvider(env) : null;
     const radarRun =
       env.REQUIRE_APPROVAL && !env.DRY_RUN
-        ? (options.radarRun ?? (radarProvider ? createRadarRun({ provider: radarProvider }) : null))
+        ? (options.radarRun ??
+          (radarProvider ? createRadarRun({ provider: radarProvider, notAfter: deadline }) : null))
         : null;
 
     // Sources, posts and cursors are all scoped to it, so it has to exist first.
@@ -128,6 +142,12 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
     }
 
     for (const tenant of tenants) {
+      if (now() >= deadline) {
+        summary.timeBudgetReached = true;
+        logger.warn('sync.time_budget_reached', { nextWorkspaceId: tenant.id });
+        break;
+      }
+
       const resolved = destinationFor(tenant, env);
       if (!resolved.ok) {
         // A tenant mid-setup, not a failure: nothing of its own is wrong with
@@ -179,6 +199,12 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
         summary.workspaces += 1;
 
         for (const source of enabled) {
+          if (now() >= deadline) {
+            summary.timeBudgetReached = true;
+            logger.warn('sync.time_budget_reached', { workspaceId: tenant.id, nextSource: source.username });
+            break;
+          }
+
           // syncXSource never throws; a failure is reported in its summary so
           // the remaining sources and tenants still get their turn.
           const sourceSummary = await syncXSource(source, {
@@ -194,7 +220,10 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
               radarRun && tenant.editorialProfile?.trim()
                 ? { run: radarRun, profile: tenant.editorialProfile }
                 : undefined,
+            deadline,
+            now,
           });
+          if (sourceSummary.stoppedForTime) summary.timeBudgetReached = true;
 
           summary.sources.push(sourceSummary);
           summary.checked += sourceSummary.checked;
@@ -219,13 +248,13 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
         failedSources.map((source) => `@${source.username} (${source.error})`).join('; ');
     }
 
-    summary.durationMs = Date.now() - startedAt;
+    summary.durationMs = now() - startedAt;
     logger.info('sync.end', { ...summary });
     return summary;
   } catch (error) {
     const message = describeError(error);
     summary.error = message;
-    summary.durationMs = Date.now() - startedAt;
+    summary.durationMs = now() - startedAt;
 
     logger.error('sync.failed', { error: message });
     logger.info('sync.end', { ...summary });

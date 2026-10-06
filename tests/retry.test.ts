@@ -125,3 +125,18 @@ describe('withRetry', () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 });
+
+describe('withRetry retryIf', () => {
+  it('passes on a transient error it is told not to retry now, still as transient', async () => {
+    const error = new AppError('maybe delivered', { transient: true, code: 'telegram_timeout' });
+    const operation = vi.fn(async () => {
+      throw error;
+    });
+
+    await expect(
+      withRetry(operation, { attempts: 5, sleep: instantSleep, retryIf: () => false }),
+    ).rejects.toBe(error);
+    expect(operation).toHaveBeenCalledTimes(1);
+    expect(isTransient(error)).toBe(true);
+  });
+});

@@ -1,4 +1,4 @@
-import type { Source } from '@/db/schema';
+import type { ApprovalMediaItem, ReviewMediaItem, Source } from '@/db/schema';
 import type { Database } from '@/lib/db';
 import type { Env } from '@/lib/env';
 import { describeError } from '@/lib/errors';
@@ -46,6 +46,9 @@ export interface SourceSyncContext {
   destination: TelegramDestination;
   /** Set when Shadow Radar scores this tenant's posts before review. */
   radar?: { run: RadarRun; profile: string };
+  /** When to stop taking new posts (epoch ms); unset, there is no limit. */
+  deadline?: number;
+  now?: () => number;
 }
 
 export async function syncXSource(
@@ -147,8 +150,19 @@ export async function syncXSource(
       }
     };
 
+    const now = context.now ?? Date.now;
+
     // Oldest → newest, so the channel reads in the original order.
     for (const [index, post] of batch.entries()) {
+      // Out of time: leave the rest for the next run rather than be killed
+      // halfway through a post. Nothing unreached is lost — see the cursor below.
+      if (context.deadline !== undefined && now() >= context.deadline) {
+        summary.stoppedForTime = true;
+        summary.newPosts -= batch.length - index;
+        logger.warn('sync.time_budget_reached', { unprocessed: batch.length - index });
+        break;
+      }
+
       const postLogger = logger.child({ xPostId: post.id });
 
       const claim = await claimPost(db, {
@@ -231,6 +245,7 @@ export async function syncXSource(
             payload: outcome.approval.payload,
             adminChatId: outcome.approval.adminChatId,
             adminMessageId: outcome.approval.adminMessageId,
+            reviewMedia: reviewMediaOf(post, outcome.approval.payload.items),
           });
           settle(post.id);
           summary.awaitingApproval += 1;
@@ -289,9 +304,9 @@ export async function syncXSource(
      *
      * `newestId` covers the whole fetched window (including posts filtered out
      * as replies or as having no media), so it is only safe once every
-     * candidate has been settled.
+     * candidate has been settled — not when the run stopped short for time.
      */
-    const consumedWholeWindow = batch.length === candidates.length;
+    const consumedWholeWindow = !summary.stoppedForTime && batch.length === candidates.length;
     const nextCursor =
       summary.failed > 0 ? null : consumedWholeWindow ? result.newestId : lastSettledId;
 
@@ -324,6 +339,28 @@ export async function syncXSource(
 
     return summary;
   }
+}
+
+/**
+ * What the reviewer was shown: Telegram's file for each item, with X's URLs
+ * alongside. The review send keeps the post's media in order and all or
+ * nothing, so the two line up; if they ever did not, X's URLs are left out
+ * rather than paired with the wrong file.
+ */
+function reviewMediaOf(post: NormalizedPost, items: ApprovalMediaItem[]): ReviewMediaItem[] {
+  const aligned =
+    items.length === post.media.length &&
+    items.every((item, index) => item.kind === post.media[index]!.kind);
+
+  return items.map((item, index) => {
+    const media = aligned ? post.media[index] : undefined;
+    return {
+      kind: item.kind,
+      fileId: item.fileId,
+      ...(media?.kind === 'photo' ? { url: media.url } : {}),
+      ...(media?.previewUrl ? { previewUrl: media.previewUrl } : {}),
+    };
+  });
 }
 
 /** The picture Radar is shown: the first photo, or the first video's still. */

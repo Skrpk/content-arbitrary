@@ -81,6 +81,11 @@ export function isTransient(error: unknown): boolean {
   return false;
 }
 
+/** The error `AbortSignal.timeout()` raises when a request runs out of time. */
+export function isTimeout(error: unknown): boolean {
+  return error instanceof Error && error.name === 'TimeoutError';
+}
+
 export function retryAfterMsOf(error: unknown): number | undefined {
   return error instanceof AppError ? error.retryAfterMs : undefined;
 }
