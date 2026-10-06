@@ -75,6 +75,8 @@ export interface SourceSyncSummary {
   skipped: number;
   /** Stopped before the end of its batch to stay inside the run's time budget. */
   stoppedForTime?: boolean;
+  /** More posts arrived since the cursor than one run reads; the oldest were not seen. */
+  windowOverflow?: boolean;
   error?: string;
 }
 

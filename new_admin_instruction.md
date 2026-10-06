@@ -148,7 +148,7 @@ VALUES ('другий канал', '-1001234567890', '123456789');
 
 ## Крок 6. Перевірити
 
-Дочекатися крона (щогодини о :00 UTC) або смикнути вручну:
+Дочекатися крона (кожні 15 хвилин: :00, :15, :30, :45 UTC) або смикнути вручну:
 
 ```bash
 curl -s -m 60 -H "Authorization: Bearer $(grep -E '^CRON_SECRET=' .env | cut -d= -f2- | tr -d '"'"'"'')" "https://content-arbitrary.vercel.app/api/cron/sync" | jq '{workspaces, skippedWorkspaces, sources}'

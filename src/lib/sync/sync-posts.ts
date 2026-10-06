@@ -16,6 +16,12 @@ import { acquireSyncLock } from '@/lib/sync/locks';
 import { attributePostsToSource, getSyncState } from '@/lib/sync/repository';
 import { defaultSleep } from '@/lib/sync/retry';
 import { createRadarProvider } from '@/lib/radar/providers';
+import {
+  lastSyncKey,
+  loadLastSyncTimes,
+  longestWaitingFirst,
+  tenantWaitedSince,
+} from '@/lib/sync/rotation';
 import { createRadarRun, type RadarRun } from '@/lib/radar/shadow';
 import { syncXSource } from '@/lib/sync/sync-x-source';
 import {
@@ -126,7 +132,21 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
     // Sources, posts and cursors are all scoped to it, so it has to exist first.
     const defaultWorkspace = await ensureDefaultWorkspace(db, env, logger);
 
-    const tenants = await listActiveWorkspaces(db);
+    // Longest-waiting first, so a run cut short by its time budget leaves
+    // someone different behind each time.
+    const lastSyncTimes = await loadLastSyncTimes(db);
+    const activeTenants = await listActiveWorkspaces(db);
+    const stateKeysByTenant = new Map(
+      await Promise.all(
+        activeTenants.map(
+          async (tenant) =>
+            [tenant.id, (await listEnabledSources(db, 'x', tenant.id)).map(syncStateKey)] as const,
+        ),
+      ),
+    );
+    const tenants = longestWaitingFirst(activeTenants, (tenant) =>
+      tenantWaitedSince(lastSyncTimes, tenant.id, stateKeysByTenant.get(tenant.id) ?? []),
+    );
     logger.info('sync.workspaces_loaded', {
       count: tenants.length,
       ids: tenants.map((tenant) => tenant.id),
@@ -183,7 +203,9 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
           await bootstrapLegacySource({ db, env, xClient, logger, workspace: tenant });
         }
 
-        const enabled = await listEnabledSources(db, 'x', tenant.id);
+        const enabled = longestWaitingFirst(await listEnabledSources(db, 'x', tenant.id), (source) =>
+          lastSyncTimes.get(lastSyncKey(tenant.id, syncStateKey(source))),
+        );
 
         if (enabled.length === 0) {
           logger.warn('sync.no_sources', { workspaceId: tenant.id });

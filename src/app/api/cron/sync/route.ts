@@ -6,7 +6,7 @@ import { syncPosts } from '@/lib/sync/sync-posts';
 /**
  * GET /api/cron/sync — one synchronisation cycle.
  *
- * Invoked hourly by Vercel Cron (see vercel.json). Vercel sends
+ * Invoked every 15 minutes by Vercel Cron (see vercel.json). Vercel sends
  * `Authorization: Bearer $CRON_SECRET` automatically once CRON_SECRET is set as
  * a project environment variable.
  */
@@ -47,6 +47,8 @@ export async function GET(request: Request): Promise<Response> {
           awaitingApproval: source.awaitingApproval,
           failed: source.failed,
           skipped: source.skipped,
+          ...(source.stoppedForTime ? { stoppedForTime: true } : {}),
+          ...(source.windowOverflow ? { windowOverflow: true } : {}),
           ...(source.error ? { error: source.error } : {}),
         })),
         dryRun: summary.dryRun,

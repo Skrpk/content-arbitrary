@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { XClient } from '@/lib/x/client';
-import { compareSnowflake, getNewPosts } from '@/lib/x/get-new-posts';
+import { compareSnowflake, getNewPosts, X_MAX_PAGES } from '@/lib/x/get-new-posts';
 import { createTestLogger } from './helpers';
 
 function xResponse(payload: unknown) {
@@ -314,5 +314,78 @@ describe('compareSnowflake', () => {
 
   it('orders by length when ids differ in magnitude', () => {
     expect(compareSnowflake('999', '1000')).toBeLessThan(0);
+  });
+});
+
+describe('reading back to the cursor', () => {
+  /** A timeline of posts with ids `from`..`to`, newest first, `pageSize` at a time. */
+  function pagedTimeline(ids: number[], pageSize: number) {
+    const requests: URL[] = [];
+    const fetchImpl = vi.fn(async (input: unknown) => {
+      const url = new URL(String(input));
+      requests.push(url);
+      const sinceId = Number(url.searchParams.get('since_id') ?? 0);
+      const untilId = Number(url.searchParams.get('until_id') ?? Number.MAX_SAFE_INTEGER);
+      const available = ids.filter((id) => id > sinceId && id < untilId).sort((a, b) => b - a);
+      const page = available.slice(0, pageSize);
+      return xResponse({
+        data: page.map((id) => ({ id: String(id), text: `post ${id}`, attachments: { media_keys: [`k${id}`] } })),
+        includes: {
+          media: page.map((id) => ({ ...photoMedia, media_key: `k${id}`, url: `https://pbs.twimg.com/media/${id}.jpg` })),
+        },
+        meta: {
+          result_count: page.length,
+          ...(page.length > 0 ? { newest_id: String(page[0]), oldest_id: String(page[page.length - 1]) } : {}),
+          ...(available.length > page.length ? { next_token: 'more' } : {}),
+        },
+      });
+    });
+    const client = new XClient({
+      bearerToken: 'test',
+      baseUrl: 'https://api.x.example',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      attempts: 1,
+    });
+    return { client, requests };
+  }
+
+  it('reads older pages down to the cursor, so the oldest new posts are not skipped', async () => {
+    // Cursor at 100; posts 101..112 arrived since; X pages 5 at a time.
+    const ids = Array.from({ length: 12 }, (_, index) => 101 + index);
+    const { client, requests } = pagedTimeline(ids, 5);
+
+    const result = await getNewPosts(client, { ...baseOptions, fetchLimit: 5, sinceId: '100' });
+
+    expect(result.posts.map((post) => post.id)).toEqual(ids.map(String));
+    expect(result).toMatchObject({ pages: 3, overflow: false, checked: 12, newestId: '112' });
+    expect(requests.map((url) => [url.searchParams.get('since_id'), url.searchParams.get('until_id')])).toEqual([
+      ['100', null],
+      ['100', '108'],
+      ['100', '103'],
+    ]);
+    // Media from every page is matched to its post.
+    expect(result.posts[0]!.media[0]!.url).toContain('101');
+  });
+
+  it('reads one page only on a source\'s first run, with no cursor', async () => {
+    const { client, requests } = pagedTimeline(Array.from({ length: 12 }, (_, index) => 101 + index), 5);
+
+    const result = await getNewPosts(client, { ...baseOptions, fetchLimit: 5 });
+
+    expect(requests).toHaveLength(1);
+    expect(result).toMatchObject({ pages: 1, overflow: false });
+    expect(result.posts.map((post) => post.id)).toEqual(['108', '109', '110', '111', '112']);
+  });
+
+  it('stops after the page limit and says the oldest were not read', async () => {
+    const logger = createTestLogger();
+    const ids = Array.from({ length: 40 }, (_, index) => 101 + index);
+    const { client, requests } = pagedTimeline(ids, 5);
+
+    const result = await getNewPosts(client, { ...baseOptions, fetchLimit: 5, sinceId: '100', logger });
+
+    expect(requests).toHaveLength(X_MAX_PAGES);
+    expect(result).toMatchObject({ pages: X_MAX_PAGES, overflow: true, checked: 25 });
+    expect(logger.entries.map((entry) => entry.event)).toContain('sync.window_overflow');
   });
 });

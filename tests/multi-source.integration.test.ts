@@ -200,6 +200,48 @@ describeIfDb('multi-source sync', () => {
     expect(summary.sources.map((source) => source.username).sort()).toEqual(['alpha', 'beta']);
   });
 
+  it('starts with the source that has waited longest, so a short run does not starve the same one', async () => {
+    // Added in this order, so a fixed order would always start with alpha.
+    await addSource(db, { platform: 'x', externalId: '111', username: 'alpha' });
+    await addSource(db, { platform: 'x', externalId: '222', username: 'beta' });
+    await addSource(db, { platform: 'x', externalId: '333', username: 'gamma' });
+    await upsertSyncState(db, { source: 'x:111', lastSyncAt: new Date('2026-10-06T10:30:00Z') });
+    await upsertSyncState(db, { source: 'x:222', lastSyncAt: new Date('2026-10-06T10:00:00Z') });
+    // gamma has never been synced.
+
+    const x = makeXStack({});
+    await run(x, makeTelegramStack());
+
+    expect(x.fetched).toEqual(['333', '222', '111']);
+  });
+
+  it('reports a source whose backlog was more than it could read', async () => {
+    await addSource(db, { platform: 'x', externalId: '111', username: 'alpha' });
+    await upsertSyncState(db, { source: 'x:111', lastSeenPostId: '1750000000000000001' });
+
+    // Every page says there is more.
+    const fetchImpl = vi.fn(async () =>
+      Response.json({
+        data: [{ id: '1750000000000000099', text: 'post', author_id: '111' }],
+        includes: { users: [{ id: '111', username: 'alpha' }] },
+        meta: { result_count: 1, newest_id: '1750000000000000099', oldest_id: '1750000000000000099', next_token: 'more' },
+      }),
+    );
+    const x = {
+      client: new XClient({
+        bearerToken: 'test',
+        baseUrl: 'https://api.x.example',
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        attempts: 1,
+      }),
+      fetched: [],
+    };
+
+    const summary = await run(x, makeTelegramStack());
+
+    expect(summary.sources[0]).toMatchObject({ username: 'alpha', windowOverflow: true });
+  });
+
   it('gives each source its own cursor', async () => {
     await addSource(db, { platform: 'x', externalId: '111', username: 'alpha' });
     await addSource(db, { platform: 'x', externalId: '222', username: 'beta' });

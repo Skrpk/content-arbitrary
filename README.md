@@ -1,7 +1,7 @@
 # content-arbitrary
 
 Mirrors new **photos and videos** from one X (Twitter) account into a **Telegram channel**.
-Runs as a scheduled job on Vercel: every hour it checks the account, finds posts with media
+Runs as a scheduled job on Vercel: every 15 minutes it checks the account, finds posts with media
 it has not seen before, and republishes them to your channel.
 
 Deploy once, add the bot to your channel, point it at an X account — after that it runs
@@ -80,20 +80,20 @@ Source: https://x.com/someaccount/status/1750000000000000003
 
 ### Plan requirements (Vercel)
 
-The schedules in `vercel.json` — the hourly sync and the every-minute publisher for
+The schedules in `vercel.json` — the sync every 15 minutes and the every-minute publisher for
 [scheduled posts](#scheduling-a-post) — require a **Pro or Enterprise** plan, which allows
 intervals down to once per minute and fires within the specified minute.
 
 > **On Hobby**, cron jobs are limited to **once per day** and a more frequent expression fails
 > the deployment. Either change the schedule to a daily one (e.g. `"schedule": "0 9 * * *"` —
-> Hobby crons fire somewhere within that hour, not on the minute), or keep the hourly schedule
+> Hobby crons fire somewhere within that hour, not on the minute), or keep the 15-minute schedule
 > and trigger `/api/cron/sync` from an external scheduler (GitHub Actions, cron-job.org,
 > Upstash QStash) sending `Authorization: Bearer $CRON_SECRET`. The same goes for
 > `/api/cron/publish-scheduled`, which needs to run every minute. Nothing else differs.
 
-Pro also allows a function `maxDuration` of up to 800s. This route asks for **300s**, which is
-the platform default on every plan and is far more than a run of five posts needs — there is no
-reason to raise it unless you increase `MAX_POSTS_PER_RUN` a great deal.
+The sync route asks for a `maxDuration` of **800s**, Pro's maximum, and stops taking new posts
+after 560s so it never gets near it (see [Operating notes](#operating-notes)). On Hobby the
+ceiling is 300s: lower `maxDuration` and `SYNC_TIME_BUDGET_MS` to match.
 
 ### The X API is paid, per post read
 
@@ -104,7 +104,8 @@ post reads per billing cycle on standard accounts, and a 24-hour de-duplication 
 (requesting the same resource twice in a day is billed once).
 
 This is why the app stores a `since_id` cursor and why `X_FETCH_LIMIT` defaults to 20 rather
-than 100 — an idle account costs you almost nothing per run. Check current pricing at
+than 100 — an idle account costs you almost nothing per run, so syncing every 15 minutes rather
+than hourly costs no more: the same posts are read either way, just sooner. Check current pricing at
 <https://docs.x.com/x-api/getting-started/pricing> before committing to a schedule.
 
 ---
@@ -363,7 +364,7 @@ Or push to GitHub and import the repository at <https://vercel.com/new>.
 
 ```json
 {
-  "crons": [{ "path": "/api/cron/sync", "schedule": "0 * * * *" }]
+  "crons": [{ "path": "/api/cron/sync", "schedule": "*/15 * * * *" }]
 }
 ```
 
@@ -397,15 +398,16 @@ Changing environment variables requires a redeploy to take effect.
   **always in UTC**. Names like `MON` or `JAN` are not supported, and you cannot set both
   day-of-month and day-of-week.
 - **Vercel does not retry a failed invocation.** That is fine here: an unpublished post stays
-  `pending`/`failed` in the database and the next hourly run picks it up.
+  `pending`/`failed` in the database and the next run, 15 minutes later, picks it up.
 - Delivery is best effort. A run can be missed, or occasionally delivered twice — which is
   exactly why the sync is idempotent (see [Architecture decisions](#architecture-decisions)).
 
-On **Pro/Enterprise** the job fires within the specified minute, so `0 * * * *` means the top
-of each hour. (Hobby spreads invocations across the hour.)
+On **Pro/Enterprise** the job fires within the specified minute, so `*/15 * * * *` means at
+:00, :15, :30 and :45. (Hobby spreads invocations across the hour.)
 
-The route sets `maxDuration = 300`, the platform default. Pro allows up to 800s if you ever
-need it, but a five-post run finishes in seconds.
+The route sets `maxDuration = 800`, Pro's maximum, as headroom; the run itself stops taking new
+posts after 560s. A run that overlaps the next one is safe: each tenant is locked while it syncs,
+and a tenant still busy is simply skipped by the newer run.
 
 ## O. Trigger the cron endpoint manually
 
@@ -1173,6 +1175,15 @@ publishing each post exactly once; and the pool-starvation deadlock regression.
   `MAX_POSTS_PER_RUN` posts from the last `X_FETCH_LIMIT`, not the account's whole history.
   To skip the backlog entirely, set `sync_state.last_seen_post_id` to the newest post id before
   the first live run.
+- **Who goes first rotates.** Each run starts with the tenant, and within it the source, that
+  has waited longest since its last sync — never-synced first — so when a run does hit its time
+  budget, it is not always the same accounts that wait.
+- **A backlog is read back to the cursor.** X returns the newest posts first, a page at a time.
+  If more arrived since the last run than one page (`X_FETCH_LIMIT`) holds, the sync reads on,
+  page by page, down to its cursor, so the oldest — the next to publish — are not skipped. It
+  reads at most 5 pages per source per run; beyond that the oldest posts are not seen, and the
+  run logs `sync.window_overflow` and reports `windowOverflow` for that source. X bills a post
+  read again within 24 hours only once, so reading a backlog over several runs costs no more.
 - **A run has a time budget.** `/api/cron/sync` may run for 800 s (the Pro plan's maximum), but
   stops taking new posts after 560 s (`SYNC_TIME_BUDGET_MS`) and leaves the rest to the next run,
   with each source's cursor stopping at the last post it finished — nothing it did not reach is

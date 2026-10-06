@@ -94,9 +94,11 @@ export async function syncXSource(
     });
 
     summary.checked = result.checked;
+    if (result.overflow) summary.windowOverflow = true;
 
     logger.info('sync.fetched', {
       checked: result.checked,
+      pages: result.pages,
       posts: result.posts.length,
       sinceId: state?.lastSeenPostId ?? null,
       newestId: result.newestId,

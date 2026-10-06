@@ -25,6 +25,8 @@ export interface TimelineQuery {
   userId: string;
   maxResults: number;
   sinceId?: string;
+  /** Only posts older than this one — how the next page back is asked for. */
+  untilId?: string;
   excludeReplies: boolean;
   excludeReposts: boolean;
 }
@@ -180,6 +182,7 @@ export class XClient {
     if (exclude.length > 0) params.exclude = exclude.join(',');
 
     if (query.sinceId) params.since_id = query.sinceId;
+    if (query.untilId) params.until_id = query.untilId;
 
     const raw = await this.request(`/2/users/${encodeURIComponent(query.userId)}/tweets`, params);
 

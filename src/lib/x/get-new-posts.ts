@@ -2,7 +2,14 @@ import type { Logger } from '@/lib/logger';
 import type { NormalizedPost } from '@/types';
 import type { XClient } from '@/lib/x/client';
 import { normalizePost } from '@/lib/x/normalize-post';
-import type { XMedia } from '@/lib/x/schemas';
+import type { XMedia, XTimelineResponse } from '@/lib/x/schemas';
+
+/**
+ * Most pages read back towards the cursor in one run. Each page is
+ * `fetchLimit` posts, and every post read is billed, so this bounds what one
+ * busy account can cost a single run.
+ */
+export const X_MAX_PAGES = 5;
 
 export interface GetNewPostsOptions {
   userId: string;
@@ -25,6 +32,13 @@ export interface GetNewPostsResult {
   /** Highest post id seen this run — becomes the next `since_id`. */
   newestId: string | null;
   skipped: { id: string; reason: string }[];
+  /** Pages read. More than one only when the cursor was further back than a page. */
+  pages: number;
+  /**
+   * The account has more posts since the cursor than X_MAX_PAGES pages hold:
+   * the oldest of them were not read and will not be.
+   */
+  overflow: boolean;
 }
 
 /**
@@ -37,15 +51,7 @@ export async function getNewPosts(
   client: XClient,
   options: GetNewPostsOptions,
 ): Promise<GetNewPostsResult> {
-  const response = await client.getUserTimeline({
-    userId: options.userId,
-    maxResults: options.fetchLimit,
-    sinceId: options.sinceId ?? undefined,
-    // Ask X to exclude what it can; we still re-check locally because `exclude`
-    // does not cover quote posts and we want one consistent filtering path.
-    excludeReplies: !options.includeReplies,
-    excludeReposts: !options.includeReposts,
-  });
+  const { response, pages, overflow } = await readSinceCursor(client, options);
 
   const rawPosts = response.data ?? [];
   const skipped: { id: string; reason: string }[] = [];
@@ -110,7 +116,83 @@ export async function getNewPosts(
     );
   }
 
-  return { posts, checked: rawPosts.length, newestId, skipped };
+  return { posts, checked: rawPosts.length, newestId, skipped, pages, overflow };
+}
+
+/**
+ * Read everything since the cursor, newest page first.
+ *
+ * X returns the newest posts first, a page at a time. When more posts arrived
+ * since the cursor than one page holds, the oldest of them — the very ones to
+ * publish next — are on later pages, and reading only the first would skip
+ * them for good. So while X reports more, read on, asking for posts older than
+ * the oldest one so far (`until_id`), down to the cursor (`since_id`).
+ *
+ * Without a cursor — a source's first run — only the first page is read, on
+ * purpose: a new source starts from its latest posts, not its history.
+ */
+async function readSinceCursor(
+  client: XClient,
+  options: GetNewPostsOptions,
+): Promise<{ response: XTimelineResponse; pages: number; overflow: boolean }> {
+  const query = {
+    userId: options.userId,
+    maxResults: options.fetchLimit,
+    sinceId: options.sinceId ?? undefined,
+    // Ask X to exclude what it can; we still re-check locally because `exclude`
+    // does not cover quote posts and we want one consistent filtering path.
+    excludeReplies: !options.includeReplies,
+    excludeReposts: !options.includeReposts,
+  };
+
+  const first = await client.getUserTimeline(query);
+  const data = [...(first.data ?? [])];
+  const media = [...(first.includes?.media ?? [])];
+  const users = [...(first.includes?.users ?? [])];
+
+  let pages = 1;
+  let last = first;
+  while (options.sinceId && last.meta?.next_token && (last.data?.length ?? 0) > 0) {
+    if (pages >= X_MAX_PAGES) {
+      options.logger.warn('sync.window_overflow', {
+        sinceId: options.sinceId,
+        oldestRead: last.meta?.oldest_id ?? null,
+        pages,
+        postsRead: data.length,
+      });
+      return { response: merged(first, data, media, users), pages, overflow: true };
+    }
+
+    const oldest = last.data!.reduce(
+      (min, post) => (compareSnowflake(post.id, min) < 0 ? post.id : min),
+      last.data![0]!.id,
+    );
+    last = await client.getUserTimeline({ ...query, untilId: oldest });
+    pages += 1;
+    data.push(...(last.data ?? []));
+    media.push(...(last.includes?.media ?? []));
+    users.push(...(last.includes?.users ?? []));
+  }
+
+  if (pages > 1) {
+    options.logger.info('x.read_back_to_cursor', { sinceId: options.sinceId, pages, postsRead: data.length });
+  }
+  return { response: merged(first, data, media, users), pages, overflow: false };
+}
+
+function merged(
+  first: XTimelineResponse,
+  data: NonNullable<XTimelineResponse['data']>,
+  media: NonNullable<NonNullable<XTimelineResponse['includes']>['media']>,
+  users: NonNullable<NonNullable<XTimelineResponse['includes']>['users']>,
+): XTimelineResponse {
+  return {
+    ...first,
+    data,
+    includes: { media, users },
+    // The newest post is on the first page; keep its id as the window's top.
+    meta: { ...first.meta, result_count: data.length },
+  };
 }
 
 /** Compare two snowflake ids as big integers, safely. */

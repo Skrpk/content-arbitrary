@@ -153,7 +153,7 @@ const en: LandingContent = {
       {
         question: 'How fast does a new post reach my channel?',
         answer:
-          'The bot checks the accounts every hour and sends new posts to you for review right away. A post goes to the channel as soon as you tap Approve — or at the time you scheduled.',
+          'The bot checks the accounts every 15 minutes and sends new posts to you for review right away. A post goes to the channel as soon as you tap Approve — or at the time you scheduled.',
       },
       {
         question: 'Which posts are brought over?',
@@ -315,7 +315,7 @@ const uk: LandingContent = {
       {
         question: 'Як швидко новий пост потрапляє в канал?',
         answer:
-          'Бот перевіряє акаунти щогодини й одразу надсилає нові пости вам на погодження. У канал пост іде, щойно ви натиснете Approve, — або в запланований вами час.',
+          'Бот перевіряє акаунти кожні 15 хвилин і одразу надсилає нові пости вам на погодження. У канал пост іде, щойно ви натиснете Approve, — або в запланований вами час.',
       },
       {
         question: 'Які пости переносяться?',

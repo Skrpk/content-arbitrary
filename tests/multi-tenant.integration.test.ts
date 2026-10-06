@@ -13,7 +13,7 @@ import {
 } from '@/db/schema';
 import { syncPosts } from '@/lib/sync/sync-posts';
 import { addSource, listSources } from '@/lib/sources/repository';
-import { claimForDecision, getSyncState } from '@/lib/sync/repository';
+import { claimForDecision, getSyncState, upsertSyncState } from '@/lib/sync/repository';
 import { advisoryLockKey } from '@/lib/sync/locks';
 import { dispatchCommand } from '@/lib/telegram/commands';
 import {
@@ -247,6 +247,23 @@ describeIfDb('publishing across tenants', () => {
     expect(byPost.get('1750000000000000022')?.telegramChatId).toBe(CHANNEL_B);
     expect(byPost.get('1750000000000000011')?.workspaceId).toBe(DEFAULT_WORKSPACE_ID);
     expect(byPost.get('1750000000000000022')?.workspaceId).toBe(TENANT_B);
+  });
+
+  it('starts with the tenant that has waited longest', async () => {
+    await addSource(db, { platform: 'x', externalId: '111', username: 'alpha' });
+    await addSource(db, { platform: 'x', externalId: '222', username: 'beta', workspaceId: TENANT_B });
+    // Tenant 1 comes first by id, but tenant 2 has gone longer without a sync.
+    await upsertSyncState(db, { source: 'x:111', lastSyncAt: new Date('2026-10-06T10:30:00Z') });
+    await upsertSyncState(db, {
+      source: 'x:222',
+      workspaceId: TENANT_B,
+      lastSyncAt: new Date('2026-10-06T10:00:00Z'),
+    });
+
+    const x = makeXStack({});
+    await run(x, makeTelegramStack());
+
+    expect(x.fetched.map((fetch) => fetch.userId)).toEqual(['222', '111']);
   });
 
   /**
