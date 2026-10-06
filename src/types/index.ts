@@ -19,6 +19,8 @@ export interface NormalizedMedia {
   /** Video only, from the chosen variant. */
   bitRate?: number;
   contentType?: string;
+  /** Video only. X's still image of the video, for anything that needs a picture of it. */
+  previewUrl?: string;
   /** animated_gif is delivered by X as a silent MP4; we send it as a video. */
   wasAnimatedGif?: boolean;
   /**

@@ -80,6 +80,12 @@ export async function processPost(
      * is skipped, as it always was.
      */
     textOnly?: boolean;
+    /**
+     * Run just before the post is sent for review — Shadow Radar's moment to
+     * score it, ahead of any decision. It must not throw; if it does anyway,
+     * the post still goes to review.
+     */
+    beforeReview?: () => Promise<void>;
   },
 ): Promise<ProcessOutcome> {
   const env = options.env ?? getEnv();
@@ -259,6 +265,8 @@ export async function processPost(
       disableNotification: false,
     };
 
+    await runBeforeReview(options.beforeReview, logger);
+
     logger.info('approval.review_send_start', {
       xPostId: post.id,
       method,
@@ -427,6 +435,7 @@ async function processTextPost(
     sleep?: (ms: number) => Promise<void>;
     postId?: number;
     destination: TelegramDestination;
+    beforeReview?: () => Promise<void>;
   },
 ): Promise<ProcessOutcome> {
   const { env, logger } = options;
@@ -449,6 +458,8 @@ async function processTextPost(
 
   try {
     if (env.REQUIRE_APPROVAL) {
+      await runBeforeReview(options.beforeReview, logger);
+
       const review = await sendForApproval(
         {
           client: options.client,
@@ -517,6 +528,15 @@ function isPermanentTelegramError(error: unknown): boolean {
     'transient' in error &&
     (error as { transient: unknown }).transient === false
   );
+}
+
+async function runBeforeReview(hook: (() => Promise<void>) | undefined, logger: Logger) {
+  if (!hook) return;
+  try {
+    await hook();
+  } catch (error) {
+    logger.error('approval.before_review_failed', { error: describeError(error) });
+  }
 }
 
 function logDryRun(

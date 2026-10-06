@@ -160,6 +160,7 @@ export function extractMedia(post: XPost, mediaByKey: Map<string, XMedia>): {
         kind: 'video',
         url: variant.url,
         mp4Variants: listMp4Variants(item),
+        previewUrl: item.preview_image_url,
         width: item.width,
         height: item.height,
         durationSeconds: item.duration_ms ? Math.round(item.duration_ms / 1000) : undefined,

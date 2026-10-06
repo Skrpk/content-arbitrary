@@ -177,6 +177,13 @@ const schema = z
       )
       .transform((value) => (value === undefined ? undefined : value.replace(/\/+$/, ''))),
 
+    /**
+     * Turns on Shadow Radar, which scores each post sent for review (never
+     * shown, never acted on) for tenants that have an editorial profile.
+     * Unset, Radar is off and nothing else changes.
+     */
+    ANTHROPIC_API_KEY: z.string().min(1).optional().or(z.literal('').transform(() => undefined)),
+
     CRON_SECRET: z.string().min(16, 'CRON_SECRET must be at least 16 characters'),
     ADMIN_SECRET: z.string().min(16).optional().or(z.literal('').transform(() => undefined)),
 
@@ -310,6 +317,7 @@ export function redactedEnvSummary(env: Env = getEnv()) {
     requireApproval: env.REQUIRE_APPROVAL,
     hasAdminChatId: Boolean(env.TELEGRAM_ADMIN_CHAT_ID),
     hasWebhookSecret: Boolean(env.TELEGRAM_WEBHOOK_SECRET),
+    hasAnthropicApiKey: Boolean(env.ANTHROPIC_API_KEY),
     // Not a secret, and whether editing is available depends on it.
     appBaseUrl: env.APP_BASE_URL ?? null,
   } as const;

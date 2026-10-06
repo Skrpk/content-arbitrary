@@ -800,3 +800,66 @@ describe('processPost text-only posts', () => {
     expect(telegramCalls).toHaveLength(0);
   });
 });
+
+describe('processPost beforeReview hook', () => {
+  const approval = {
+    REQUIRE_APPROVAL: 'true',
+    TELEGRAM_ADMIN_CHAT_ID: '555001',
+    TELEGRAM_WEBHOOK_SECRET: 'a'.repeat(64),
+  };
+
+  const run = (
+    post: NormalizedPost,
+    hook: (sentSoFar: number) => Promise<void>,
+    env: Record<string, string | undefined>,
+  ) => {
+    const stack = makeFetch();
+    return withEnv({ DRY_RUN: 'false', ...env }, async (parsed) => ({
+      ...stack,
+      outcome: await processPost(post, {
+        client: makeClient(stack.fetchImpl),
+        logger: createTestLogger(),
+        env: parsed,
+        fetchImpl: stack.fetchImpl,
+        sleep: instantSleep,
+        postId: 7,
+        destination: testDestination(parsed, { adminChatId: '555001' }),
+        textOnly: true,
+        beforeReview: () => hook(stack.telegramCalls.length),
+      }),
+    }));
+  };
+
+  it('runs before anything is sent to the reviewer, for a media post and a text post', async () => {
+    for (const post of [makePost([photo('a')]), makePost([], 'Just words')]) {
+      const seen: number[] = [];
+      const { outcome, telegramCalls } = await run(post, async (sent) => void seen.push(sent), approval);
+
+      expect(seen).toEqual([0]);
+      expect(telegramCalls.length).toBeGreaterThan(0);
+      expect(outcome.status).toBe('awaiting-approval');
+    }
+  });
+
+  it('does not run when the post goes straight to the channel, or on a dry run', async () => {
+    const hook = vi.fn(async () => {});
+
+    await run(makePost([photo('a')]), hook, {});
+    await run(makePost([photo('a')]), hook, { ...approval, DRY_RUN: 'true' });
+    await run(makePost([], 'Just words'), hook, { ...approval, DRY_RUN: 'true' });
+
+    expect(hook).not.toHaveBeenCalled();
+  });
+
+  it('sends the post for review even if the hook throws', async () => {
+    const { outcome } = await run(
+      makePost([photo('a')]),
+      async () => {
+        throw new Error('radar exploded');
+      },
+      approval,
+    );
+
+    expect(outcome.status).toBe('awaiting-approval');
+  });
+});

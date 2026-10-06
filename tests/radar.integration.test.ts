@@ -1,0 +1,528 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import { eq } from 'drizzle-orm';
+import postgres from 'postgres';
+import * as schema from '@/db/schema';
+import {
+  DEFAULT_WORKSPACE_ID,
+  processedPosts,
+  radarEvaluations,
+  sources,
+  syncState,
+  telegramMessages,
+  workspaces,
+} from '@/db/schema';
+import { runRadarBackfill } from '@/lib/radar/backfill';
+import { loadRadarHistory } from '@/lib/radar/repository';
+import { formatRadarReport, loadReportRows } from '@/lib/radar/report';
+import { createRadarRun, runLiveRadar, type RadarSubject } from '@/lib/radar/shadow';
+import { syncPosts } from '@/lib/sync/sync-posts';
+import { TelegramClient } from '@/lib/telegram/client';
+import { XClient } from '@/lib/x/client';
+import { createTestLogger, ensureTestWorkspace, instantSleep, withEnv } from './helpers';
+import { fakeAnthropic, messageResponse, radarOutput } from './radar-fakes';
+
+/**
+ * Shadow Radar against a real database: what it may see, what it records, and
+ * that nothing it does — or fails to do — changes what happens to the post.
+ */
+
+const connectionString = process.env.TEST_DATABASE_URL;
+const describeIfDb = connectionString ? describe : describe.skip;
+
+let sql: postgres.Sql;
+let db: PostgresJsDatabase<typeof schema>;
+
+beforeAll(async () => {
+  if (!connectionString) return;
+  sql = postgres(connectionString, { max: 10, prepare: false });
+  db = drizzle(sql, { schema });
+});
+
+afterAll(async () => {
+  if (sql) await sql.end();
+});
+
+beforeEach(async () => {
+  if (!connectionString) return;
+  await db.delete(radarEvaluations);
+  await db.delete(telegramMessages);
+  await db.delete(processedPosts);
+  await db.delete(syncState);
+  await db.delete(sources);
+  await ensureTestWorkspace(db);
+});
+
+let nextPostId = 1_760_000_000_000_000_000n;
+
+/** A post the editor has (or has not yet) decided on. */
+async function decidedPost(input: {
+  decision: 'approve' | 'reject' | 'schedule' | 'pending';
+  reviewedAt?: Date;
+  createdAt?: Date;
+  text?: string;
+  workspaceId?: number;
+  approvalPayload?: schema.ApprovalPayload;
+}) {
+  nextPostId += 1n;
+  const status =
+    input.decision === 'approve'
+      ? 'published'
+      : input.decision === 'reject'
+        ? 'rejected'
+        : input.decision === 'schedule'
+          ? 'scheduled'
+          : 'awaiting_approval';
+
+  const [row] = await db
+    .insert(processedPosts)
+    .values({
+      workspaceId: input.workspaceId ?? DEFAULT_WORKSPACE_ID,
+      xPostId: String(nextPostId),
+      xPostUrl: `https://x.com/esa/status/${nextPostId}`,
+      xAuthorUsername: 'esa',
+      sourceText: input.text ?? `post ${nextPostId}`,
+      status,
+      telegramMethod: 'sendPhoto',
+      mediaCount: 1,
+      reviewedAt: input.decision === 'pending' ? null : (input.reviewedAt ?? new Date('2026-10-01T10:00:00Z')),
+      rejectionReason: input.decision === 'reject' ? 'too_minor' : null,
+      createdAt: input.createdAt ?? new Date('2026-10-01T09:00:00Z'),
+      approvalPayload: input.approvalPayload ?? null,
+    })
+    .returning();
+  return row!;
+}
+
+const at = (minutes: number) => new Date(Date.UTC(2026, 9, 1, 10, minutes));
+
+function subject(processedPostId: number, overrides: Partial<RadarSubject> = {}): RadarSubject {
+  return {
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    processedPostId,
+    profile: 'Space and sci-fi.',
+    item: { sourceUsername: 'esa', text: 'A new nebula image', media: 'photo' },
+    ...overrides,
+  };
+}
+
+const evaluations = () => db.select().from(radarEvaluations).orderBy(radarEvaluations.variant);
+
+describeIfDb('loadRadarHistory', () => {
+  it('shows only decisions made before the cutoff, never the post itself', async () => {
+    const before = await decidedPost({ decision: 'approve', reviewedAt: at(1), text: 'Decided before' });
+    await decidedPost({ decision: 'reject', reviewedAt: at(30), text: 'Decided after' });
+    await decidedPost({ decision: 'pending', text: 'Undecided' });
+    const current = await decidedPost({ decision: 'reject', reviewedAt: at(2), text: 'The post itself' });
+
+    const history = await loadRadarHistory(db, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      before: at(10),
+      excludePostId: current.id,
+      perClass: 10,
+    });
+
+    expect(history.examples.map((example) => example.text)).toEqual(['Decided before']);
+    expect(history.decisions).toBe(1);
+    expect(history.approvalRate).toBe(1);
+    expect(history.examples.map((example) => example.postId)).toContain(before.id);
+  });
+
+  it('counts a scheduled post as an approval, and keeps to its own tenant', async () => {
+    const [other] = await db.insert(workspaces).values({ name: 'other' }).returning();
+    await decidedPost({ decision: 'schedule', reviewedAt: at(1), text: 'Scheduled' });
+    await decidedPost({ decision: 'reject', reviewedAt: at(2), text: 'Rejected' });
+    await decidedPost({ decision: 'approve', reviewedAt: at(3), text: 'Another tenant', workspaceId: other!.id });
+
+    const history = await loadRadarHistory(db, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      before: at(10),
+      perClass: 10,
+    });
+
+    expect(history.examples.map((example) => [example.text, example.decision])).toEqual([
+      ['Scheduled', 'approve'],
+      ['Rejected', 'reject'],
+    ]);
+    expect(history.examples[1]!.rejectionReason).toBe('too_minor');
+    expect(history.approvalRate).toBe(0.5);
+  });
+
+  it('takes the most recent decisions of each class, up to the limit', async () => {
+    for (let minute = 1; minute <= 4; minute += 1) {
+      await decidedPost({ decision: 'approve', reviewedAt: at(minute), text: `approved ${minute}` });
+    }
+    await decidedPost({ decision: 'reject', reviewedAt: at(5), text: 'rejected' });
+
+    const history = await loadRadarHistory(db, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      before: at(10),
+      perClass: 2,
+    });
+
+    expect(history.examples.map((example) => example.text)).toEqual(['approved 4', 'approved 3', 'rejected']);
+    // The rate is over every decision, not just the examples shown.
+    expect(history.decisions).toBe(5);
+    expect(history.approvalRate).toBe(0.8);
+  });
+});
+
+describeIfDb('runLiveRadar', () => {
+  it('scores the text and the text with its image, and records both', async () => {
+    const example = await decidedPost({ decision: 'approve', reviewedAt: at(1) });
+    const post = await decidedPost({ decision: 'pending' });
+    const { client, requests } = fakeAnthropic(() => messageResponse(radarOutput({ score: 77 })));
+
+    await runLiveRadar(
+      createRadarRun({ client }),
+      db,
+      subject(post.id, { image: { kind: 'url', url: 'https://pbs.twimg.com/media/a.jpg' } }),
+      createTestLogger(),
+    );
+
+    const rows = await evaluations();
+    expect(rows.map((row) => [row.variant, row.status, row.score, row.imageIncluded])).toEqual([
+      ['text', 'ok', 77, false],
+      ['text_image', 'ok', 77, true],
+    ]);
+    expect(rows[0]).toMatchObject({
+      mode: 'live',
+      model: 'claude-haiku-4-5',
+      promptVersion: 'radar-v0',
+      examplePostIds: [example.id],
+      inputTokens: 1200,
+      outputTokens: 90,
+    });
+
+    const sentImages = requests.map((request) =>
+      JSON.stringify(request.messages).includes('"type":"image"'),
+    );
+    expect(sentImages.sort()).toEqual([false, true]);
+  });
+
+  it('scores only the text when the post has no image', async () => {
+    const post = await decidedPost({ decision: 'pending' });
+    const { client, requests } = fakeAnthropic(() => messageResponse(radarOutput()));
+
+    await runLiveRadar(createRadarRun({ client }), db, subject(post.id), createTestLogger());
+
+    expect(requests).toHaveLength(1);
+    expect((await evaluations()).map((row) => row.variant)).toEqual(['text']);
+  });
+
+  it('never scores the same post twice under the same setup', async () => {
+    const post = await decidedPost({ decision: 'pending' });
+    const { client, requests } = fakeAnthropic(() => messageResponse(radarOutput()));
+    const run = createRadarRun({ client });
+
+    await runLiveRadar(run, db, subject(post.id), createTestLogger());
+    await runLiveRadar(run, db, subject(post.id), createTestLogger());
+
+    expect(requests).toHaveLength(1);
+    expect(await evaluations()).toHaveLength(1);
+  });
+
+  it('records a failure without throwing', async () => {
+    const post = await decidedPost({ decision: 'pending' });
+    const { client } = fakeAnthropic(
+      () => new Response(JSON.stringify({ type: 'error', error: { type: 'api_error', message: 'boom' } }), { status: 500 }),
+    );
+
+    await expect(
+      runLiveRadar(createRadarRun({ client }), db, subject(post.id), createTestLogger()),
+    ).resolves.toBeUndefined();
+
+    const [row] = await evaluations();
+    expect(row).toMatchObject({ status: 'failed', score: null });
+    expect(row!.error).toBeTruthy();
+  });
+
+  it('stops calling the API once the run budget is spent, and says so', async () => {
+    const post = await decidedPost({ decision: 'pending' });
+    const { client, requests } = fakeAnthropic(() => messageResponse(radarOutput()));
+
+    await runLiveRadar(createRadarRun({ client, budgetMs: 0 }), db, subject(post.id), createTestLogger());
+
+    expect(requests).toHaveLength(0);
+    expect(await evaluations()).toMatchObject([{ status: 'skipped', error: 'run budget exhausted' }]);
+  });
+
+  it('stops for the rest of the run after repeated failures', async () => {
+    const { client, requests } = fakeAnthropic(() => new Response('{}', { status: 500 }));
+    const run = createRadarRun({ client });
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const post = await decidedPost({ decision: 'pending' });
+      await runLiveRadar(run, db, subject(post.id), createTestLogger());
+    }
+
+    // Three calls, each retried once, then no more.
+    expect(requests).toHaveLength(6);
+    const statuses = (await db.select().from(radarEvaluations)).map((row) => row.status);
+    expect(statuses.filter((status) => status === 'failed')).toHaveLength(3);
+    expect(statuses.filter((status) => status === 'skipped')).toHaveLength(2);
+  });
+});
+
+describeIfDb('Radar in the sync', () => {
+  const approvalEnv = {
+    DRY_RUN: 'false',
+    REQUIRE_APPROVAL: 'true',
+    TELEGRAM_ADMIN_CHAT_ID: '555001',
+    TELEGRAM_WEBHOOK_SECRET: 'a'.repeat(64),
+    TELEGRAM_CHAT_ID: '-1003906212630',
+  };
+
+  function stack(order: string[]) {
+    const xClient = new XClient({
+      bearerToken: 'fake',
+      baseUrl: 'https://api.x.example',
+      fetchImpl: vi.fn(async () =>
+        Response.json({
+          data: [
+            {
+              id: '1760000000000099001',
+              text: 'A rare photo of Saturn',
+              created_at: '2026-10-01T12:00:00.000Z',
+              author_id: '999',
+              attachments: { media_keys: ['3_a'] },
+            },
+          ],
+          includes: {
+            users: [{ id: '999', username: 'esa' }],
+            media: [{ media_key: '3_a', type: 'photo', url: 'https://cdn.example/a.jpg', width: 1600, height: 1200 }],
+          },
+          meta: { result_count: 1, newest_id: '1760000000000099001' },
+        }),
+      ) as unknown as typeof fetch,
+      attempts: 1,
+    });
+
+    const fetchImpl = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (!url.includes('api.telegram.example')) {
+        return new Response(new Uint8Array(256), {
+          status: 200,
+          headers: { 'content-type': 'image/jpeg', 'content-length': '256' },
+        });
+      }
+      const method = url.split('/').pop()!;
+      order.push(`telegram:${method}`);
+      return Response.json({
+        ok: true,
+        result:
+          method === 'sendPhoto'
+            ? { message_id: 30, chat: { id: 555001 }, photo: [{ file_id: 'ONE', file_size: 900 }] }
+            : { message_id: 31, chat: { id: 555001 } },
+      });
+    });
+
+    const telegramClient = new TelegramClient({
+      token: '123456:TEST',
+      baseUrl: 'https://api.telegram.example',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      attempts: 1,
+      sleep: instantSleep,
+    });
+
+    return { xClient, telegramClient, fetchImpl: fetchImpl as unknown as typeof fetch };
+  }
+
+  async function seed(profile: string | null) {
+    await db
+      .insert(sources)
+      .values({ workspaceId: DEFAULT_WORKSPACE_ID, platform: 'x', externalId: '999', username: 'esa' });
+    await db
+      .update(workspaces)
+      .set({ editorialProfile: profile })
+      .where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+  }
+
+  async function sync(order: string[], respond: () => Response) {
+    const { xClient, telegramClient, fetchImpl } = stack(order);
+    const radar = fakeAnthropic(() => {
+      order.push('radar');
+      return respond();
+    });
+
+    await withEnv(approvalEnv, (env) =>
+      syncPosts({
+        db,
+        env,
+        xClient,
+        telegramClient,
+        fetchImpl,
+        logger: createTestLogger(),
+        sleep: instantSleep,
+        skipLock: true,
+        radarRun: createRadarRun({ client: radar.client }),
+      }),
+    );
+
+    return radar;
+  }
+
+  it('scores the post before it is sent for review, and changes nothing about it', async () => {
+    await seed('Space and sci-fi.');
+    const order: string[] = [];
+
+    await sync(order, () => messageResponse(radarOutput({ score: 91 })));
+
+    // Both variants, then the review send.
+    expect(order.slice(0, 2)).toEqual(['radar', 'radar']);
+    expect(order).toContain('telegram:sendPhoto');
+
+    const [post] = await db.select().from(processedPosts);
+    expect(post!.status).toBe('awaiting_approval');
+
+    const rows = await evaluations();
+    expect(rows.map((row) => [row.variant, row.score])).toEqual([
+      ['text', 91],
+      ['text_image', 91],
+    ]);
+    expect(rows.every((row) => row.processedPostId === post!.id)).toBe(true);
+  });
+
+  it('sends the post for review exactly the same when Radar fails', async () => {
+    await seed('Space and sci-fi.');
+    const order: string[] = [];
+
+    await sync(order, () => new Response('{}', { status: 500 }));
+
+    const [post] = await db.select().from(processedPosts);
+    expect(post!.status).toBe('awaiting_approval');
+    expect((await evaluations()).every((row) => row.status === 'failed')).toBe(true);
+  });
+
+  it('leaves a tenant without an editorial profile alone', async () => {
+    await seed(null);
+    const order: string[] = [];
+
+    const radar = await sync(order, () => messageResponse(radarOutput()));
+
+    expect(radar.requests).toHaveLength(0);
+    expect(await evaluations()).toHaveLength(0);
+    const [post] = await db.select().from(processedPosts);
+    expect(post!.status).toBe('awaiting_approval');
+  });
+});
+
+describeIfDb('runRadarBackfill', () => {
+  it('scores each post with only the decisions made before it arrived', async () => {
+    // Two decisions exist before the post arrived at minute 10, one after.
+    await decidedPost({ decision: 'approve', reviewedAt: at(1), createdAt: at(0) });
+    await decidedPost({ decision: 'reject', reviewedAt: at(2), createdAt: at(0) });
+    await decidedPost({ decision: 'approve', reviewedAt: at(20), createdAt: at(15), text: 'Later one' });
+    const post = await decidedPost({ decision: 'reject', reviewedAt: at(12), createdAt: at(10), text: 'The one' });
+
+    const { client, requests } = fakeAnthropic(() => messageResponse(radarOutput()));
+    const summary = await runRadarBackfill({
+      db,
+      client,
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      profile: 'Space.',
+      minPerClass: 1,
+      logger: createTestLogger(),
+    });
+
+    const row = (await evaluations()).find((evaluation) => evaluation.processedPostId === post.id);
+    expect(row).toMatchObject({ mode: 'backfill', status: 'ok' });
+    expect(row!.examplePostIds).toHaveLength(2);
+
+    const promptForPost = requests.find((request) =>
+      JSON.stringify(request.messages).includes('The one\\n</post>'),
+    );
+    expect(JSON.stringify(promptForPost!.messages)).not.toContain('Later one');
+
+    // The first two arrived with no history behind them.
+    expect(summary.notEnoughHistory).toBe(2);
+  });
+
+  it('can be re-run without scoring anything twice', async () => {
+    await decidedPost({ decision: 'approve', reviewedAt: at(1), createdAt: at(0) });
+    await decidedPost({ decision: 'reject', reviewedAt: at(2), createdAt: at(0) });
+    await decidedPost({ decision: 'reject', reviewedAt: at(12), createdAt: at(10) });
+    const { client, requests } = fakeAnthropic(() => messageResponse(radarOutput()));
+    const options = { db, client, workspaceId: DEFAULT_WORKSPACE_ID, profile: 'Space.', minPerClass: 1, logger: createTestLogger() };
+
+    await runRadarBackfill(options);
+    const second = await runRadarBackfill(options);
+
+    expect(requests).toHaveLength(1);
+    expect(second.alreadyScored).toBe(1);
+  });
+
+  it('shows the photo the reviewer got, fetched from Telegram', async () => {
+    await decidedPost({ decision: 'approve', reviewedAt: at(1), createdAt: at(0) });
+    await decidedPost({ decision: 'reject', reviewedAt: at(2), createdAt: at(0) });
+    await decidedPost({
+      decision: 'approve',
+      reviewedAt: at(12),
+      createdAt: at(10),
+      approvalPayload: { method: 'sendPhoto', caption: 'c', items: [{ kind: 'photo', fileId: 'PHOTO_1' }] },
+    });
+
+    const telegramFetch = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith('/getFile')) return Response.json({ ok: true, result: { file_path: 'photos/file_1.jpg' } });
+      return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+    });
+    const telegram = new TelegramClient({
+      token: '123456:TEST',
+      baseUrl: 'https://api.telegram.example',
+      fetchImpl: telegramFetch as unknown as typeof fetch,
+      attempts: 1,
+      sleep: instantSleep,
+    });
+    const { client, requests } = fakeAnthropic(() => messageResponse(radarOutput()));
+
+    await runRadarBackfill({
+      db,
+      client,
+      telegram,
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      profile: 'Space.',
+      minPerClass: 1,
+      logger: createTestLogger(),
+    });
+
+    expect(telegramFetch).toHaveBeenCalledWith(
+      'https://api.telegram.example/file/bot123456:TEST/photos/file_1.jpg',
+      expect.anything(),
+    );
+    const imageRequest = requests.find((request) => JSON.stringify(request.messages).includes('"type":"image"'));
+    expect(JSON.stringify(imageRequest!.messages)).toContain('"media_type":"image/jpeg","data":"AQID"');
+    expect((await evaluations()).map((row) => [row.variant, row.imageIncluded])).toEqual([
+      ['text', false],
+      ['text_image', true],
+    ]);
+  });
+});
+
+describeIfDb('Radar report', () => {
+  it('measures backfill scores against the decisions, and counts live ones only if made first', async () => {
+    const approvedHigh = await decidedPost({ decision: 'approve', reviewedAt: at(30) });
+    const rejectedLow = await decidedPost({ decision: 'reject', reviewedAt: at(30) });
+    const scoredLate = await decidedPost({ decision: 'approve', reviewedAt: at(1) });
+
+    const base = { workspaceId: DEFAULT_WORKSPACE_ID, model: 'claude-haiku-4-5', promptVersion: 'radar-v0', status: 'ok' as const };
+    await db.insert(radarEvaluations).values([
+      { ...base, processedPostId: approvedHigh.id, mode: 'backfill', variant: 'text', score: 85, predictedDecision: 'approve', inputTokens: 1_000_000, outputTokens: 0 },
+      { ...base, processedPostId: rejectedLow.id, mode: 'backfill', variant: 'text', score: 20, predictedDecision: 'reject' },
+      { ...base, processedPostId: approvedHigh.id, mode: 'live', variant: 'text', score: 85, predictedDecision: 'approve', createdAt: at(5) },
+      // Scored after the editor had already decided: not a prediction.
+      { ...base, processedPostId: scoredLate.id, mode: 'live', variant: 'text', score: 90, predictedDecision: 'approve', createdAt: at(5) },
+    ]);
+
+    const report = formatRadarReport(await loadReportRows(db, DEFAULT_WORKSPACE_ID));
+
+    const sections = report.split(/\n+(?===)/);
+    const backfill = sections.find((section) => section.startsWith('== backfill · text'))!;
+    expect(backfill).toContain('Editor approved: 1 of 2 (50%)');
+    expect(backfill).toContain('Separation (AUC): 1.00');
+    expect(backfill).toContain('Tokens: 1000000 in, 0 out ≈ $1.00');
+
+    const live = sections.find((section) => section.startsWith('== live · text'))!;
+    expect(live).toContain('Decided and counted: 1');
+  });
+});

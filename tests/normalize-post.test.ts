@@ -241,6 +241,19 @@ describe('extractMedia', () => {
     expect(media[0]).toMatchObject({ kind: 'video', wasAnimatedGif: true });
   });
 
+  it('keeps the still image X offers for a video', () => {
+    const post = { id: '1', text: '', attachments: { media_keys: ['7_p'] } } as XPost;
+    const video: XMedia = {
+      media_key: '7_p',
+      type: 'video',
+      preview_image_url: 'https://pbs.twimg.com/ext_tw_video_thumb/7_p.jpg',
+      variants: [{ bit_rate: 1, content_type: 'video/mp4', url: 'https://v/x.mp4' }],
+    };
+
+    const { media } = extractMedia(post, new Map([['7_p', video]]));
+    expect(media[0]!.previewUrl).toBe('https://pbs.twimg.com/ext_tw_video_thumb/7_p.jpg');
+  });
+
   it('handles a mixed photo + video post', () => {
     const post = { id: '1', text: '', attachments: { media_keys: ['3_a', '7_a'] } } as XPost;
     const video: XMedia = {

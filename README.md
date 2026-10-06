@@ -38,6 +38,7 @@ X account ──► /api/cron/sync ──► media download ──► Telegram B
 - [Q. Telegram 429 and retry_after](#q-telegram-429-and-retry_after)
 - [R. When X does not return the media you expect](#r-when-x-does-not-return-the-media-you-expect)
 - [Multiple channels](#multiple-channels)
+- [Shadow Radar](#shadow-radar)
 - [Configuration reference](#configuration-reference)
 - [Architecture decisions](#architecture-decisions)
 - [Project structure](#project-structure)
@@ -884,6 +885,70 @@ when it actually went out.
 `/api/cron/sync` reports an `awaitingApproval` count alongside `published`, and `/api/status`
 shows both statuses in its counts and recent posts.
 
+## Shadow Radar
+
+An experiment: can a model predict which posts the editor will publish? Radar scores each post
+on its way to the reviewer and records the prediction — and does nothing else. The reviewer never
+sees the score, nothing is filtered, reordered or delayed, and a Radar failure leaves the post
+exactly as it would have been. Whether the scores are any good is then measured against the
+decisions the editor makes on their own.
+
+**What it sees.** The tenant's `editorial_profile` (a few lines, in the editor's words, on what the
+channel publishes and what it turns down), the editor's 10 most recent approvals and 10 most recent
+rejections with their reasons, the share of posts they approve, and the post: its source, text and
+kind of media. Each post is scored twice when it has a picture — on the text alone and on the
+text with its first photo (or a video's still) — to find out whether the image is worth paying for.
+
+**What it records**, in `radar_evaluations`: a 0–100 score (the probability the editor publishes
+it), the predicted decision and rejection reason, three sub-scores, a one-sentence reason, which
+past decisions it was shown, the model and prompt version, and the tokens it cost. Failed and
+skipped attempts are rows too, so coverage is visible.
+
+**Limits.** It runs inside the sync, so it has a 20-second timeout per call and two minutes per
+run; after three failures in a row it stops for that run. Posts it did not get to go to review
+unscored. It uses Claude Haiku 4.5.
+
+### Turning it on
+
+1. Add `ANTHROPIC_API_KEY` in Vercel (and in your local `.env` for the scripts below).
+2. Run `npm run db:migrate`.
+3. Write the channel's profile:
+
+   ```sql
+   UPDATE workspaces SET editorial_profile = '...' WHERE id = 2;
+   ```
+
+   Setting it back to `NULL` turns Radar off for that tenant.
+
+### Scoring past decisions
+
+```bash
+npm run radar:backfill -- --workspace 2
+```
+
+Scores posts the editor has already decided, each with only the decisions made before it arrived —
+what a live Radar would have seen — so the result measures prediction, not hindsight. Posts that
+arrived before there were five approvals and five rejections behind them are left out. Photos are
+fetched from Telegram (videos are scored on their text); `--text-only` skips that, `--limit N`
+scores the first N. It can be stopped and re-run: posts already scored are skipped.
+
+### Reading the results
+
+```bash
+npm run radar:report -- --workspace 2
+```
+
+Per mode (live, backfill) and variant: how often the editor approved, the mean score of approved
+and rejected posts, how well the scores separate them (AUC: 0.5 is chance, 1.0 perfect),
+precision at 80, recall at 50, approval rate by score band, and — for a few thresholds — how much
+review work hiding the posts below it would save and how many approved posts it would have hidden.
+A live score made after the editor had already decided is not counted. Text against text-and-image
+is compared on the same posts only.
+
+Change the prompt and bump `RADAR_PROMPT_VERSION` in
+[`src/lib/radar/prompt.ts`](src/lib/radar/prompt.ts): results of different prompts are reported
+separately and never mixed.
+
 ## Configuration reference
 
 | Variable | Default | Description |
@@ -903,6 +968,7 @@ shows both statuses in its counts and recent posts.
 | `TELEGRAM_WEBHOOK_SECRET` | — | ≥ 16 chars, `A-Z a-z 0-9 _ -` only. Required when `REQUIRE_APPROVAL` is on. |
 | `APP_BASE_URL` | — | Public HTTPS origin, e.g. `https://your-app.vercel.app`. Enables the Edit button; without it review works unchanged. |
 | `ADMIN_SECRET` | falls back to `CRON_SECRET` | Protects `/api/status`. |
+| `ANTHROPIC_API_KEY` | — | Turns on [Shadow Radar](#shadow-radar) for tenants with an editorial profile. Unset, Radar is off. |
 | `CAPTION_PREFIX` | empty | Text prepended, separated by a blank line. |
 | `CAPTION_SUFFIX` | empty | Text appended, separated by a blank line. |
 | `INCLUDE_SOURCE_LINK` | `true` | Append `Source: https://x.com/…`. |

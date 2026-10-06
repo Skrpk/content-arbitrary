@@ -21,7 +21,9 @@ import {
 import type { XClient } from '@/lib/x/client';
 import { compareSnowflake, getNewPosts } from '@/lib/x/get-new-posts';
 import type { TelegramDestination } from '@/lib/workspace';
-import type { SourceSyncSummary } from '@/types';
+import type { NormalizedPost, SourceSyncSummary } from '@/types';
+import { describeMedia, type RadarImage } from '@/lib/radar/prompt';
+import { runLiveRadar, type RadarRun } from '@/lib/radar/shadow';
 
 /**
  * One synchronisation pass over a single X account.
@@ -42,6 +44,8 @@ export interface SourceSyncContext {
   fetchImpl?: typeof fetch;
   /** The tenant's channel and reviewer, resolved once per workspace. */
   destination: TelegramDestination;
+  /** Set when Shadow Radar scores this tenant's posts before review. */
+  radar?: { run: RadarRun; profile: string };
 }
 
 export async function syncXSource(
@@ -180,6 +184,25 @@ export async function syncXSource(
           postId: claim.row.id,
           destination: context.destination,
           textOnly: source.includeTextOnly,
+          beforeReview: context.radar
+            ? () =>
+                runLiveRadar(
+                  context.radar!.run,
+                  db,
+                  {
+                    workspaceId: source.workspaceId,
+                    processedPostId: claim.row!.id,
+                    profile: context.radar!.profile,
+                    item: {
+                      sourceUsername: post.authorUsername,
+                      text: post.text,
+                      media: describeMedia(post.media),
+                    },
+                    image: firstImage(post),
+                  },
+                  postLogger,
+                )
+            : undefined,
         });
 
         if (outcome.status === 'published') {
@@ -301,4 +324,12 @@ export async function syncXSource(
 
     return summary;
   }
+}
+
+/** The picture Radar is shown: the first photo, or the first video's still. */
+function firstImage(post: NormalizedPost): RadarImage | undefined {
+  const first = post.media[0];
+  if (!first) return undefined;
+  const url = first.kind === 'photo' ? first.url : first.previewUrl;
+  return url ? { kind: 'url', url } : undefined;
 }

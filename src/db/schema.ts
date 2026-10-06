@@ -39,6 +39,12 @@ export const workspaces = pgTable('workspaces', {
    * before `sources` existed.
    */
   legacySourceImportedAt: timestamp('legacy_source_imported_at', { withTimezone: true }),
+  /**
+   * What this channel publishes and what its editor turns down, in the
+   * editor's words. Shadow Radar scores posts against it; null leaves Radar
+   * off for the tenant.
+   */
+  editorialProfile: text('editorial_profile'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
@@ -367,6 +373,86 @@ export const syncState = pgTable(
    */
   (table) => [uniqueIndex('sync_state_workspace_source_key').on(table.workspaceId, table.source)],
 );
+
+export const RADAR_MODES = ['live', 'backfill'] as const;
+export type RadarMode = (typeof RADAR_MODES)[number];
+
+/** What Radar was shown: the text alone, or the text and the post's first image. */
+export const RADAR_VARIANTS = ['text', 'text_image'] as const;
+export type RadarVariant = (typeof RADAR_VARIANTS)[number];
+
+export const RADAR_STATUSES = ['ok', 'failed', 'skipped'] as const;
+export type RadarStatus = (typeof RADAR_STATUSES)[number];
+
+/**
+ * Shadow Radar's predictions: how likely the editor is to publish a post.
+ *
+ * Recorded, never shown to the reviewer and never acted on — the experiment is
+ * whether the prediction matches the decision the editor then makes on their
+ * own. A `live` row is written before the post is sent for review, so it is an
+ * honest prediction; a `backfill` row was scored afterwards, from history, and
+ * must never be counted with the live ones.
+ *
+ * A failed or skipped attempt is a row too, so coverage can be measured rather
+ * than hidden behind the scores that did come back.
+ */
+export const radarEvaluations = pgTable(
+  'radar_evaluations',
+  {
+    id: serial('id').primaryKey(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    processedPostId: integer('processed_post_id')
+      .notNull()
+      .references(() => processedPosts.id, { onDelete: 'cascade' }),
+    mode: text('mode', { enum: RADAR_MODES }).notNull(),
+    variant: text('variant', { enum: RADAR_VARIANTS }).notNull(),
+    status: text('status', { enum: RADAR_STATUSES }).notNull(),
+    model: text('model').notNull(),
+    promptVersion: text('prompt_version').notNull(),
+
+    /** 0–100: how likely the editor is to publish it. Null unless `ok`. */
+    score: integer('score'),
+    predictedDecision: text('predicted_decision', { enum: ['approve', 'reject'] }),
+    topicFit: integer('topic_fit'),
+    editorialFit: integer('editorial_fit'),
+    importance: integer('importance'),
+    reason: text('reason'),
+    predictedRejectionReason: rejectionReasonEnum('predicted_rejection_reason'),
+
+    /** Whether an image actually went with the text_image variant. */
+    imageIncluded: boolean('image_included').notNull().default(false),
+    /** The past decisions shown as examples, so a miss can be traced to its context. */
+    examplePostIds: integer('example_post_ids').array().notNull().default(sql`'{}'::integer[]`),
+
+    inputTokens: integer('input_tokens'),
+    outputTokens: integer('output_tokens'),
+    latencyMs: integer('latency_ms'),
+    error: text('error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // One prediction per post per setup: a retried post is not scored twice.
+    uniqueIndex('radar_evaluations_post_setup_key').on(
+      table.processedPostId,
+      table.mode,
+      table.variant,
+      table.model,
+      table.promptVersion,
+    ),
+    index('radar_evaluations_workspace_idx').on(table.workspaceId),
+    check('radar_evaluations_mode_check', sql`${table.mode} IN ('live', 'backfill')`),
+    check('radar_evaluations_variant_check', sql`${table.variant} IN ('text', 'text_image')`),
+    check('radar_evaluations_status_check', sql`${table.status} IN ('ok', 'failed', 'skipped')`),
+    check(
+      'radar_evaluations_prediction_check',
+      sql`${table.status} <> 'ok' OR (${table.score} BETWEEN 0 AND 100 AND ${table.predictedDecision} IN ('approve', 'reject'))`,
+    ),
+  ],
+);
+
+export type RadarEvaluation = typeof radarEvaluations.$inferSelect;
 
 /** One asset already uploaded to Telegram, addressable by file_id. */
 export interface ApprovalMediaItem {

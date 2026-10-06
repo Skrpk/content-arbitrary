@@ -347,6 +347,40 @@ export class TelegramClient {
     return this.call('deleteWebhook', { drop_pending_updates: true }, z.boolean());
   }
 
+  /**
+   * Fetch the bytes of a file Telegram stores, by file_id. Telegram serves bots
+   * files of up to 20 MB this way.
+   *
+   * The download URL carries the bot token, so it is never logged or put in
+   * an error message.
+   */
+  async downloadFile(fileId: string): Promise<{ bytes: Uint8Array; filePath: string }> {
+    const file = await this.call(
+      'getFile',
+      { file_id: fileId },
+      z.object({ file_path: z.string().optional() }),
+    );
+    if (!file.file_path) {
+      throw new TelegramApiError('Telegram returned no file_path for the file', {
+        transient: false,
+        code: 'telegram_no_file_path',
+      });
+    }
+
+    const response = await this.fetchImpl(`${this.baseUrl}/file/bot${this.token}/${file.file_path}`, {
+      cache: 'no-store',
+    });
+    if (!response.ok) {
+      throw new TelegramApiError(`Telegram file download failed (HTTP ${response.status})`, {
+        transient: response.status >= 500,
+        code: 'telegram_file_download_failed',
+        status: response.status,
+      });
+    }
+
+    return { bytes: new Uint8Array(await response.arrayBuffer()), filePath: file.file_path };
+  }
+
   getWebhookInfo() {
     return this.call(
       'getWebhookInfo',

@@ -91,6 +91,7 @@ export async function ensureTestWorkspace(db: Database): Promise<void> {
         legacySourceImportedAt: null,
         telegramChatId: null,
         telegramAdminChatId: null,
+        editorialProfile: null,
       },
     });
 }

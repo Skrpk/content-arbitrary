@@ -215,6 +215,19 @@ describe('redactedEnvSummary', () => {
       expect(serialised).not.toContain(env.DATABASE_URL);
     });
   });
+
+  it('reports the Anthropic key only as present or not', async () => {
+    const key = 'sk-ant-api03-secretsecretsecret';
+    await withEnv({ ANTHROPIC_API_KEY: key }, (env) => {
+      const summary = redactedEnvSummary(env);
+      expect(summary.hasAnthropicApiKey).toBe(true);
+      expect(JSON.stringify(summary)).not.toContain(key);
+    });
+    await withEnv({ ANTHROPIC_API_KEY: '' }, (env) => {
+      expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(redactedEnvSummary(env).hasAnthropicApiKey).toBe(false);
+    });
+  });
 });
 
 describe('log scrubbing', () => {
@@ -232,6 +245,11 @@ describe('log scrubbing', () => {
     expect(scrub('authorization: Bearer AAAAAAAAAAAAAAAAAAAAAMLheAAAAAAA0%2B')).not.toContain(
       'AAAAAAAAAAAAAAAAAAAAAMLheAAAAAAA',
     );
+  });
+
+  it('masks an Anthropic API key', () => {
+    const key = 'sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789';
+    expect(scrub(`request failed for ${key}`)).not.toContain('AbCdEfGh');
   });
 
   it('masks credentials in a postgres connection string', () => {

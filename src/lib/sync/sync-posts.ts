@@ -15,6 +15,7 @@ import {
 import { acquireSyncLock } from '@/lib/sync/locks';
 import { attributePostsToSource, getSyncState } from '@/lib/sync/repository';
 import { defaultSleep } from '@/lib/sync/retry';
+import { createRadarRun, type RadarRun } from '@/lib/radar/shadow';
 import { syncXSource } from '@/lib/sync/sync-x-source';
 import {
   channelLabelFor,
@@ -58,6 +59,8 @@ export interface SyncOptions {
   fetchImpl?: typeof fetch;
   /** Skip the advisory lock (used by the local CLI runner). */
   skipLock?: boolean;
+  /** Overrides Shadow Radar's run (and so its API client); injected by tests. */
+  radarRun?: RadarRun;
 }
 
 export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary> {
@@ -96,6 +99,12 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
   try {
     const xClient = options.xClient ?? new XClient({ logger });
     const telegramClient = options.telegramClient ?? new TelegramClient({ logger });
+
+    // Shadow Radar only ever scores posts on their way to a reviewer.
+    const radarRun =
+      env.REQUIRE_APPROVAL && !env.DRY_RUN && (options.radarRun || env.ANTHROPIC_API_KEY)
+        ? (options.radarRun ?? createRadarRun({ apiKey: env.ANTHROPIC_API_KEY }))
+        : null;
 
     // Sources, posts and cursors are all scoped to it, so it has to exist first.
     const defaultWorkspace = await ensureDefaultWorkspace(db, env, logger);
@@ -178,6 +187,10 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
             sleep,
             fetchImpl: options.fetchImpl,
             destination: resolved.destination,
+            radar:
+              radarRun && tenant.editorialProfile?.trim()
+                ? { run: radarRun, profile: tenant.editorialProfile }
+                : undefined,
           });
 
           summary.sources.push(sourceSummary);
