@@ -78,10 +78,11 @@ export async function processPost(
     textOnly?: boolean;
     /**
      * Run just before the post is sent for review — Shadow Radar's moment to
-     * score it, ahead of any decision. It must not throw; if it does anyway,
-     * the post still goes to review.
+     * score it, ahead of any decision. What it returns is shown under the link
+     * on the review message. It must not throw; if it does anyway, the post
+     * still goes to review, without a note.
      */
-    beforeReview?: () => Promise<void>;
+    beforeReview?: () => Promise<string | null | void>;
     /**
      * The post's text in the channel's language, or null to keep it as it is.
      * Asked only for a post about to be sent — alongside beforeReview — and it
@@ -273,7 +274,7 @@ export async function processPost(
     };
 
     // Scored on the original, translated meanwhile: neither waits for the other.
-    const [translated] = await Promise.all([
+    const [translated, radarNote] = await Promise.all([
       translateText(options.translate, post.text, logger),
       runBeforeReview(options.beforeReview, logger),
     ]);
@@ -298,6 +299,7 @@ export async function processPost(
           payloads,
           ...reviewLinks(env.APP_BASE_URL, options.postId!),
           channelLabel: options.destination.channelLabel,
+          radarNote,
         },
         { logger, sleep },
       );
@@ -452,7 +454,7 @@ async function processTextPost(
     sleep?: (ms: number) => Promise<void>;
     postId?: number;
     destination: TelegramDestination;
-    beforeReview?: () => Promise<void>;
+    beforeReview?: () => Promise<string | null | void>;
     translate?: (text: string) => Promise<string | null>;
     footer?: PostFooter | null;
   },
@@ -480,7 +482,7 @@ async function processTextPost(
 
   try {
     if (env.REQUIRE_APPROVAL) {
-      const [translated] = await Promise.all([
+      const [translated, radarNote] = await Promise.all([
         translateText(options.translate, post.text, logger),
         runBeforeReview(options.beforeReview, logger),
       ]);
@@ -501,6 +503,7 @@ async function processTextPost(
           payloads: [],
           ...reviewLinks(env.APP_BASE_URL, options.postId!),
           channelLabel: options.destination.channelLabel,
+          radarNote,
         },
         { logger, sleep: options.sleep },
       );
@@ -583,12 +586,17 @@ async function translateText(
   }
 }
 
-async function runBeforeReview(hook: (() => Promise<void>) | undefined, logger: Logger) {
-  if (!hook) return;
+/** Run the pre-review hook; its note for the review message, or null — whatever goes wrong. */
+async function runBeforeReview(
+  hook: (() => Promise<string | null | void>) | undefined,
+  logger: Logger,
+): Promise<string | null> {
+  if (!hook) return null;
   try {
-    await hook();
+    return (await hook()) ?? null;
   } catch (error) {
     logger.error('approval.before_review_failed', { error: describeError(error) });
+    return null;
   }
 }
 

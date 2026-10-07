@@ -181,17 +181,20 @@ export function buildScheduledKeyboard(
 /**
  * The text of the message carrying a post's review buttons. `channel` names
  * the destination for a reviewer of several channels; omitted otherwise.
+ * `radarNote` is Radar's score for the post, as plain text, under a blank line.
  */
 export function formatReviewControlText(
   sourceUsername: string | null,
   xPostUrl: string,
   channel?: string | null,
+  radarNote?: string | null,
 ): string {
   return formatMessageText(
     [
       ...(channel ? [`📢 ${channel}`] : []),
       ...(sourceUsername ? [`Source: @${sourceUsername.replace(/^@/, '')}`] : []),
       xPostUrl,
+      ...(radarNote ? ['', radarNote] : []),
     ].join('\n'),
   );
 }
@@ -234,10 +237,11 @@ export function formatScheduledNotice(input: {
   sourceUsername: string | null;
   xPostUrl: string;
   channel?: string | null;
+  radarNote?: string | null;
 }): string {
   return [
     `🕒 Scheduled for ${escapeHtml(formatScheduleTime(input.scheduledFor, input.timezone))}`,
-    formatReviewControlText(input.sourceUsername, input.xPostUrl, input.channel),
+    formatReviewControlText(input.sourceUsername, input.xPostUrl, input.channel, input.radarNote),
   ].join('\n');
 }
 
@@ -347,6 +351,8 @@ export interface ReviewRequest {
   scheduleUrl?: string;
   /** The destination channel's name, for a reviewer of several channels. */
   channelLabel?: string | null;
+  /** Radar's score for the post, shown under the link; omitted when there is none. */
+  radarNote?: string | null;
 }
 
 export interface ReviewResult {
@@ -434,7 +440,7 @@ export async function sendForApproval(
 
   const control = await sendText(
     { ...context, replyMarkup: keyboard },
-    formatReviewControlText(request.sourceUsername, request.xPostUrl, request.channelLabel),
+    formatReviewControlText(request.sourceUsername, request.xPostUrl, request.channelLabel, request.radarNote),
     { replyToMessageId: previewMessages[0]?.message_id },
   );
   const buttonMessageId = control.message_id;

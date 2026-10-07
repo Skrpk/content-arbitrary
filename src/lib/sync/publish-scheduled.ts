@@ -1,3 +1,4 @@
+import { loadRadarNote } from '@/lib/radar/review-note';
 import type { Database } from '@/lib/db';
 import type { Env } from '@/lib/env';
 import { describeError } from '@/lib/errors';
@@ -110,6 +111,7 @@ export async function publishDueScheduledPosts(input: {
                 row.xAuthorUsername,
                 row.xPostUrl,
                 channel ? channelLabelFor(channel, reviewerWorkspaces.length) : null,
+                await loadRadarNote(db, row.id).catch(() => null),
               ),
             ].join('\n'),
             TELEGRAM_PARSE_MODE,

@@ -1,3 +1,4 @@
+import { loadRadarNote } from '@/lib/radar/review-note';
 import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { getDb, type Database } from '@/lib/db';
@@ -317,6 +318,7 @@ export async function POST(request: Request): Promise<Response> {
             result.row.xAuthorUsername,
             result.row.xPostUrl,
             channelLabelFor(workspace, reviewerWorkspaces.length),
+            await loadRadarNote(db, result.row.id).catch(() => null),
           ),
           TELEGRAM_PARSE_MODE,
           buildApprovalKeyboard(result.row.id, reviewLinks(env.APP_BASE_URL, result.row.id)),

@@ -23,6 +23,7 @@ import { compareSnowflake, getNewPosts } from '@/lib/x/get-new-posts';
 import type { TelegramDestination } from '@/lib/workspace';
 import type { NormalizedPost, SourceSyncSummary } from '@/types';
 import { describeMedia, type RadarImage } from '@/lib/radar/prompt';
+import { loadRadarNote } from '@/lib/radar/review-note';
 import { runLiveRadar, type RadarRun } from '@/lib/radar/shadow';
 import { translateForReview, type Translator } from '@/lib/translation/translate';
 import type { PostFooter } from '@/lib/telegram/post-footer';
@@ -226,8 +227,8 @@ export async function syncXSource(
             ? (text) => translateForReview(context.translator!, text, postLogger)
             : undefined,
           beforeReview: context.radar
-            ? () =>
-                runLiveRadar(
+            ? async () => {
+                await runLiveRadar(
                   context.radar!.run,
                   db,
                   {
@@ -242,7 +243,10 @@ export async function syncXSource(
                     image: firstImage(post),
                   },
                   postLogger,
-                )
+                );
+                // The score just recorded, for the reviewer to see beside the buttons.
+                return loadRadarNote(db, claim.row!.id);
+              }
             : undefined,
         });
 

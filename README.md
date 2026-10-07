@@ -951,10 +951,17 @@ later applies to posts that arrive after.
 ## Shadow Radar
 
 An experiment: can a model predict which posts the editor will publish? Radar scores each post
-on its way to the reviewer and records the prediction — and does nothing else. The reviewer never
-sees the score, nothing is filtered, reordered or delayed, and a Radar failure leaves the post
-exactly as it would have been. Whether the scores are any good is then measured against the
-decisions the editor makes on their own.
+on its way to the reviewer and records the prediction. Nothing is filtered, reordered or
+delayed, and a Radar failure leaves the post exactly as it would have been. Whether the scores
+are any good is measured against the decisions the editor makes.
+
+**On the review message.** Under the link, the message with the buttons shows the score, the
+predicted decision, Radar's one-line reason, and a ♻️ flag when it thinks the channel may have
+covered this already — e.g. `📡 Radar 82/100 · likely approve`. It is the live score from
+`radar-v3-retrieval-approved` on the text alone when there is one (the best match so far),
+falling back to the other versions; a post Radar could not score shows no note. A hint only:
+every post still comes to review. Seeing it can sway a decision, so decisions made since it was
+shown (8 October 2026) are a little less independent a test of Radar than those before.
 
 **What it sees.** The tenant's `editorial_profile` (a few lines, in the editor's words, on what the
 channel publishes and what it turns down), the

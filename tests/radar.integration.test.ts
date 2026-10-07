@@ -13,8 +13,9 @@ import {
   workspaces,
 } from '@/db/schema';
 import { ingestRadarBatch, submitRadarBackfill, waitForBatch } from '@/lib/radar/backfill';
-import { loadRadarHistory } from '@/lib/radar/repository';
-import { RADAR_PROMPT_BASELINE } from '@/lib/radar/prompt';
+import { RADAR_PROMPT_APPROVED, RADAR_PROMPT_BASELINE, RADAR_PROMPT_RETRIEVAL } from '@/lib/radar/prompt';
+import { findReviewScore, formatRadarNote } from '@/lib/radar/review-note';
+import { insertRadarEvaluation, loadRadarHistory } from '@/lib/radar/repository';
 
 /** These tests are about one prompt; both side by side are tested in radar-retrieval. */
 const BASELINE_ONLY = [RADAR_PROMPT_BASELINE] as const;
@@ -287,7 +288,11 @@ describeIfDb('Radar in the sync', () => {
     TELEGRAM_CHAT_ID: '-1003906212630',
   };
 
+  /** Text of each sendMessage, in order — the review message's among them. */
+  let sentTexts: string[] = [];
+
   function stack(order: string[]) {
+    sentTexts = [];
     const xClient = new XClient({
       bearerToken: 'fake',
       baseUrl: 'https://api.x.example',
@@ -312,7 +317,7 @@ describeIfDb('Radar in the sync', () => {
       attempts: 1,
     });
 
-    const fetchImpl = vi.fn(async (input: unknown) => {
+    const fetchImpl = vi.fn(async (input: unknown, init?: RequestInit) => {
       const url = String(input);
       if (!url.includes('api.telegram.example')) {
         return new Response(new Uint8Array(256), {
@@ -322,6 +327,9 @@ describeIfDb('Radar in the sync', () => {
       }
       const method = url.split('/').pop()!;
       order.push(`telegram:${method}`);
+      if (method === 'sendMessage' && typeof init?.body === 'string') {
+        sentTexts.push((JSON.parse(init.body) as { text: string }).text);
+      }
       return Response.json({
         ok: true,
         result:
@@ -399,6 +407,18 @@ describeIfDb('Radar in the sync', () => {
     expect(rows.every((row) => row.processedPostId === post!.id)).toBe(true);
   });
 
+  it('shows its score on the message with the buttons, escaped like any text', async () => {
+    await seed('Space and sci-fi.');
+
+    await sync([], () =>
+      messageResponse(radarOutput({ score: 77, predicted_decision: 'approve', reason: 'Fits <the> channel & tone.' })),
+    );
+
+    const control = sentTexts.at(-1)!;
+    expect(control).toContain('https://x.com/esa/status/1760000000000099001\n\n📡 Radar 77/100 · likely approve');
+    expect(control).toContain('Fits &lt;the&gt; channel &amp; tone.');
+  });
+
   it('sends the post for review exactly the same when Radar fails', async () => {
     await seed('Space and sci-fi.');
     const order: string[] = [];
@@ -408,6 +428,8 @@ describeIfDb('Radar in the sync', () => {
     const [post] = await db.select().from(processedPosts);
     expect(post!.status).toBe('awaiting_approval');
     expect((await evaluations()).every((row) => row.status === 'failed')).toBe(true);
+    // No score, so no note — just the link.
+    expect(sentTexts.at(-1)).not.toContain('Radar');
   });
 
   async function syncTranslated(language: string | null) {
@@ -770,6 +792,73 @@ describe.each(['openai', 'anthropic'] as const)('Radar backfill through the %s b
       expect(statuses[0]).toMatch(/^in_progress/);
       expect(statuses[1]).toMatch(/^(ended|completed)/);
     });
+  });
+});
+
+describeIfDb('the score on the review message', () => {
+  async function scored(
+    postId: number,
+    rows: { version: string; variant?: 'text' | 'text_image'; mode?: 'live' | 'backfill'; score: number; ok?: boolean }[],
+  ) {
+    for (const row of rows) {
+      const ok = row.ok ?? true;
+      await insertRadarEvaluation(db, {
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        processedPostId: postId,
+        mode: row.mode ?? 'live',
+        variant: row.variant ?? 'text',
+        status: ok ? 'ok' : 'failed',
+        model: 'gpt-6-luna',
+        promptVersion: row.version,
+        score: ok ? row.score : null,
+        predictedDecision: ok ? (row.score >= 50 ? 'approve' : 'reject') : null,
+        reason: ok ? `scored by ${row.version}` : null,
+      });
+    }
+  }
+
+  it('is the live score from the most trusted prompt, on the text alone', async () => {
+    const post = await decidedPost({ decision: 'pending' });
+    await scored(post.id, [
+      { version: RADAR_PROMPT_BASELINE, score: 20 },
+      { version: RADAR_PROMPT_APPROVED, score: 70 },
+      { version: RADAR_PROMPT_APPROVED, variant: 'text_image', score: 40 },
+      { version: RADAR_PROMPT_RETRIEVAL, score: 60 },
+      { version: RADAR_PROMPT_APPROVED, mode: 'backfill', variant: 'text_image', score: 99 },
+    ]);
+
+    expect(await findReviewScore(db, post.id)).toMatchObject({ score: 70, predictedDecision: 'approve' });
+  });
+
+  it('falls back to what there is, and is nothing without a score that came back', async () => {
+    const post = await decidedPost({ decision: 'pending' });
+    await scored(post.id, [
+      { version: RADAR_PROMPT_APPROVED, score: 0, ok: false },
+      { version: RADAR_PROMPT_BASELINE, variant: 'text_image', score: 35 },
+    ]);
+    expect(await findReviewScore(db, post.id)).toMatchObject({ score: 35, predictedDecision: 'reject' });
+
+    const unscored = await decidedPost({ decision: 'pending' });
+    expect(await findReviewScore(db, unscored.id)).toBeNull();
+  });
+
+  it('reads as a short note, flagged when it may repeat the channel', () => {
+    expect(
+      formatRadarNote({ score: 82, predictedDecision: 'approve', reason: 'Fits.', possiblyAlreadyCovered: true }),
+    ).toBe('📡 Radar 82/100 · likely approve\n♻️ May already be covered in the channel\nFits.');
+    expect(
+      formatRadarNote({ score: 12, predictedDecision: 'reject', reason: null, possiblyAlreadyCovered: false }),
+    ).toBe('📡 Radar 12/100 · likely reject');
+
+    const long = formatRadarNote({
+      score: 50,
+      predictedDecision: 'approve',
+      reason: 'word '.repeat(100),
+      possiblyAlreadyCovered: false,
+    })!;
+    expect(long.split('\n')[1]!.length).toBeLessThanOrEqual(200);
+    expect(long.endsWith('…')).toBe(true);
+    expect(formatRadarNote(null)).toBeNull();
   });
 });
 

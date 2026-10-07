@@ -1,3 +1,4 @@
+import { loadRadarNote } from '@/lib/radar/review-note';
 import { z } from 'zod';
 import { describeError } from '@/lib/errors';
 import { TelegramClient } from '@/lib/telegram/client';
@@ -143,6 +144,7 @@ export async function POST(request: Request): Promise<Response> {
           sourceUsername: row.xAuthorUsername,
           xPostUrl: row.xPostUrl,
           channel: channelLabelFor(workspace, auth.workspaces.length),
+          radarNote: await loadRadarNote(auth.db, row.id).catch(() => null),
         }),
         TELEGRAM_PARSE_MODE,
         buildScheduledKeyboard(row.id, reviewLinks(auth.env.APP_BASE_URL, row.id)),
