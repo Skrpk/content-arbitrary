@@ -487,6 +487,16 @@ describeIfDb('the Settings button on source commands', () => {
   });
 });
 
+describeIfDb('/sourcestats', () => {
+  it('answers with the button that opens the stats page', async () => {
+    await send('/sourcestats');
+
+    expect(callsTo('sendMessage').at(-1)?.body.reply_markup).toEqual({
+      inline_keyboard: [[{ text: '📊 Open stats', web_app: { url: 'https://example.vercel.app/source-stats' } }]],
+    });
+  });
+});
+
 describeIfDb('a scheduled post', () => {
   async function queueScheduled(caption = 'A') {
     const post = await queuePost({ caption });

@@ -38,6 +38,8 @@ export interface CommandReply {
    * opens their settings. The webhook adds it when a Mini App is configured.
    */
   offerSettings?: boolean;
+  /** The reply should carry the button that opens the source stats page. */
+  offerStats?: boolean;
   /** Buttons that belong to the reply itself, such as a choice of channel. */
   replyMarkup?: InlineKeyboardMarkup;
 }
@@ -51,6 +53,11 @@ export interface WorkspaceRef {
 /** Absolute URL of the Mini App page with every source's settings. */
 export function buildSettingsUrl(baseUrl: string): string {
   return `${baseUrl.replace(/\/+$/, '')}/settings`;
+}
+
+/** Absolute URL of the Mini App page with every source's stats. */
+export function buildSourceStatsUrl(baseUrl: string): string {
+  return `${baseUrl.replace(/\/+$/, '')}/source-stats`;
 }
 
 export interface ParsedCommand {
@@ -146,6 +153,7 @@ const HELP_TEXT = [
   '<b>Source management</b>',
   '',
   '/sources — list every source',
+  '/sourcestats — how each source performs: posts, approvals, cost',
   '/addsource @username — start watching an account',
   '/removesource @username — stop watching and forget it',
   '/pausesource @username — keep it, but skip it on sync',
@@ -457,6 +465,13 @@ export async function dispatchCommand(
       return handleSources(context);
     case 'scheduled':
       return { text: await handleScheduled(context) };
+    case 'sourcestats':
+      return {
+        text:
+          '<b>Source stats</b>\n\nPer source: posts it brought in, how many you approved and why the rest ' +
+          'were rejected, and roughly what reading them from X cost.',
+        offerStats: true,
+      };
     case 'addsource':
     case 'removesource':
     case 'pausesource':

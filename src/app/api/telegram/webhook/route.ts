@@ -19,6 +19,7 @@ import {
 import { publishDecidedPost } from '@/lib/sync/publish';
 import {
   buildSettingsUrl,
+  buildSourceStatsUrl,
   dispatchCommand,
   parseChannelChoice,
   parseCommand,
@@ -159,7 +160,7 @@ export async function POST(request: Request): Promise<Response> {
       db,
       client,
       logger,
-      settingsUrl: env.APP_BASE_URL ? buildSettingsUrl(env.APP_BASE_URL) : undefined,
+      appBaseUrl: env.APP_BASE_URL,
     });
     return ok();
   }
@@ -186,7 +187,7 @@ export async function POST(request: Request): Promise<Response> {
       client,
       logger,
       workspaces: reviewerWorkspaces,
-      settingsUrl: env.APP_BASE_URL ? buildSettingsUrl(env.APP_BASE_URL) : undefined,
+      appBaseUrl: env.APP_BASE_URL,
     });
     return ok();
   }
@@ -422,8 +423,8 @@ async function handleCommandMessage(
     db: Database;
     client: TelegramClient;
     logger: Logger;
-    /** The source settings Mini App; no Settings button without one. */
-    settingsUrl?: string;
+    /** Where the Mini Apps live; no Mini App buttons without it. */
+    appBaseUrl?: string;
   },
 ): Promise<void> {
   const { db, client, logger } = context;
@@ -456,7 +457,7 @@ async function handleCommandMessage(
     );
     if (!reply) return;
 
-    const markup = replyMarkupFor(reply, context.settingsUrl);
+    const markup = replyMarkupFor(reply, context.appBaseUrl);
     await client.call(
       'sendMessage',
       {
@@ -485,11 +486,15 @@ async function handleCommandMessage(
   }
 }
 
-/** A command reply's own buttons, or the Settings button when it offers one. */
-function replyMarkupFor(reply: CommandReply, settingsUrl: string | undefined) {
+/** A command reply's own buttons, or the Mini App button it offers. */
+function replyMarkupFor(reply: CommandReply, appBaseUrl: string | undefined) {
   if (reply.replyMarkup) return reply.replyMarkup;
-  if (reply.offerSettings && settingsUrl) {
-    return { inline_keyboard: [[{ text: '⚙️ Settings', web_app: { url: settingsUrl } }]] };
+  if (!appBaseUrl) return undefined;
+  if (reply.offerSettings) {
+    return { inline_keyboard: [[{ text: '⚙️ Settings', web_app: { url: buildSettingsUrl(appBaseUrl) } }]] };
+  }
+  if (reply.offerStats) {
+    return { inline_keyboard: [[{ text: '📊 Open stats', web_app: { url: buildSourceStatsUrl(appBaseUrl) } }]] };
   }
   return undefined;
 }
@@ -506,7 +511,7 @@ async function handleChannelChoice(
     client: TelegramClient;
     logger: Logger;
     workspaces: Workspace[];
-    settingsUrl?: string;
+    appBaseUrl?: string;
   },
 ): Promise<void> {
   const { client, logger } = context;
@@ -528,7 +533,7 @@ async function handleChannelChoice(
         query.message.message_id,
         reply.text,
         TELEGRAM_PARSE_MODE,
-        replyMarkupFor(reply, context.settingsUrl),
+        replyMarkupFor(reply, context.appBaseUrl),
       );
     }
   } catch (error) {
