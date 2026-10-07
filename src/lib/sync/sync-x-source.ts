@@ -123,13 +123,28 @@ export async function syncXSource(
       summary.skipped += 1;
     }
 
+    /**
+     * A source follows its account from the moment it was added or last
+     * resumed: the posts already on the timeline then are a backlog, not
+     * news, so they are passed over — on the first run, after a pause, and
+     * after the account is removed and added back, when the cursor left
+     * behind would otherwise replay the gap. The cursor still moves past
+     * them, so they are read once and never again.
+     */
+    const fresh = result.posts.filter((post) => {
+      if (!post.createdAt || post.createdAt >= source.followingSince) return true;
+      logger.info('sync.post_skipped', { xPostId: post.id, reason: 'posted before the source was followed' });
+      summary.skipped += 1;
+      return false;
+    });
+
     // Drop anything already settled before we spend a claim on it.
     const terminal = await findTerminalPostIds(
       db,
-      result.posts.map((post) => post.id),
+      fresh.map((post) => post.id),
       source.workspaceId,
     );
-    const candidates = result.posts.filter((post) => {
+    const candidates = fresh.filter((post) => {
       if (!terminal.has(post.id)) return true;
       logger.info('sync.post_skipped', { xPostId: post.id, reason: 'already processed' });
       summary.skipped += 1;

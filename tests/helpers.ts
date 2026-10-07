@@ -105,6 +105,13 @@ export async function ensureTestWorkspace(db: Database): Promise<void> {
 export const instantSleep = async () => {};
 
 /**
+ * When a fixture post was published on X. A source passes over whatever its
+ * account posted before it was added, and tests add theirs moments before
+ * syncing, so a post that should come through has to be dated after that.
+ */
+export const POSTED_AT = '2099-01-15T12:00:00.000Z';
+
+/**
  * The destination a single-tenant install produces: workspace 1, pointed at
  * whatever the environment says. Keeps unit tests on the env-derived values
  * they were written against while the production path reads the workspace row.

@@ -24,7 +24,7 @@ import {
 } from '@/lib/workspace';
 import { XClient } from '@/lib/x/client';
 import { TelegramClient } from '@/lib/telegram/client';
-import { createTestLogger, instantSleep, withEnv, ensureTestWorkspace } from './helpers';
+import { createTestLogger, instantSleep, withEnv, ensureTestWorkspace, POSTED_AT } from './helpers';
 
 /**
  * Many tenants through one bot and one X application.
@@ -57,7 +57,7 @@ function timelineFor(userId: string, postIds: string[], username = 'shared_accou
     data: postIds.map((id) => ({
       id,
       text: `post ${id}`,
-      created_at: '2026-01-15T12:00:00.000Z',
+      created_at: POSTED_AT,
       author_id: userId,
       attachments: { media_keys: [`m_${id}`] },
     })),

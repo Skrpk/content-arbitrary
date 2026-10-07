@@ -113,6 +113,12 @@ export const sources = pgTable(
      * either way: publishing its text alone would misrepresent it.
      */
     includeTextOnly: boolean('include_text_only').notNull().default(false),
+    /**
+     * Where the source's feed starts: posts published on the account before
+     * this moment are passed over. Set when the source is added and again
+     * each time it is resumed, so neither brings in a backlog.
+     */
+    followingSince: timestamp('following_since', { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

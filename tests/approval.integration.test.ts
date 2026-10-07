@@ -23,7 +23,7 @@ import {
   updateApprovalCaption,
 } from '@/lib/sync/repository';
 import { DEFAULT_WORKSPACE_ID } from '@/db/schema';
-import { createTestLogger, instantSleep, withEnv, ensureTestWorkspace } from './helpers';
+import { createTestLogger, instantSleep, withEnv, ensureTestWorkspace, POSTED_AT } from './helpers';
 
 /**
  * The whole review journey against a real database: a sync run parks a post in
@@ -54,7 +54,7 @@ function timelinePayload(mediaKeys: string[]) {
       {
         id: '1750000000000000042',
         text: 'Bear by the lake',
-        created_at: '2026-01-15T12:00:00.000Z',
+        created_at: POSTED_AT,
         author_id: '999',
         attachments: { media_keys: mediaKeys },
       },

@@ -21,6 +21,7 @@ import {
   listSources,
   setSourceEnabled,
   syncStateKey,
+  updateSourceSettings,
 } from '@/lib/sources/repository';
 import { dispatchCommand } from '@/lib/telegram/commands';
 import { findWorkspacesByAdminChatId } from '@/lib/workspace';
@@ -171,6 +172,63 @@ describeIfDb('sources repository', () => {
     expect(all).toHaveLength(2);
   });
 
+  describe('where its feed starts', () => {
+    const LONG_AGO = new Date('2026-01-01T00:00:00Z');
+
+    async function sourceFollowedLongAgo(enabled: boolean) {
+      const [row] = await db
+        .insert(sources)
+        .values({ platform: 'x', externalId: '7', username: 'feed', enabled, followingSince: LONG_AGO })
+        .returning();
+      return row!;
+    }
+
+    const followingSince = async (id: number) =>
+      (await db.select().from(sources).where(eq(sources.id, id)))[0]!.followingSince;
+
+    it('starts when the source is added', async () => {
+      const before = Date.now();
+      const { source } = await addSource(db, { platform: 'x', externalId: '1', username: 'new' });
+
+      expect(source.followingSince.getTime()).toBeGreaterThanOrEqual(before - 1000);
+    });
+
+    it('starts again when a paused source is resumed, by command or from the Mini App', async () => {
+      const byCommand = await sourceFollowedLongAgo(false);
+      await setSourceEnabled(db, { id: byCommand.id, enabled: true });
+      expect((await followingSince(byCommand.id)).getTime()).toBeGreaterThan(LONG_AGO.getTime());
+
+      await db.delete(sources);
+      const fromApp = await sourceFollowedLongAgo(false);
+      await updateSourceSettings(db, {
+        id: fromApp.id,
+        workspaceIds: [DEFAULT_WORKSPACE_ID],
+        settings: { enabled: true },
+      });
+      expect((await followingSince(fromApp.id)).getTime()).toBeGreaterThan(LONG_AGO.getTime());
+    });
+
+    it('stays put on pausing, on enabling a source already on, and on other settings', async () => {
+      const running = await sourceFollowedLongAgo(true);
+
+      await setSourceEnabled(db, { id: running.id, enabled: true });
+      await updateSourceSettings(db, {
+        id: running.id,
+        workspaceIds: [DEFAULT_WORKSPACE_ID],
+        settings: { enabled: true, includeTextOnly: true },
+      });
+      await setSourceEnabled(db, { id: running.id, enabled: false });
+      expect(await followingSince(running.id)).toEqual(LONG_AGO);
+
+      await updateSourceSettings(db, {
+        id: running.id,
+        workspaceIds: [DEFAULT_WORKSPACE_ID],
+        settings: { includeTextOnly: false },
+      });
+      expect(await followingSince(running.id)).toEqual(LONG_AGO);
+    });
+  });
+
   it('finds a source by handle regardless of case', async () => {
     await addSource(db, { platform: 'x', externalId: '1', username: 'Trail_Cams' });
 
@@ -185,7 +243,7 @@ describeIfDb('sources repository', () => {
     expect(await deleteSource(db, added.source.id)).toBe(true);
     expect(await findSourceByExternalId(db, { platform: 'x', externalId: '99' })).toBeNull();
 
-    // Re-adding the account later resumes rather than re-reading the window.
+    // Re-adding the account later reads on from it rather than re-reading the window.
     const rows = await db.select().from(syncState);
     expect(rows.map((row) => row.source)).toContain('x:99');
   });

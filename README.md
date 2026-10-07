@@ -563,7 +563,7 @@ environment change and no redeploy:
 | `/addsource @karpathy` | Start watching an account |
 | `/removesource @karpathy` | Stop watching and forget it |
 | `/pausesource @karpathy` | Keep it on the list but skip it on sync |
-| `/resumesource @karpathy` | Watch it again |
+| `/resumesource @karpathy` | Watch it again — from now on; what it posted while paused is skipped |
 
 `/addsource` accepts whatever is easiest to paste — `karpathy`, `@karpathy`,
 `x.com/karpathy`, a full profile URL, or even a link to one of the account's posts.
@@ -604,8 +604,11 @@ interfere with one another: adding a busy account cannot starve a quiet one, and
 unreachable account does not stop the rest of the run — its error is reported per source while
 the others carry on. `MAX_POSTS_PER_RUN` applies **per source** for the same reason.
 
-Removing a source deliberately leaves its cursor behind, so re-adding the same account later
-resumes where it stopped instead of re-reading — and re-paying for — the whole window.
+A new source starts from the moment it is added, and a paused one from the moment it is resumed
+(`sources.following_since`): whatever the account posted before that is read once, passed over,
+and the cursor moves past it — only posts published afterwards come through. Removing a source deliberately leaves its cursor behind, so re-adding the same account
+later reads only from where it stopped instead of re-reading — and re-paying for — the whole
+window; what it posted while removed is passed over the same way.
 
 ### Upgrading from the single-account version
 
@@ -1428,10 +1431,8 @@ publishing each post exactly once; and the pool-starvation deadlock regression.
 
 - **Watch the first real run.** Set `DRY_RUN=false`, trigger `/api/cron/sync` by hand, and
   check the channel before trusting the schedule.
-- **Backfill is intentionally limited.** On first run the app publishes at most
-  `MAX_POSTS_PER_RUN` posts from the last `X_FETCH_LIMIT`, not the account's whole history.
-  To skip the backlog entirely, set `sync_state.last_seen_post_id` to the newest post id before
-  the first live run.
+- **There is no backfill.** A source publishes only what its account posts after the source
+  was added or last resumed; the posts already on its timeline are skipped.
 - **Who goes first rotates.** Each run starts with the tenant, and within it the source, that
   has waited longest since its last sync — never-synced first — so when a run does hit its time
   budget, it is not always the same accounts that wait.

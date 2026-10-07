@@ -138,7 +138,7 @@ export async function setSourceEnabled(
 ): Promise<Source | null> {
   const rows = await db
     .update(sources)
-    .set({ enabled: input.enabled, updatedAt: new Date() })
+    .set({ enabled: input.enabled, ...resumedAt(input.enabled), updatedAt: new Date() })
     .where(eq(sources.id, input.id))
     .returning();
   return rows[0] ?? null;
@@ -166,10 +166,22 @@ export async function updateSourceSettings(
 
   const rows = await db
     .update(sources)
-    .set({ ...input.settings, updatedAt: new Date() })
+    .set({ ...input.settings, ...resumedAt(input.settings.enabled), updatedAt: new Date() })
     .where(and(eq(sources.id, input.id), inArray(sources.workspaceId, input.workspaceIds)))
     .returning();
   return rows[0] ?? null;
+}
+
+/**
+ * On resuming a paused source, its feed restarts from now: what the account
+ * posted while it was paused is passed over, as on adding it. Enabling one
+ * that is already on — or pausing — leaves the moment where it was.
+ */
+function resumedAt(enabled: boolean | undefined) {
+  if (enabled !== true) return {};
+  return {
+    followingSince: rawSql<Date>`CASE WHEN ${sources.enabled} THEN ${sources.followingSince} ELSE now() END`,
+  };
 }
 
 /** Refresh the cached handle after X reports a rename. */
@@ -187,8 +199,10 @@ export async function updateSourceUsername(
  * Remove a source permanently.
  *
  * Its `sync_state` cursor is deliberately left behind: it is keyed by the
- * platform id, so re-adding the same account later resumes where it stopped
- * instead of re-reading (and re-paying for) the whole window.
+ * platform id, so re-adding the same account later reads only from where it
+ * stopped instead of re-reading (and re-paying for) the whole window. What
+ * it posted in between is still passed over — the new row's
+ * `following_since` is where a source starts.
  */
 export async function deleteSource(db: Database, id: number): Promise<boolean> {
   const rows = await db.delete(sources).where(eq(sources.id, id)).returning({ id: sources.id });

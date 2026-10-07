@@ -306,7 +306,7 @@ async function setEnabled(
   context.logger.info('command.source_enabled_changed', { username: source.username, enabled });
 
   return enabled
-    ? `▶️ <b>@${escapeHtml(source.username)}</b> resumed.`
+    ? `▶️ <b>@${escapeHtml(source.username)}</b> resumed — only what it posts from now on.`
     : `⏸ <b>@${escapeHtml(source.username)}</b> paused — kept, but skipped on sync.`;
 }
 

@@ -24,7 +24,7 @@ import { markAwaitingApproval, rejectWithReason } from '@/lib/sync/repository';
 import { syncPosts } from '@/lib/sync/sync-posts';
 import { TelegramClient } from '@/lib/telegram/client';
 import { XClient } from '@/lib/x/client';
-import { createTestLogger, ensureTestWorkspace, instantSleep, withEnv } from './helpers';
+import { createTestLogger, ensureTestWorkspace, instantSleep, withEnv, POSTED_AT } from './helpers';
 import {
   fakeAnthropic,
   fakeBatchProvider,
@@ -297,7 +297,7 @@ describeIfDb('Radar in the sync', () => {
             {
               id: '1760000000000099001',
               text: 'A rare photo of Saturn',
-              created_at: '2026-10-01T12:00:00.000Z',
+              created_at: POSTED_AT,
               author_id: '999',
               attachments: { media_keys: ['3_a'] },
             },

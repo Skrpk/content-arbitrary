@@ -9,7 +9,7 @@ import { addSource, listSources, setSourceEnabled } from '@/lib/sources/reposito
 import { getSyncState, upsertSyncState } from '@/lib/sync/repository';
 import { XClient } from '@/lib/x/client';
 import { TelegramClient } from '@/lib/telegram/client';
-import { createTestLogger, instantSleep, withEnv, ensureTestWorkspace } from './helpers';
+import { createTestLogger, instantSleep, withEnv, ensureTestWorkspace, POSTED_AT } from './helpers';
 
 /**
  * The single-source → many-sources step: each account gets its own cursor, and
@@ -25,12 +25,12 @@ let db: PostgresJsDatabase<typeof schema>;
 const CHANNEL = '-1003906212630';
 
 /** Posts keyed by the X user id the timeline belongs to. */
-function timelineFor(userId: string, postIds: string[], username = `user${userId}`) {
+function timelineFor(userId: string, postIds: string[], username = `user${userId}`, postedAt = POSTED_AT) {
   return {
     data: postIds.map((id) => ({
       id,
       text: `post ${id}`,
-      created_at: '2026-01-15T12:00:00.000Z',
+      created_at: postedAt,
       author_id: userId,
       attachments: { media_keys: [`m_${id}`] },
     })),
@@ -58,7 +58,7 @@ function timelineFor(userId: string, postIds: string[], username = `user${userId
  */
 function makeXStack(
   timelines: Record<string, string[]>,
-  options?: { failFor?: string; usernames?: Record<string, string> },
+  options?: { failFor?: string; usernames?: Record<string, string>; postedAt?: string },
 ) {
   const fetched: string[] = [];
 
@@ -75,6 +75,7 @@ function makeXStack(
       userId,
       timelines[userId] ?? [],
       options?.usernames?.[userId],
+      options?.postedAt,
     );
     return new Response(JSON.stringify(payload), {
       status: 200,
@@ -321,6 +322,28 @@ describeIfDb('multi-source sync', () => {
 
     expect(x.fetched).toEqual(['222']);
     expect(summary.sources).toHaveLength(1);
+  });
+
+  it('passes over what an account posted while its source was paused', async () => {
+    // Both followed since January; the account posted in June; one was paused meanwhile.
+    const january = new Date('2026-01-01T00:00:00Z');
+    await db.insert(sources).values([
+      { platform: 'x', externalId: '111', username: 'resumed', enabled: false, followingSince: january },
+      { platform: 'x', externalId: '222', username: 'running', followingSince: january },
+    ]);
+    const [resumed] = await db.select().from(sources).where(eq(sources.externalId, '111'));
+    await setSourceEnabled(db, { id: resumed!.id, enabled: true });
+
+    const x = makeXStack(
+      { '111': ['1750000000000000011'], '222': ['1750000000000000022'] },
+      { postedAt: '2026-06-01T12:00:00.000Z' },
+    );
+    const summary = await run(x, makeTelegramStack());
+
+    const bySource = Object.fromEntries(summary.sources.map((source) => [source.externalId, source]));
+    expect(bySource['111']).toMatchObject({ published: 0, skipped: 1 });
+    expect(bySource['222']).toMatchObject({ published: 1 });
+    expect((await getSyncState(db, 'x:111'))?.lastSeenPostId).toBe('1750000000000000011');
   });
 
   it('applies MAX_POSTS_PER_RUN to each source independently', async () => {

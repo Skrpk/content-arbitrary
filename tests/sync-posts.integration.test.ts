@@ -7,7 +7,7 @@ import { syncPosts } from '@/lib/sync/sync-posts';
 import { XClient } from '@/lib/x/client';
 import { TelegramClient } from '@/lib/telegram/client';
 import { getSyncState } from '@/lib/sync/repository';
-import { createTestLogger, instantSleep, telegramError, telegramOk, withEnv, ensureTestWorkspace } from './helpers';
+import { createTestLogger, instantSleep, telegramError, telegramOk, withEnv, ensureTestWorkspace, POSTED_AT } from './helpers';
 
 /**
  * End-to-end exercise of one sync cycle: X responses and Telegram responses are
@@ -51,13 +51,19 @@ const photoMedia = (key: string) => ({
 });
 
 function timeline(
-  posts: { id: string; text?: string; mediaKeys: string[]; publicMetrics?: Record<string, number> }[],
+  posts: {
+    id: string;
+    text?: string;
+    mediaKeys: string[];
+    publicMetrics?: Record<string, number>;
+    postedAt?: string;
+  }[],
 ) {
   return {
     data: posts.map((post) => ({
       id: post.id,
       text: post.text ?? `post ${post.id}`,
-      created_at: '2026-01-15T10:00:00.000Z',
+      created_at: post.postedAt ?? POSTED_AT,
       attachments: { media_keys: post.mediaKeys },
       ...(post.publicMetrics ? { public_metrics: post.publicMetrics } : {}),
     })),
@@ -244,6 +250,36 @@ describeIfDb('syncPosts end to end', () => {
     expect(published[0]).toContain('post 1750000000000000001');
     expect(published[1]).toContain('post 1750000000000000002');
     expect(published[2]).toContain('post 1750000000000000003');
+  });
+
+  it('passes over what the account posted before it was added, and moves its cursor past it', async () => {
+    const xClient = makeXClient(
+      timeline([
+        { id: '1750000000000000003', mediaKeys: ['n_c'] },
+        { id: '1750000000000000002', mediaKeys: ['o_b'], postedAt: '2020-01-15T12:00:00.000Z' },
+        { id: '1750000000000000001', mediaKeys: ['o_a'], postedAt: '2020-01-15T11:00:00.000Z' },
+      ]),
+    );
+    const { client, fetchImpl } = makeTelegramStub();
+
+    const summary = await withEnv({ DRY_RUN: 'false' }, (env) =>
+      syncPosts({
+        db,
+        env,
+        xClient,
+        telegramClient: client,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        logger: createTestLogger(),
+        sleep: instantSleep,
+        skipLock: true,
+      }),
+    );
+
+    expect(summary.published).toBe(1);
+    expect(summary.skipped).toBe(2);
+    const rows = await db.select().from(processedPosts);
+    expect(rows.map((row) => row.xPostId)).toEqual(['1750000000000000003']);
+    expect((await getSyncState(db, 'x:1234567890'))?.lastSeenPostId).toBe('1750000000000000003');
   });
 
   it('does not republish on a second run', async () => {
