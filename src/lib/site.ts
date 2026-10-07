@@ -8,7 +8,7 @@
  */
 
 /** Product name as shown on the site, in every language. */
-export const SITE_NAME = 'Content Radar';
+export const SITE_NAME = 'Story Radar';
 
 /**
  * Canonical origin. A custom domain belongs here once there is one: search
