@@ -2,6 +2,13 @@ import { z } from 'zod';
 import { describeError } from '@/lib/errors';
 import { TelegramClient } from '@/lib/telegram/client';
 import { TELEGRAM_PARSE_MODE, escapeHtml, unescapeHtml } from '@/lib/telegram/format-caption';
+import {
+  captionToPlainText,
+  footerLength,
+  parsePostFooter,
+  stripFooter,
+  withFooter,
+} from '@/lib/telegram/post-footer';
 import { TELEGRAM_CAPTION_LIMIT, TELEGRAM_MESSAGE_TEXT_LIMIT } from '@/lib/telegram/limits';
 import { authorizeReviewer, json, reviewerWorkspaceForPost } from '@/lib/telegram/webapp-request';
 import { findPostAwaitingReview, updateApprovalCaption } from '@/lib/sync/repository';
@@ -65,15 +72,22 @@ export async function GET(request: Request): Promise<Response> {
     return json({ error: 'This post is no longer awaiting review.' }, 404);
   }
 
+  // The editor works in plain text; the stored caption is escaped. The
+  // fallback covers a post queued before the caption column existed.
+  const stored = post.caption ?? post.approvalPayload.caption;
+  // The footer is shown, not edited: the text box holds what is above it. A
+  // post queued before the footer was set or changed has none to split off.
+  const footer = parsePostFooter(workspace.postFooter);
+  const body = stripFooter(stored, footer);
+
   return json({
     postId: post.id,
     sourceUsername: post.xAuthorUsername,
     xPostUrl: post.xPostUrl,
     mediaCount: post.approvalPayload.items.length,
-    // The editor works in plain text; the stored caption is escaped. The
-    // fallback covers a post queued before the caption column existed.
-    caption: unescapeHtml(post.caption ?? post.approvalPayload.caption),
-    limit: lengthLimitFor(post.approvalPayload),
+    caption: body === null ? captionToPlainText(stored) : unescapeHtml(body),
+    footer: body === null ? null : footer!.text,
+    limit: lengthLimitFor(post.approvalPayload) - (body === null ? 0 : footerLength(footer)),
     hasOverflowMessage: Boolean(post.approvalPayload.overflowMessage),
     edited: post.captionEditedAt !== null,
   });
@@ -110,12 +124,17 @@ export async function POST(request: Request): Promise<Response> {
     return json({ error: 'This post is no longer awaiting review.' }, 409);
   }
 
+  // The footer goes back under the text exactly as the editor showed it.
+  const footer = parsePostFooter(workspace.postFooter);
+  const stored = target.caption ?? target.approvalPayload.caption;
+  const keepsFooter = stripFooter(stored, footer) !== null;
+
   /**
    * Length is checked on the plain text, which is what Telegram counts: the
    * caption is stored escaped, but HTML entities are resolved before the limit
    * applies, so `&amp;` costs one character and not five.
    */
-  const limit = lengthLimitFor(target.approvalPayload);
+  const limit = lengthLimitFor(target.approvalPayload) - (keepsFooter ? footerLength(footer) : 0);
   if (caption.length > limit) {
     return json(
       { error: `Caption is ${caption.length} characters; the limit is ${limit}.` },
@@ -126,10 +145,11 @@ export async function POST(request: Request): Promise<Response> {
     return json({ error: 'Caption cannot be empty.' }, 422);
   }
 
+  const html = keepsFooter ? withFooter(escapeHtml(caption), footer) : escapeHtml(caption);
   const result = await updateApprovalCaption(auth.db, {
     id: body.postId,
     workspaceId: workspace.id,
-    caption: escapeHtml(caption),
+    caption: html,
   });
 
   if (!result.updated) {
@@ -163,7 +183,7 @@ export async function POST(request: Request): Promise<Response> {
         post.approvalPayload?.method === 'sendMessage'
           ? client.editMessageText.bind(client)
           : client.editMessageCaption.bind(client);
-      await edit(post.adminChatId, previewMessageId, escapeHtml(caption), TELEGRAM_PARSE_MODE);
+      await edit(post.adminChatId, previewMessageId, html, TELEGRAM_PARSE_MODE);
       previewUpdated = true;
     } catch (error) {
       auth.logger.warn('webapp.preview_update_failed', { error: describeError(error) });

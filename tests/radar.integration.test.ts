@@ -451,6 +451,19 @@ describeIfDb('Radar in the sync', () => {
     expect(JSON.stringify(radar.requests)).not.toContain('Рідкісне');
   });
 
+  it('puts the tenant’s footer under the translated post, as a link', async () => {
+    await db
+      .update(workspaces)
+      .set({ postFooter: '[ВЕКТОР](https://t.me/vector_space2035)' })
+      .where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+
+    await syncTranslated('uk');
+
+    const [post] = await db.select().from(processedPosts);
+    expect(post!.caption!.startsWith('Рідкісне фото Сатурна')).toBe(true);
+    expect(post!.caption!.endsWith('\n\n<a href="https://t.me/vector_space2035">ВЕКТОР</a>')).toBe(true);
+  });
+
   it('leaves a tenant without a language untranslated', async () => {
     const { model } = await syncTranslated(null);
 

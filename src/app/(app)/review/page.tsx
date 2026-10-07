@@ -20,6 +20,8 @@ interface PostDetails {
   xPostUrl: string;
   mediaCount: number;
   caption: string;
+  /** The workspace's footer, added under the text; shown, not edited. */
+  footer: string | null;
   limit: number;
   hasOverflowMessage: boolean;
   edited: boolean;
@@ -186,6 +188,23 @@ export default function ReviewPage() {
                 resize: 'vertical',
               }}
             />
+
+            {details.footer ? (
+              <div
+                style={{
+                  marginTop: '0.4rem',
+                  padding: '0.6rem 0.75rem',
+                  borderRadius: '0.5rem',
+                  border: `1px dashed ${theme.hint}`,
+                  color: theme.hint,
+                  fontSize: '0.9rem',
+                  whiteSpace: 'pre-wrap',
+                }}
+              >
+                <div style={{ fontSize: '0.75rem', marginBottom: '0.2rem' }}>Footer, added under every post</div>
+                {details.footer}
+              </div>
+            ) : null}
 
             <div
               style={{

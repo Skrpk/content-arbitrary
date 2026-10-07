@@ -484,3 +484,57 @@ describeIfDb('editing a text-only post', () => {
     expect(response.status).toBe(422);
   });
 });
+
+describeIfDb('editing a post with the workspace footer', () => {
+  const FOOTER = '[ВЕКТОР](https://t.me/vector_space2035)';
+  const LINK = '<a href="https://t.me/vector_space2035">ВЕКТОР</a>';
+  const auth = () => `tma ${initDataFor(REVIEWER_ID)}`;
+
+  beforeEach(async () => {
+    if (!connectionString) return;
+    await db.update(workspaces).set({ postFooter: FOOTER }).where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+  });
+
+  it('shows the text without the footer, the footer apart, and leaves room for it', async () => {
+    const post = await insertAwaitingPost({ caption: `Марс &amp; Місяць\n\n${LINK}` });
+
+    const response = await withEnv(routeEnv, () => GET(getRequest(post.id, auth())));
+
+    const body = (await response.json()) as { caption: string; footer: string | null; limit: number };
+    expect(body.caption).toBe('Марс & Місяць');
+    expect(body.footer).toBe('ВЕКТОР');
+    expect(body.limit).toBe(TELEGRAM_CAPTION_LIMIT - 'ВЕКТОР'.length - 2);
+  });
+
+  it('puts the footer back under the edited text, as a link', async () => {
+    const post = await insertAwaitingPost({ caption: `Марс\n\n${LINK}` });
+
+    const response = await withEnv(routeEnv, () =>
+      POST(postRequest({ postId: post.id, caption: 'Новий <текст>' }, auth())),
+    );
+
+    expect(response.status).toBe(200);
+    const row = (await db.select().from(processedPosts).where(eq(processedPosts.id, post.id)))[0]!;
+    expect(row.caption).toBe(`Новий &lt;текст&gt;\n\n${LINK}`);
+  });
+
+  it('counts the footer against the limit', async () => {
+    const post = await insertAwaitingPost({ caption: `Марс\n\n${LINK}` });
+    const tooLong = 'а'.repeat(TELEGRAM_CAPTION_LIMIT - 'ВЕКТОР'.length - 1);
+
+    const response = await withEnv(routeEnv, () => POST(postRequest({ postId: post.id, caption: tooLong }, auth())));
+
+    expect(response.status).toBe(422);
+  });
+
+  it('treats a post queued before the footer as plain text, adding nothing', async () => {
+    const post = await insertAwaitingPost({ caption: 'Марс' });
+
+    const read = await withEnv(routeEnv, () => GET(getRequest(post.id, auth())));
+    expect(await read.json()).toMatchObject({ caption: 'Марс', footer: null, limit: TELEGRAM_CAPTION_LIMIT });
+
+    await withEnv(routeEnv, () => POST(postRequest({ postId: post.id, caption: 'Марс!' }, auth())));
+    const row = (await db.select().from(processedPosts).where(eq(processedPosts.id, post.id)))[0]!;
+    expect(row.caption).toBe('Марс!');
+  });
+});

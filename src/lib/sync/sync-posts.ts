@@ -17,6 +17,7 @@ import { attributePostsToSource, getSyncState } from '@/lib/sync/repository';
 import { defaultSleep } from '@/lib/sync/retry';
 import { createRadarProvider, type RadarProvider } from '@/lib/radar/providers';
 import { createTranslator, loadTranslationStyle, type Translator } from '@/lib/translation/translate';
+import { parsePostFooter } from '@/lib/telegram/post-footer';
 import { createEmbeddingProvider } from '@/lib/history/embeddings/provider';
 import {
   lastSyncKey,
@@ -275,6 +276,7 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
                 ? { run: radarRun, profile: tenant.editorialProfile }
                 : undefined,
             translator: await translatorFor(tenant),
+            footer: parsePostFooter(tenant.postFooter),
             deadline,
             now,
           });

@@ -918,6 +918,28 @@ in its own language, and it goes on as it would have. A post that is skipped, an
 dry run, is not translated. Each translation is logged (`translation.done`) with its tokens; at
 Luna's list price a post of a few hundred characters costs about $0.0002–0.0003.
 
+## Post footer
+
+A line the channel adds under every post — its name and a link, say — set once per workspace
+instead of typed on each post:
+
+```sql
+UPDATE workspaces
+SET post_footer = '[ВЕКТОР | космос · футуризм · sci-fi](https://t.me/vector_space2035)'
+WHERE id = 2;   -- NULL removes it
+```
+
+It is plain text with Markdown-style links, `[text](https://…)`: `http`, `https` and `tg` links
+become links, everything else is shown as typed. At most 200 visible characters.
+
+It goes last, under the text (and the source line, if any), on the review message and on the
+published post — and under a long post's full-text follow-up too. It is never cut: a long post
+is shortened to leave room for it. In the Edit Mini App it is shown under the text box but is not
+part of it, so editing cannot break its link, and the character counter allows for it.
+
+A post already waiting for review keeps the footer it was sent with; a footer set or changed
+later applies to posts that arrive after.
+
 ## Shadow Radar
 
 An experiment: can a model predict which posts the editor will publish? Radar scores each post

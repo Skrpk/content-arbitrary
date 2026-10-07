@@ -1,0 +1,1 @@
+ALTER TABLE "workspaces" ADD COLUMN "post_footer" text;

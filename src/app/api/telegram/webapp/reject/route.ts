@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { describeError } from '@/lib/errors';
 import { TelegramClient } from '@/lib/telegram/client';
-import { unescapeHtml } from '@/lib/telegram/format-caption';
+import { captionToPlainText } from '@/lib/telegram/post-footer';
 import { authorizeReviewer, json, reviewerWorkspaceForPost } from '@/lib/telegram/webapp-request';
 import {
   formatRejectionNotice,
@@ -55,7 +55,7 @@ export async function GET(request: Request): Promise<Response> {
     postId: post.id,
     sourceUsername: post.xAuthorUsername,
     // Shown for context only, so the reviewer can see what they are turning down.
-    caption: unescapeHtml(post.caption ?? post.approvalPayload.caption),
+    caption: captionToPlainText(post.caption ?? post.approvalPayload.caption),
     noteLimit: REJECTION_NOTE_MAX_LENGTH,
   });
 }

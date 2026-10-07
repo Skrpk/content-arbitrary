@@ -96,6 +96,7 @@ export async function ensureTestWorkspace(db: Database): Promise<void> {
         telegramAdminChatId: null,
         editorialProfile: null,
         language: null,
+        postFooter: null,
       },
     });
 }

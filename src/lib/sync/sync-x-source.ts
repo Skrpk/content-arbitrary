@@ -25,6 +25,7 @@ import type { NormalizedPost, SourceSyncSummary } from '@/types';
 import { describeMedia, type RadarImage } from '@/lib/radar/prompt';
 import { runLiveRadar, type RadarRun } from '@/lib/radar/shadow';
 import { translateForReview, type Translator } from '@/lib/translation/translate';
+import type { PostFooter } from '@/lib/telegram/post-footer';
 
 /**
  * One synchronisation pass over a single X account.
@@ -49,6 +50,8 @@ export interface SourceSyncContext {
   radar?: { run: RadarRun; profile: string };
   /** Set when the tenant publishes in a language its posts are rewritten in. */
   translator?: Translator;
+  /** The tenant's footer, added under every post. */
+  footer?: PostFooter | null;
   /** When to stop taking new posts (epoch ms); unset, there is no limit. */
   deadline?: number;
   now?: () => number;
@@ -203,6 +206,7 @@ export async function syncXSource(
           postId: claim.row.id,
           destination: context.destination,
           textOnly: source.includeTextOnly,
+          footer: context.footer,
           translate: context.translator
             ? (text) => translateForReview(context.translator!, text, postLogger)
             : undefined,

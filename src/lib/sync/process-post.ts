@@ -2,12 +2,7 @@ import { getEnv, type Env } from '@/lib/env';
 import { describeError, MediaUnsupportedError } from '@/lib/errors';
 import type { Logger } from '@/lib/logger';
 import type { TelegramClient } from '@/lib/telegram/client';
-import {
-  formatCaption,
-  formatMessageText,
-  formatTextPost,
-  unescapeHtml,
-} from '@/lib/telegram/format-caption';
+import { formatCaption, formatTextPost } from '@/lib/telegram/format-caption';
 import {
   photoDimensionsAreAcceptable,
   TELEGRAM_MEDIA_GROUP_MAX,
@@ -27,6 +22,7 @@ import { maxUploadBytesFor } from '@/lib/telegram/limits';
 import type { NormalizedMedia, NormalizedPost, TelegramMethod } from '@/types';
 import { reviewLinks, sendForApproval } from '@/lib/sync/approval';
 import type { ApprovalPayload } from '@/db/schema';
+import type { PostFooter } from '@/lib/telegram/post-footer';
 import { defaultSleep } from '@/lib/sync/retry';
 import type { TelegramDestination } from '@/lib/workspace';
 
@@ -92,6 +88,8 @@ export async function processPost(
      * must not throw; if it does anyway, the original text is sent.
      */
     translate?: (text: string) => Promise<string | null>;
+    /** The workspace's footer, added under every post. */
+    footer?: PostFooter | null;
   },
 ): Promise<ProcessOutcome> {
   const env = options.env ?? getEnv();
@@ -120,6 +118,7 @@ export async function processPost(
       includeSourceLink: env.INCLUDE_SOURCE_LINK,
       prefix: env.CAPTION_PREFIX,
       suffix: env.CAPTION_SUFFIX,
+      footer: options.footer,
     });
   let { caption, overflowMessage } = captionFor(post.text);
 
@@ -405,7 +404,9 @@ export async function processPost(
       // in a single chat, and we have just sent an album.
       await sleep(TELEGRAM_MIN_DELAY_BETWEEN_SENDS_MS);
 
-      const followUp = await sendText(context, formatMessageText(unescapeHtml(overflowMessage)), {
+      // Already escaped and within the message limit — and it may carry the
+      // footer's link, which re-escaping would turn into visible markup.
+      const followUp = await sendText(context, overflowMessage, {
         replyToMessageId: primaryMessageId ?? undefined,
       });
       messages.push({ messageId: followUp.message_id, mediaIndex: null, kind: 'text' });
@@ -453,6 +454,7 @@ async function processTextPost(
     destination: TelegramDestination;
     beforeReview?: () => Promise<void>;
     translate?: (text: string) => Promise<string | null>;
+    footer?: PostFooter | null;
   },
 ): Promise<ProcessOutcome> {
   const { env, logger } = options;
@@ -465,6 +467,7 @@ async function processTextPost(
       includeSourceLink: env.INCLUDE_SOURCE_LINK,
       prefix: env.CAPTION_PREFIX,
       suffix: env.CAPTION_SUFFIX,
+      footer: options.footer,
     });
   let text = textFor(post.text);
 

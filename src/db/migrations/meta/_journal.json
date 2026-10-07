@@ -127,6 +127,13 @@
       "when": 1791366905682,
       "tag": "0017_workspace_language",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791369968600,
+      "tag": "0018_workspace_post_footer",
+      "breakpoints": true
     }
   ]
 }

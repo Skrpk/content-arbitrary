@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { chooseMethod, processPost } from '@/lib/sync/process-post';
 import { TelegramClient } from '@/lib/telegram/client';
+import { parsePostFooter } from '@/lib/telegram/post-footer';
 import type { NormalizedMedia, NormalizedPost } from '@/types';
 import { createTestLogger, instantSleep, telegramError, telegramOk, withEnv, testDestination } from './helpers';
 
@@ -968,5 +969,63 @@ describe('processPost translation', () => {
 
     expect(skipped.outcome.status).toBe('skipped');
     expect(translate).not.toHaveBeenCalled();
+  });
+});
+
+describe('processPost footer', () => {
+  const footer = parsePostFooter('[ВЕКТОР](https://t.me/vector_space2035)');
+  const link = '<a href="https://t.me/vector_space2035">ВЕКТОР</a>';
+
+  const run = (post: NormalizedPost, env: Record<string, string | undefined> = {}) => {
+    const stack = makeFetch();
+    return withEnv({ DRY_RUN: 'false', ...env }, async (parsed) => ({
+      ...stack,
+      outcome: await processPost(post, {
+        client: makeClient(stack.fetchImpl),
+        logger: createTestLogger(),
+        env: parsed,
+        fetchImpl: stack.fetchImpl,
+        sleep: instantSleep,
+        postId: 7,
+        destination: testDestination(parsed, { adminChatId: '555001' }),
+        textOnly: true,
+        footer,
+        translate: async () => 'Переклад',
+      }),
+    }));
+  };
+
+  it('goes under the reviewed caption, below the translation, as a working link', async () => {
+    const { outcome } = await run(makePost([photo('a')], 'Hello'), {
+      REQUIRE_APPROVAL: 'true',
+      TELEGRAM_ADMIN_CHAT_ID: '555001',
+      TELEGRAM_WEBHOOK_SECRET: 'a'.repeat(64),
+    });
+
+    expect(outcome.approval?.payload.caption.startsWith('Переклад')).toBe(true);
+    expect(outcome.approval?.payload.caption.endsWith(link)).toBe(true);
+  });
+
+  it('reaches the channel as a link under a long post’s follow-up too, never as escaped markup', async () => {
+    const stack = makeFetch();
+    const post = makePost([photo('a')], 'word '.repeat(400));
+    const outcome = await withEnv({ DRY_RUN: 'false' }, async (parsed) =>
+      processPost(post, {
+        client: makeClient(stack.fetchImpl),
+        logger: createTestLogger(),
+        env: parsed,
+        fetchImpl: stack.fetchImpl,
+        sleep: instantSleep,
+        postId: 7,
+        destination: testDestination(parsed),
+        footer,
+      }),
+    );
+
+    expect(outcome.status).toBe('published');
+    const followUp = stack.telegramCalls.find((call) => call.method === 'sendMessage')!;
+    const text = (JSON.parse(followUp.body as string) as { text: string }).text;
+    expect(text.endsWith(link)).toBe(true);
+    expect(text).not.toContain('&lt;a');
   });
 });

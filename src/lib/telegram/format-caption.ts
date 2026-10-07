@@ -1,4 +1,5 @@
 import { TELEGRAM_CAPTION_LIMIT, TELEGRAM_MESSAGE_TEXT_LIMIT } from '@/lib/telegram/limits';
+import { footerLength, withFooter, type PostFooter } from '@/lib/telegram/post-footer';
 
 /**
  * Caption construction.
@@ -35,6 +36,12 @@ export interface CaptionOptions {
   includeSourceLink: boolean;
   prefix?: string;
   suffix?: string;
+  /**
+   * The workspace's footer, last of all and already HTML (it may link). It
+   * goes under the caption and under the full-text follow-up alike, and is
+   * never shortened: its length is set aside before the text is fitted.
+   */
+  footer?: PostFooter | null;
 }
 
 export interface CaptionResult {
@@ -133,14 +140,16 @@ export function truncateForDisplay(text: string, limit: number): string {
  */
 export function formatCaption(options: CaptionOptions): CaptionResult {
   const plain = composePlainText(options);
+  const reserved = footerLength(options.footer);
+  const finish = (text: string) => withFooter(escapeHtml(text), options.footer);
 
-  if (plain.length <= TELEGRAM_CAPTION_LIMIT) {
-    return { caption: escapeHtml(plain), truncated: false };
+  if (plain.length + reserved <= TELEGRAM_CAPTION_LIMIT) {
+    return { caption: finish(plain), truncated: false };
   }
 
   return {
-    caption: escapeHtml(fitToLimit(options, plain, TELEGRAM_CAPTION_LIMIT)),
-    overflowMessage: escapeHtml(fitToLimit(options, plain, TELEGRAM_MESSAGE_TEXT_LIMIT)),
+    caption: finish(fitToLimit(options, plain, TELEGRAM_CAPTION_LIMIT - reserved)),
+    overflowMessage: finish(fitToLimit(options, plain, TELEGRAM_MESSAGE_TEXT_LIMIT - reserved)),
     truncated: true,
   };
 }
@@ -153,7 +162,8 @@ export function formatCaption(options: CaptionOptions): CaptionResult {
  * caption is — the author's text gives way, the framing stays.
  */
 export function formatTextPost(options: CaptionOptions): string {
-  return escapeHtml(fitToLimit(options, composePlainText(options), TELEGRAM_MESSAGE_TEXT_LIMIT));
+  const limit = TELEGRAM_MESSAGE_TEXT_LIMIT - footerLength(options.footer);
+  return withFooter(escapeHtml(fitToLimit(options, composePlainText(options), limit)), options.footer);
 }
 
 /**

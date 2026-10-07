@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { describeError } from '@/lib/errors';
 import { TelegramClient } from '@/lib/telegram/client';
-import { TELEGRAM_PARSE_MODE, unescapeHtml } from '@/lib/telegram/format-caption';
+import { TELEGRAM_PARSE_MODE } from '@/lib/telegram/format-caption';
+import { captionToPlainText } from '@/lib/telegram/post-footer';
 import { authorizeReviewer, json, reviewerWorkspaceForPost } from '@/lib/telegram/webapp-request';
 import {
   buildScheduledKeyboard,
@@ -66,7 +67,7 @@ export async function GET(request: Request): Promise<Response> {
   return json({
     postId: post.id,
     sourceUsername: post.xAuthorUsername,
-    caption: unescapeHtml(post.caption ?? post.approvalPayload.caption),
+    caption: captionToPlainText(post.caption ?? post.approvalPayload.caption),
     scheduledFor: post.status === 'scheduled' ? post.scheduledFor?.toISOString() ?? null : null,
     timezone: post.scheduledTimezone,
     maxDaysAhead: SCHEDULE_MAX_DAYS_AHEAD,

@@ -53,6 +53,12 @@ export const workspaces = pgTable('workspaces', {
    * style, before it goes to review; null leaves posts in their own language.
    */
   language: text('language'),
+  /**
+   * A line added under every post the channel publishes — its name and link,
+   * say — as text with Markdown-style links: `[Name](https://t.me/name)`.
+   * Null adds nothing. See src/lib/telegram/post-footer.ts.
+   */
+  postFooter: text('post_footer'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
