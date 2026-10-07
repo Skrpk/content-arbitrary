@@ -18,6 +18,7 @@ import { insertPublicationProfile } from '@/lib/history/profile/repository';
 import { RadarError } from '@/lib/radar/output';
 import { ingestRadarBatch, submitRadarBackfill, waitForBatch } from '@/lib/radar/backfill';
 import { createRadarRun, runLiveRadar } from '@/lib/radar/shadow';
+import { loadTranslationStyle } from '@/lib/translation/translate';
 import { RADAR_PROMPT_BASELINE } from '@/lib/radar/prompt';
 import { createTestLogger, ensureTestWorkspace } from './helpers';
 import { fakeProfiler, profileFixture } from './history-fakes';
@@ -373,5 +374,33 @@ describeIfDb('backfill and the publication profile', () => {
     expect(request.json).toContain('publication_history');
     expect(request.customId).toBe(`p${row.processedPostId}-text-h${profile.id}`);
     expect(row).toMatchObject({ status: 'ok', publicationHistoryProfileId: profile.id });
+  });
+});
+
+describeIfDb('the channel’s style for translation', () => {
+  it('is the newest profile and its representative posts, from this workspace only', async () => {
+    const items = await seedHistory(4, { prefix: 'Наш пост' });
+    const [other] = await db.insert(workspaces).values({ name: 'other' }).returning();
+    const [foreign] = await seedHistory(1, { workspaceId: other!.id, prefix: 'OTHER TENANT', from: 50 });
+    await insertPublicationProfile(db, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      profile: profileFixture({ representativeItemIds: [items[2]!.id, foreign!.id, items[0]!.id, items[1]!.id, items[3]!.id] }),
+      sourceItemCount: 4,
+      sourceFingerprint: 'f'.repeat(64),
+      historyCutoffAt: day(4),
+      model: 'gpt-6-luna',
+      promptVersion: PUBLICATION_PROFILE_PROMPT_VERSION,
+    });
+
+    const style = await loadTranslationStyle(db, DEFAULT_WORKSPACE_ID);
+
+    expect(style.profile?.tone.voice).toBe('enthusiastic popular science');
+    expect(style.examples).toHaveLength(3);
+    expect(style.examples[0]).toContain('Наш пост 3');
+    expect(style.examples.join(' ')).not.toContain('OTHER TENANT');
+  });
+
+  it('is empty for a workspace without a profile', async () => {
+    expect(await loadTranslationStyle(db, DEFAULT_WORKSPACE_ID)).toEqual({ profile: null, examples: [] });
   });
 });

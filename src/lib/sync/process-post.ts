@@ -86,6 +86,12 @@ export async function processPost(
      * the post still goes to review.
      */
     beforeReview?: () => Promise<void>;
+    /**
+     * The post's text in the channel's language, or null to keep it as it is.
+     * Asked only for a post about to be sent — alongside beforeReview — and it
+     * must not throw; if it does anyway, the original text is sent.
+     */
+    translate?: (text: string) => Promise<string | null>;
   },
 ): Promise<ProcessOutcome> {
   const env = options.env ?? getEnv();
@@ -106,14 +112,16 @@ export async function processPost(
   }
 
   const method = chooseMethod(media);
-  const { caption, overflowMessage } = formatCaption({
-    text: post.text,
-    username: post.authorUsername,
-    postId: post.id,
-    includeSourceLink: env.INCLUDE_SOURCE_LINK,
-    prefix: env.CAPTION_PREFIX,
-    suffix: env.CAPTION_SUFFIX,
-  });
+  const captionFor = (text: string) =>
+    formatCaption({
+      text,
+      username: post.authorUsername,
+      postId: post.id,
+      includeSourceLink: env.INCLUDE_SOURCE_LINK,
+      prefix: env.CAPTION_PREFIX,
+      suffix: env.CAPTION_SUFFIX,
+    });
+  let { caption, overflowMessage } = captionFor(post.text);
 
   if (method === 'none' && options.textOnly && post.text !== '') {
     return processTextPost(post, { ...options, env, logger });
@@ -265,7 +273,12 @@ export async function processPost(
       disableNotification: false,
     };
 
-    await runBeforeReview(options.beforeReview, logger);
+    // Scored on the original, translated meanwhile: neither waits for the other.
+    const [translated] = await Promise.all([
+      translateText(options.translate, post.text, logger),
+      runBeforeReview(options.beforeReview, logger),
+    ]);
+    if (translated) ({ caption, overflowMessage } = captionFor(translated));
 
     logger.info('approval.review_send_start', {
       xPostId: post.id,
@@ -324,6 +337,9 @@ export async function processPost(
       };
     }
   }
+
+  const translated = await translateText(options.translate, post.text, logger);
+  if (translated) ({ caption, overflowMessage } = captionFor(translated));
 
   const context: SendContext = {
     client: options.client,
@@ -436,18 +452,21 @@ async function processTextPost(
     postId?: number;
     destination: TelegramDestination;
     beforeReview?: () => Promise<void>;
+    translate?: (text: string) => Promise<string | null>;
   },
 ): Promise<ProcessOutcome> {
   const { env, logger } = options;
   const method: TelegramMethod = 'sendMessage';
-  const text = formatTextPost({
-    text: post.text,
-    username: post.authorUsername,
-    postId: post.id,
-    includeSourceLink: env.INCLUDE_SOURCE_LINK,
-    prefix: env.CAPTION_PREFIX,
-    suffix: env.CAPTION_SUFFIX,
-  });
+  const textFor = (body: string) =>
+    formatTextPost({
+      text: body,
+      username: post.authorUsername,
+      postId: post.id,
+      includeSourceLink: env.INCLUDE_SOURCE_LINK,
+      prefix: env.CAPTION_PREFIX,
+      suffix: env.CAPTION_SUFFIX,
+    });
+  let text = textFor(post.text);
 
   const base = { method, mediaCount: 0, caption: text, primaryMessageId: null };
 
@@ -458,7 +477,11 @@ async function processTextPost(
 
   try {
     if (env.REQUIRE_APPROVAL) {
-      await runBeforeReview(options.beforeReview, logger);
+      const [translated] = await Promise.all([
+        translateText(options.translate, post.text, logger),
+        runBeforeReview(options.beforeReview, logger),
+      ]);
+      if (translated) base.caption = text = textFor(translated);
 
       const review = await sendForApproval(
         {
@@ -486,6 +509,9 @@ async function processTextPost(
       });
       return { ...base, status: 'awaiting-approval', messages: [], approval: review };
     }
+
+    const translated = await translateText(options.translate, post.text, logger);
+    if (translated) base.caption = text = textFor(translated);
 
     const sent = await sendText(
       {
@@ -528,6 +554,21 @@ function isPermanentTelegramError(error: unknown): boolean {
     'transient' in error &&
     (error as { transient: unknown }).transient === false
   );
+}
+
+/** The translated text, or null to keep the original — whatever goes wrong. */
+async function translateText(
+  translate: ((text: string) => Promise<string | null>) | undefined,
+  text: string,
+  logger: Logger,
+): Promise<string | null> {
+  if (!translate || text.trim() === '') return null;
+  try {
+    return await translate(text);
+  } catch (error) {
+    logger.warn('translation.failed', { error: describeError(error) });
+    return null;
+  }
 }
 
 async function runBeforeReview(hook: (() => Promise<void>) | undefined, logger: Logger) {

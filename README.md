@@ -889,6 +889,35 @@ when it actually went out.
 `/api/cron/sync` reports an `awaitingApproval` count alongside `published`, and `/api/status`
 shows both statuses in its counts and recent posts.
 
+## Translation
+
+A channel that publishes in another language than its sources can have each post rewritten in it
+before review:
+
+```sql
+UPDATE workspaces SET language = 'uk' WHERE id = 2;   -- NULL turns it off
+```
+
+`language` is a BCP 47 code (`uk`, `de`, `pt-BR`). Each post's text is then rewritten by
+`RADAR_PROVIDER`'s model (GPT-6 Luna by default) and becomes its caption: what the reviewer sees,
+can edit, and what approval publishes. Prefix, suffix and the source link are added as before, and
+the review message keeps its link to the original post, so the original is one tap away.
+
+It is not word for word: the model writes it as the channel would — in the voice and format of
+the newest [publication-history profile](#publication-history) and of three of the channel's own
+representative posts, when there are — keeping every fact, number and name of the original and
+adding nothing; URLs stay as they are, the source is not credited in the text (the link does
+that), and a post already in the channel's language is left as it is.
+
+Only the caption changes. `processed_posts.source_text` keeps the source's own text, which Shadow
+Radar, embeddings and the history searches go on reading — so Radar scores the original while
+the translation runs alongside it, and neither waits for the other.
+
+Never in the way: a translation that fails, times out (25 s) or comes back empty leaves the post
+in its own language, and it goes on as it would have. A post that is skipped, and every post of a
+dry run, is not translated. Each translation is logged (`translation.done`) with its tokens; at
+Luna's list price a post of a few hundred characters costs about $0.0002–0.0003.
+
 ## Shadow Radar
 
 An experiment: can a model predict which posts the editor will publish? Radar scores each post

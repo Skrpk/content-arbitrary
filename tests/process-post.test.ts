@@ -863,3 +863,110 @@ describe('processPost beforeReview hook', () => {
     expect(outcome.status).toBe('awaiting-approval');
   });
 });
+
+describe('processPost translation', () => {
+  const approval = {
+    REQUIRE_APPROVAL: 'true',
+    TELEGRAM_ADMIN_CHAT_ID: '555001',
+    TELEGRAM_WEBHOOK_SECRET: 'a'.repeat(64),
+  };
+
+  const run = (
+    post: NormalizedPost,
+    options: {
+      translate?: (text: string) => Promise<string | null>;
+      beforeReview?: () => Promise<void>;
+      env?: Record<string, string | undefined>;
+    },
+  ) => {
+    const stack = makeFetch();
+    return withEnv({ DRY_RUN: 'false', ...options.env }, async (parsed) => ({
+      ...stack,
+      outcome: await processPost(post, {
+        client: makeClient(stack.fetchImpl),
+        logger: createTestLogger(),
+        env: parsed,
+        fetchImpl: stack.fetchImpl,
+        sleep: instantSleep,
+        postId: 7,
+        destination: testDestination(parsed, { adminChatId: '555001' }),
+        textOnly: true,
+        translate: options.translate,
+        beforeReview: options.beforeReview,
+      }),
+    }));
+  };
+
+  const sentText = (call: { body: FormData | string }) =>
+    typeof call.body === 'string'
+      ? ((JSON.parse(call.body) as { text?: string; caption?: string }).text ?? '')
+      : String(call.body.get('caption') ?? '');
+
+  it('sends the reviewer the translated caption, still with the source link', async () => {
+    const { outcome, telegramCalls } = await run(makePost([photo('a')], 'A rare photo of Saturn'), {
+      translate: async (text) => (text === 'A rare photo of Saturn' ? 'Рідкісне фото Сатурна' : null),
+      env: approval,
+    });
+
+    expect(outcome.status).toBe('awaiting-approval');
+    expect(sentText(telegramCalls[0]!)).toContain('Рідкісне фото Сатурна');
+    expect(sentText(telegramCalls[0]!)).not.toContain('A rare photo');
+    expect(outcome.caption).toContain('Рідкісне фото Сатурна');
+    expect(outcome.caption).toContain('https://x.com/testaccount/status/1234567890123456789');
+    // What approval publishes is what was reviewed.
+    expect(outcome.approval?.payload.caption).toBe(outcome.caption);
+  });
+
+  it('translates a text-only post too, and the one published straight to the channel', async () => {
+    const review = await run(makePost([], 'Just words'), { translate: async () => 'Просто слова', env: approval });
+    expect(review.outcome.approval?.payload.caption).toContain('Просто слова');
+
+    const direct = await run(makePost([photo('a')], 'Hello'), { translate: async () => 'Привіт' });
+    expect(direct.outcome.status).toBe('published');
+    expect(sentText(direct.telegramCalls[0]!)).toContain('Привіт');
+  });
+
+  it('scores the original while it translates, neither waiting for the other', async () => {
+    const events: string[] = [];
+    const { outcome } = await run(makePost([photo('a')], 'Hello'), {
+      translate: async () => {
+        events.push('translate:start');
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        events.push('translate:end');
+        return 'Привіт';
+      },
+      beforeReview: async () => {
+        events.push('radar:start');
+      },
+      env: approval,
+    });
+
+    expect(events.indexOf('radar:start')).toBeLessThan(events.indexOf('translate:end'));
+    expect(outcome.caption).toContain('Привіт');
+  });
+
+  it('keeps the original text when translation fails or has nothing to say', async () => {
+    for (const translate of [
+      async () => {
+        throw new Error('model down');
+      },
+      async () => null,
+    ]) {
+      const { outcome } = await run(makePost([photo('a')], 'A rare photo of Saturn'), { translate, env: approval });
+
+      expect(outcome.status).toBe('awaiting-approval');
+      expect(outcome.caption).toContain('A rare photo of Saturn');
+    }
+  });
+
+  it('pays for no translation of a post that is skipped, or on a dry run', async () => {
+    const translate = vi.fn(async () => 'Привіт');
+
+    await run(makePost([photo('a')], 'Hello'), { translate, env: { ...approval, DRY_RUN: 'true' } });
+    const tooWide = { ...photo('w'), width: 9000, height: 100 };
+    const skipped = await run(makePost([tooWide], 'Hello'), { translate, env: approval });
+
+    expect(skipped.outcome.status).toBe('skipped');
+    expect(translate).not.toHaveBeenCalled();
+  });
+});

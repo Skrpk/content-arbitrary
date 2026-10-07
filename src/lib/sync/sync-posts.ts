@@ -15,7 +15,8 @@ import {
 import { acquireSyncLock } from '@/lib/sync/locks';
 import { attributePostsToSource, getSyncState } from '@/lib/sync/repository';
 import { defaultSleep } from '@/lib/sync/retry';
-import { createRadarProvider } from '@/lib/radar/providers';
+import { createRadarProvider, type RadarProvider } from '@/lib/radar/providers';
+import { createTranslator, loadTranslationStyle, type Translator } from '@/lib/translation/translate';
 import { createEmbeddingProvider } from '@/lib/history/embeddings/provider';
 import {
   lastSyncKey,
@@ -77,6 +78,8 @@ export interface SyncOptions {
   skipLock?: boolean;
   /** Overrides Shadow Radar's run (and so its API client); injected by tests. */
   radarRun?: RadarRun;
+  /** Overrides the model that rewrites posts in a tenant's language; injected by tests. */
+  translationProvider?: RadarProvider | null;
   /** Overrides when the run stops taking new posts (epoch ms); injected by tests. */
   deadline?: number;
   now?: () => number;
@@ -136,6 +139,14 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
             : null))
         : null;
 
+    // The same model rewrites posts for tenants that publish in another
+    // language. Not in a dry run: nothing is sent, so nothing is paid for.
+    const translationProvider = env.DRY_RUN
+      ? null
+      : options.translationProvider !== undefined
+        ? options.translationProvider
+        : (radarProvider ?? createRadarProvider(env));
+
     // Sources, posts and cursors are all scoped to it, so it has to exist first.
     const defaultWorkspace = await ensureDefaultWorkspace(db, env, logger);
 
@@ -167,6 +178,20 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
       const count = channelsPerReviewer.get(tenant.telegramAdminChatId) ?? 0;
       channelsPerReviewer.set(tenant.telegramAdminChatId, count + 1);
     }
+
+    // Built once per tenant, and only for one with sources to sync.
+    const translators = new Map<number, Translator | undefined>();
+    const translatorFor = async (tenant: (typeof tenants)[number]): Promise<Translator | undefined> => {
+      if (!translationProvider || !tenant.language) return undefined;
+      if (!translators.has(tenant.id)) {
+        const style = await loadTranslationStyle(db, tenant.id, logger);
+        translators.set(
+          tenant.id,
+          createTranslator({ provider: translationProvider, language: tenant.language, style }),
+        );
+      }
+      return translators.get(tenant.id);
+    };
 
     for (const tenant of tenants) {
       if (now() >= deadline) {
@@ -249,6 +274,7 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
               radarRun && tenant.editorialProfile?.trim()
                 ? { run: radarRun, profile: tenant.editorialProfile }
                 : undefined,
+            translator: await translatorFor(tenant),
             deadline,
             now,
           });

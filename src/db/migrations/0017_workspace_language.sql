@@ -1,0 +1,2 @@
+ALTER TABLE "workspaces" ADD COLUMN "language" text;--> statement-breakpoint
+ALTER TABLE "workspaces" ADD CONSTRAINT "workspaces_language_check" CHECK ("workspaces"."language" IS NULL OR "workspaces"."language" ~ '^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$');

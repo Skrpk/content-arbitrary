@@ -24,6 +24,7 @@ import type { TelegramDestination } from '@/lib/workspace';
 import type { NormalizedPost, SourceSyncSummary } from '@/types';
 import { describeMedia, type RadarImage } from '@/lib/radar/prompt';
 import { runLiveRadar, type RadarRun } from '@/lib/radar/shadow';
+import { translateForReview, type Translator } from '@/lib/translation/translate';
 
 /**
  * One synchronisation pass over a single X account.
@@ -46,6 +47,8 @@ export interface SourceSyncContext {
   destination: TelegramDestination;
   /** Set when Shadow Radar scores this tenant's posts before review. */
   radar?: { run: RadarRun; profile: string };
+  /** Set when the tenant publishes in a language its posts are rewritten in. */
+  translator?: Translator;
   /** When to stop taking new posts (epoch ms); unset, there is no limit. */
   deadline?: number;
   now?: () => number;
@@ -200,6 +203,9 @@ export async function syncXSource(
           postId: claim.row.id,
           destination: context.destination,
           textOnly: source.includeTextOnly,
+          translate: context.translator
+            ? (text) => translateForReview(context.translator!, text, postLogger)
+            : undefined,
           beforeReview: context.radar
             ? () =>
                 runLiveRadar(

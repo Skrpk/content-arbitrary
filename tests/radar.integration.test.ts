@@ -25,7 +25,14 @@ import { syncPosts } from '@/lib/sync/sync-posts';
 import { TelegramClient } from '@/lib/telegram/client';
 import { XClient } from '@/lib/x/client';
 import { createTestLogger, ensureTestWorkspace, instantSleep, withEnv } from './helpers';
-import { fakeAnthropic, fakeBatchProvider, messageResponse, radarOutput } from './radar-fakes';
+import {
+  fakeAnthropic,
+  fakeBatchProvider,
+  fakeOpenAi,
+  messageResponse,
+  radarOutput,
+  responsesResponse,
+} from './radar-fakes';
 
 /**
  * Shadow Radar against a real database: what it may see, what it records, and
@@ -401,6 +408,55 @@ describeIfDb('Radar in the sync', () => {
     const [post] = await db.select().from(processedPosts);
     expect(post!.status).toBe('awaiting_approval');
     expect((await evaluations()).every((row) => row.status === 'failed')).toBe(true);
+  });
+
+  async function syncTranslated(language: string | null) {
+    await seed('Space and sci-fi.');
+    await db.update(workspaces).set({ language }).where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+    const { xClient, telegramClient, fetchImpl } = stack([]);
+    const radar = fakeAnthropic(() => messageResponse(radarOutput()));
+    const model = fakeOpenAi(() => responsesResponse({ text: 'Рідкісне фото Сатурна' }));
+
+    await withEnv(approvalEnv, (env) =>
+      syncPosts({
+        db,
+        env,
+        xClient,
+        telegramClient,
+        fetchImpl,
+        logger: createTestLogger(),
+        sleep: instantSleep,
+        skipLock: true,
+        radarRun: createRadarRun({ promptVersions: BASELINE_ONLY, provider: radar.provider }),
+        translationProvider: model.provider,
+      }),
+    );
+    return { radar, model };
+  }
+
+  it('sends a tenant with a language the post rewritten in it, and scores the original', async () => {
+    const { radar, model } = await syncTranslated('uk');
+
+    expect(model.requests).toHaveLength(1);
+    expect(model.requests[0]!.instructions as string).toContain('publishes in Ukrainian');
+    expect(JSON.stringify(model.requests[0]!.input)).toContain('A rare photo of Saturn');
+
+    const [post] = await db.select().from(processedPosts);
+    expect(post!.status).toBe('awaiting_approval');
+    expect(post!.caption).toContain('Рідкісне фото Сатурна');
+    expect(post!.caption).not.toContain('A rare photo');
+    // The source as it was: what Radar, embeddings and history read.
+    expect(post!.sourceText).toBe('A rare photo of Saturn');
+    expect(JSON.stringify(radar.requests)).toContain('A rare photo of Saturn');
+    expect(JSON.stringify(radar.requests)).not.toContain('Рідкісне');
+  });
+
+  it('leaves a tenant without a language untranslated', async () => {
+    const { model } = await syncTranslated(null);
+
+    expect(model.requests).toHaveLength(0);
+    const [post] = await db.select().from(processedPosts);
+    expect(post!.caption).toContain('A rare photo of Saturn');
   });
 
   it('leaves a tenant without an editorial profile alone', async () => {

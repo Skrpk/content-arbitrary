@@ -47,9 +47,17 @@ export const workspaces = pgTable('workspaces', {
    * off for the tenant.
    */
   editorialProfile: text('editorial_profile'),
+  /**
+   * The language the channel publishes in, as a BCP 47 code (`uk`, `de`,
+   * `pt-BR`). Set, and each post's text is rewritten in it, in the channel's
+   * style, before it goes to review; null leaves posts in their own language.
+   */
+  language: text('language'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  check('workspaces_language_check', sql`${table.language} IS NULL OR ${table.language} ~ '^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$'`),
+]);
 
 export type Workspace = typeof workspaces.$inferSelect;
 
