@@ -9,7 +9,7 @@ import {
 import { describeStoredMedia, type RadarExample } from '@/lib/radar/prompt';
 
 /** Statuses that mean the editor said yes: published, or scheduled to be. */
-const APPROVED_STATUSES = ['published', 'scheduled'] as const;
+export const APPROVED_STATUSES = ['published', 'scheduled'] as const;
 
 /**
  * The editor's decisions made before `before`, as Radar's examples, and the

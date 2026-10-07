@@ -1,6 +1,7 @@
 /**
- * Embed a workspace's imported publication history, so Shadow Radar's
- * retrieval prompt can find the past publications most similar to a new post.
+ * Embed a workspace's imported publication history, and the posts that went
+ * through its review, so Shadow Radar's retrieval prompts can find the past
+ * publications — and the already approved posts — most similar to a new one.
  *
  *   npm run history:embed -- --workspace 2 [--dry-run]
  *
@@ -16,7 +17,11 @@ import { workspaces } from '../src/db/schema';
 import { getDb, getSql } from '../src/lib/db';
 import { getEnv } from '../src/lib/env';
 import { createLogger } from '../src/lib/logger';
-import { embedPublicationHistory } from '../src/lib/history/embeddings/embed';
+import {
+  embedProcessedPosts,
+  embedPublicationHistory,
+  type HistoryEmbeddingSummary,
+} from '../src/lib/history/embeddings/embed';
 import { createEmbeddingProvider, embeddingCostUsd } from '../src/lib/history/embeddings/provider';
 
 function argument(name: string): string | undefined {
@@ -41,39 +46,47 @@ async function main() {
   const controller = new AbortController();
   process.once('SIGINT', () => controller.abort(new Error('interrupted')));
 
-  const summary = await embedPublicationHistory({
+  const options = {
     db,
     embeddings,
     workspaceId,
     dryRun,
     logger: createLogger({ app: 'content-arbitrary', surface: 'history-embed' }),
     signal: controller.signal,
-  });
+  };
+  const history = await embedPublicationHistory(options);
+  const posts = await embedProcessedPosts(options);
 
   const row = (label: string, value: string | number) => console.log(`${`${label}:`.padEnd(20)}${value}`);
-  const cost = embeddingCostUsd(summary.model, summary.inputTokens);
+  const section = (title: string, summary: HistoryEmbeddingSummary, noun: string) => {
+    console.log('');
+    console.log(title);
+    row(noun, summary.items);
+    row('Eligible text', summary.eligible);
+    row('Already embedded', summary.alreadyEmbedded);
+    row(dryRun ? 'Would embed' : 'Embedded', summary.embedded);
+    row(dryRun ? 'Would re-embed' : 'Re-embedded', `${summary.reembedded} (text changed)`);
+    row('Skipped no text', summary.skippedNoText);
+    if (summary.removedStale > 0) row(dryRun ? 'Would remove' : 'Removed stale', summary.removedStale);
+    row('Failed', summary.failed);
+  };
 
   console.log('');
   console.log(dryRun ? 'History embedding (dry run: nothing embedded)' : 'History embedding completed');
   console.log('');
   row('Workspace', `${workspace.name} (${workspaceId})`);
-  row('Model', summary.model);
-  console.log('');
-  row('History items', summary.items);
-  row('Eligible text', summary.eligible);
-  row('Already embedded', summary.alreadyEmbedded);
-  row(dryRun ? 'Would embed' : 'Embedded', summary.embedded);
-  row(dryRun ? 'Would re-embed' : 'Re-embedded', `${summary.reembedded} (text changed)`);
-  row('Skipped no text', summary.skippedNoText);
-  if (summary.removedStale > 0) row(dryRun ? 'Would remove' : 'Removed stale', summary.removedStale);
-  row('Failed', summary.failed);
+  row('Model', embeddings.model);
+  section('Publication history', history, 'History items');
+  section('Processed posts (to spot repeats of approved ones)', posts, 'Posts');
   if (!dryRun) {
+    const inputTokens = history.inputTokens + posts.inputTokens;
+    const cost = embeddingCostUsd(embeddings.model, inputTokens);
     console.log('');
-    row('Requests', summary.requests);
-    row('Input tokens', summary.inputTokens);
+    row('Requests', history.requests + posts.requests);
+    row('Input tokens', inputTokens);
     row('Estimated cost', cost === null ? 'n/a (model not priced here)' : `$${cost.toFixed(6)}`);
   }
-  if (summary.failed > 0) process.exitCode = 1;
+  if (history.failed + posts.failed > 0) process.exitCode = 1;
 }
 
 main()

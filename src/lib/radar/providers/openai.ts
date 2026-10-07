@@ -82,7 +82,13 @@ export function createOpenAiRadar(options: {
     input: [
       {
         role: 'user',
-        content: buildUserContent(input.item, input.examples, input.image, input.similarPublications).map(
+        content: buildUserContent(
+          input.item,
+          input.examples,
+          input.image,
+          input.similarPublications,
+          input.similarApproved,
+        ).map(
           toOpenAiPart,
         ),
       },

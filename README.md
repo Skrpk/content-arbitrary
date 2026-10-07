@@ -904,11 +904,14 @@ most recent approvals and 10 most recent rejections with their reasons, the shar
 approve, and the post: its source, text and kind of media. Each post is scored twice when it has a picture — on the text alone and on the
 text with its first photo (or a video's still) — to find out whether the image is worth paying for.
 
-**Two prompts, side by side.** Every post is scored with both `radar-v1` (the baseline above) and
+**Prompts, side by side.** Three versions build on each other, so each addition is measured on
+the same posts, not on two different sets: `radar-v1` (the baseline above);
 `radar-v2-history-retrieval`, which adds the channel's [five most similar past
-publications](#similar-past-publications) and asks what they show — so the effect of retrieval is
-measured on the same posts, not on two different sets. `LIVE_RADAR_PROMPT_VERSIONS` in
-[`src/lib/radar/prompt.ts`](src/lib/radar/prompt.ts) is the list; drop one there to stop it.
+publications](#similar-past-publications) and asks what they show; and
+`radar-v3-retrieval-approved`, which also adds the [five most similar posts the editor already
+approved](#similar-approved-posts). Live, every post is scored with `radar-v1` and the newest;
+backfills score all three by default. `LIVE_RADAR_PROMPT_VERSIONS` in
+[`src/lib/radar/prompt.ts`](src/lib/radar/prompt.ts) is the live list.
 
 **What it records**, in `radar_evaluations`: a 0–100 score (the probability the editor publishes
 it), the predicted decision and rejection reason, three sub-scores, a one-sentence reason, which
@@ -945,7 +948,7 @@ compares them rather than mixing them. Luna's list price is a tenth of Haiku's.
 ### Scoring past decisions
 
 ```bash
-npm run radar:backfill -- --workspace 2 [--prompt radar-v1,radar-v2-history-retrieval]
+npm run radar:backfill -- --workspace 2 [--prompt radar-v1,radar-v3-retrieval-approved]
 ```
 
 Scores posts the editor has already decided, each with only the decisions made before it arrived —
@@ -965,8 +968,8 @@ to X's URL, a video's still from X. Posts decided before that column existed hav
 scored on their text;
 `--text-only` skips that, `--limit N` stops after scoring N posts (the oldest first).
 
-Both prompt versions go into the same batch by default; `--prompt` picks some. The retrieval prompt
-needs `OPENAI_API_KEY` for embeddings and the history embedded (`npm run history:embed`) first.
+Every prompt version goes into the same batch by default; `--prompt` picks some. The retrieval
+prompts need `OPENAI_API_KEY` for embeddings and the history embedded (`npm run history:embed`) first.
 A post whose similarity search fails has its retrieval request held back and retried by the next
 run, so a retrieval score is never one made without retrieval by accident. Do not re-embed history
 while a batch is pending: what a result is recorded as having been shown is read again at ingest.
@@ -1001,7 +1004,8 @@ A prompt change gets a new version in [`src/lib/radar/prompt.ts`](src/lib/radar/
 results of different prompts are reported separately and never mixed — and so are scores made
 with different history profiles, or none. `radar-v0` is the prompt before publication history;
 `radar-v1` adds it and puts the editorial profile explicitly first; `radar-v2-history-retrieval`
-is `radar-v1` plus similar past publications.
+is `radar-v1` plus similar past publications; `radar-v3-retrieval-approved` is `radar-v2` plus
+similar approved posts.
 
 To see exactly what Radar would be shown for a post — Radar's model is not called; the retrieval
 prompt's search embeds the post once:
@@ -1106,6 +1110,9 @@ there are profiles made at earlier points in time; that is deliberate.
 npm run history:embed -- --workspace 2 [--dry-run]
 ```
 
+(It also embeds the workspace's processed posts, for [similar approved
+posts](#similar-approved-posts).)
+
 The profile is a summary; it loses the concrete posts. So each history item with text is also
 embedded — OpenAI's `HISTORY_EMBEDDING_MODEL`, `text-embedding-3-small` by default (1,536
 dimensions, $0.02 per million tokens; `text-embedding-3-large` is 3,072 and $0.13) — into
@@ -1142,6 +1149,24 @@ embedded once, and a backfill can read back exactly what its requests were shown
 `OPENAI_API_KEY`, an API or database error: the retrieval prompt then runs without matches, its
 row says why (`history_retrieval.status`), and the baseline is unaffected. Live, the search gets
 five seconds.
+
+### Similar approved posts
+
+Most repeats an editor turns down are not of what the channel published long ago but of what they
+approved last week from the same stream of sources — which, while posts go to a draft channel, is
+not in the channel's exported history at all. So `radar-v3-retrieval-approved` also shows Radar
+the five posts the editor already approved (published or scheduled) that are nearest to the new
+one, with when they were approved, and tells it that one reporting the same story is the most
+direct sign of a repeat — the more so the more recent.
+
+The vectors are the posts' own, in `radar_candidate_embeddings`: every post Radar searches with is
+embedded on the way, so a post approved after that is already searchable; `npm run history:embed`
+embeds the posts that never were (all of a workspace's posts with text, once). The search has the
+same boundaries, in the query: this workspace, the same model, approved — and approved strictly
+before the new post arrived, so a backfill never sees an approval the editor had not yet made —
+and never the post itself. It shares the post's vector with the history search, so it costs no
+extra call, and runs even for a workspace with no imported history. What it found is recorded in
+`history_retrieval.approved`, with its own status.
 
 **Cost.** One embedding call per new post (a few hundred tokens), and the history once: VECTOR's
 83 posts with text, about 24,000 characters, cost a fraction of a cent. `history:embed` prints the

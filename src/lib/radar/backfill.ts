@@ -13,8 +13,10 @@ import {
   describeStoredMedia,
   RADAR_EXAMPLES_PER_CLASS,
   RADAR_PROMPT_BASELINE,
+  RADAR_PROMPT_APPROVED,
   RADAR_PROMPT_RETRIEVAL,
   RADAR_PROMPT_VERSIONS,
+  usesApprovedRetrieval,
   usesHistoryRetrieval,
   type RadarImage,
   type RadarPromptVersion,
@@ -31,6 +33,7 @@ import {
   replaySimilarPublications,
   retrieveSimilarPublications,
   toRetrievalRecord,
+  type HistoryRetrieval,
 } from '@/lib/history/embeddings/retrieval';
 
 /**
@@ -91,6 +94,7 @@ export interface IngestSummary {
 const PROMPT_TAGS: Record<RadarPromptVersion, string> = {
   [RADAR_PROMPT_BASELINE]: '',
   [RADAR_PROMPT_RETRIEVAL]: 'v2r',
+  [RADAR_PROMPT_APPROVED]: 'v3a',
 };
 
 /**
@@ -254,6 +258,7 @@ export async function submitRadarBackfill(input: {
           processedPostId: post.id,
           candidateText: post.sourceText,
           before: post.createdAt,
+          includeApproved: requests.some(({ version }) => usesApprovedRetrieval(version)),
           logger: input.logger,
         })
       : null;
@@ -279,6 +284,7 @@ export async function submitRadarBackfill(input: {
         publicationProfile: publication?.profile ?? null,
         promptVersion: version,
         similarPublications: usesHistoryRetrieval(version) ? (retrieval?.matches ?? []) : null,
+        similarApproved: usesApprovedRetrieval(version) ? (retrieval?.approved?.matches ?? []) : null,
       });
 
       const bytes = JSON.stringify(request).length;
@@ -332,7 +338,7 @@ export async function ingestRadarBatch(input: {
     number,
     { createdAt: Date; sourceText: string | null; examplePostIds: number[] } | null
   >();
-  const retrievals = new Map<number, HistoryRetrievalRecord>();
+  const retrievals = new Map<number, HistoryRetrieval | null>();
 
   for await (const result of input.provider.batchResults(input.batchId)) {
     const key = parseCustomId(result.customId);
@@ -379,23 +385,32 @@ export async function ingestRadarBatch(input: {
     let historyRetrieval: HistoryRetrievalRecord | null = null;
     if (usesHistoryRetrieval(key.promptVersion)) {
       if (!retrievals.has(key.processedPostId)) {
+        // Both searches, whichever version asks first; each keeps its own part.
         retrievals.set(
           key.processedPostId,
           input.embeddingModel
-            ? toRetrievalRecord(
-                await replaySimilarPublications({
-                  db: input.db,
-                  model: input.embeddingModel,
-                  workspaceId: input.workspaceId,
-                  processedPostId: key.processedPostId,
-                  candidateText: post.sourceText,
-                  before: post.createdAt,
-                }),
-              )
-            : { status: 'unavailable', embeddingModel: null, matches: [] },
+            ? await replaySimilarPublications({
+                db: input.db,
+                model: input.embeddingModel,
+                workspaceId: input.workspaceId,
+                processedPostId: key.processedPostId,
+                candidateText: post.sourceText,
+                before: post.createdAt,
+                includeApproved: true,
+              })
+            : null,
         );
       }
-      historyRetrieval = retrievals.get(key.processedPostId)!;
+      const replayed = retrievals.get(key.processedPostId);
+      const withApproved = usesApprovedRetrieval(key.promptVersion);
+      historyRetrieval = replayed
+        ? toRetrievalRecord(replayed, { approved: withApproved })
+        : {
+            status: 'unavailable',
+            embeddingModel: null,
+            matches: [],
+            ...(withApproved ? { approved: { status: 'unavailable' as const, matches: [] } } : {}),
+          };
     }
 
     const base = {

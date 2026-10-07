@@ -6,6 +6,7 @@ import { RadarError } from '@/lib/radar/output';
 import {
   LIVE_RADAR_PROMPT_VERSIONS,
   RADAR_EXAMPLES_PER_CLASS,
+  usesApprovedRetrieval,
   usesHistoryRetrieval,
   type RadarImage,
   type RadarItem,
@@ -182,6 +183,7 @@ export async function scoreAndRecord(
         processedPostId: subject.processedPostId,
         candidateText: subject.item.text,
         before: options.before,
+        includeApproved: pending.some(({ version }) => usesApprovedRetrieval(version)),
         timeoutMs: Math.min(RETRIEVAL_TIMEOUT_MS, options.timeoutMs),
         logger: options.logger,
       })
@@ -191,7 +193,8 @@ export async function scoreAndRecord(
     pending.map(async ({ version, variant }): Promise<'ok' | 'failed'> => {
       const image = variant === 'text_image' ? subject.image : undefined;
       const shown = usesHistoryRetrieval(version) ? retrieval : null;
-      const historyRetrieval = shown ? toRetrievalRecord(shown) : null;
+      const withApproved = usesApprovedRetrieval(version);
+      const historyRetrieval = shown ? toRetrievalRecord(shown, { approved: withApproved }) : null;
       const startedAt = Date.now();
       try {
         const prediction = await provider.score(
@@ -204,6 +207,7 @@ export async function scoreAndRecord(
             publicationProfile: publication?.profile ?? null,
             promptVersion: version,
             similarPublications: shown?.matches ?? null,
+            similarApproved: withApproved ? (shown?.approved?.matches ?? []) : null,
           },
           { timeoutMs: options.timeoutMs },
         );

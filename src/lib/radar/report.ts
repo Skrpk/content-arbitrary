@@ -278,6 +278,22 @@ function formatRetrieval(rows: ReportRow[]): string[] | null {
       (top.length > 0 ? ` · top similarity median ${median(top).toFixed(2)}` : ''),
   ];
 
+  const withApproved = searched.filter((row) => row.historyRetrieval!.approved);
+  if (withApproved.length > 0) {
+    const approvedStatus = new Map<string, number>();
+    for (const row of withApproved) {
+      const status = row.historyRetrieval!.approved!.status;
+      approvedStatus.set(status, (approvedStatus.get(status) ?? 0) + 1);
+    }
+    const topApproved = withApproved
+      .map((row) => row.historyRetrieval!.approved!.matches[0]?.similarity)
+      .filter((value): value is number => value !== undefined);
+    lines.push(
+      `Approved-post retrieval: ${[...approvedStatus.entries()].map(([status, total]) => `${status} ${total}`).join(', ')}` +
+        (topApproved.length > 0 ? ` · top similarity median ${median(topApproved).toFixed(2)}` : ''),
+    );
+  }
+
   const decided = usable(rows);
   const flagged = decided.filter((row) => row.historicalAssessment?.possiblyAlreadyCovered);
   const repeats = decided.filter((row) => row.rejectionReason === 'already_covered');

@@ -6,6 +6,7 @@ import type {
   RadarImage,
   RadarItem,
   RadarPromptVersion,
+  RadarSimilarApproved,
   RadarSimilarPublication,
 } from '@/lib/radar/prompt';
 import { truncateToLength } from '@/lib/telegram/format-caption';
@@ -66,6 +67,8 @@ export interface RadarInput {
   promptVersion?: RadarPromptVersion;
   /** Retrieval prompt only: the most similar past publications, possibly none. */
   similarPublications?: RadarSimilarPublication[] | null;
+  /** Approved-posts prompt only: the most similar posts the editor already approved. */
+  similarApproved?: RadarSimilarApproved[] | null;
 }
 
 export interface TokenUsage {

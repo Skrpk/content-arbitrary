@@ -9,19 +9,27 @@ import {
 import {
   deleteHistoryEmbeddings,
   loadHistoryForEmbedding,
+  loadProcessedPostsForEmbedding,
+  upsertCandidateEmbeddings,
   upsertHistoryEmbeddings,
 } from '@/lib/history/embeddings/repository';
-import { buildHistoryEmbeddingText, embeddingFingerprint } from '@/lib/history/embeddings/text';
+import {
+  buildCandidateEmbeddingText,
+  buildHistoryEmbeddingText,
+  embeddingFingerprint,
+} from '@/lib/history/embeddings/text';
 import { packByBudget } from '@/lib/history/profile/prompt';
 
 /**
- * Embed a workspace's publication history: every item with text that has no
- * vector for the current model, or whose vector was made from different text.
+ * Embed what similar-publication search compares against: a workspace's
+ * publication history, and the posts that went through its review — every
+ * item with text that has no vector for the current model, or whose vector
+ * was made from different text.
  *
  * Incremental by construction — an unchanged item's fingerprint matches its
  * stored vector and costs nothing — so it is safe to run after every import.
- * Items without text (photo- or video-only) are left as they are, without a
- * vector; one that has lost its text since loses its stale vector.
+ * History items without text (photo- or video-only) are left as they are,
+ * without a vector; one that has lost its text since loses its stale vector.
  */
 
 export interface HistoryEmbeddingSummary {
@@ -42,7 +50,7 @@ export interface HistoryEmbeddingSummary {
   inputTokens: number;
 }
 
-export async function embedPublicationHistory(input: {
+interface EmbedOptions {
   db: Database;
   embeddings: EmbeddingProvider;
   workspaceId: number;
@@ -50,11 +58,78 @@ export async function embedPublicationHistory(input: {
   dryRun?: boolean;
   logger?: Logger;
   signal?: AbortSignal;
-}): Promise<HistoryEmbeddingSummary> {
+}
+
+interface Pending {
+  id: number;
+  text: string;
+  fingerprint: string;
+  changed: boolean;
+}
+
+export async function embedPublicationHistory(input: EmbedOptions): Promise<HistoryEmbeddingSummary> {
   const { db, embeddings, workspaceId } = input;
   const model = embeddings.model;
   const items = await loadHistoryForEmbedding(db, { workspaceId, model });
+  const { summary, pending, stale } = plan(model, items, buildHistoryEmbeddingText);
 
+  if (input.dryRun) return dryRun(summary, pending, stale);
+
+  await deleteHistoryEmbeddings(db, { itemIds: stale, model });
+  summary.removedStale = stale.length;
+
+  await embedPending(input, summary, pending, (request, vectors) =>
+    upsertHistoryEmbeddings(
+      db,
+      request.map((item, index) => ({
+        itemId: item.id,
+        model,
+        contentFingerprint: item.fingerprint,
+        embedding: vectors[index]!,
+      })),
+    ),
+  );
+
+  log(input, 'history.embedded', summary);
+  return summary;
+}
+
+/**
+ * The workspace's processed posts — the candidates its reviewer has seen —
+ * so that once one is approved, later candidates can be compared with it. A
+ * post scored live is embedded then; this covers the ones that never were.
+ */
+export async function embedProcessedPosts(input: EmbedOptions): Promise<HistoryEmbeddingSummary> {
+  const { db, embeddings, workspaceId } = input;
+  const model = embeddings.model;
+  const posts = await loadProcessedPostsForEmbedding(db, { workspaceId, model });
+  const { summary, pending, stale } = plan(model, posts, (post) => buildCandidateEmbeddingText(post.text));
+
+  // A post's text is never changed, so a post without text has no vector to drop.
+  if (input.dryRun) return dryRun(summary, pending, stale);
+
+  await embedPending(input, summary, pending, (request, vectors) =>
+    upsertCandidateEmbeddings(
+      db,
+      request.map((post, index) => ({
+        processedPostId: post.id,
+        model,
+        contentFingerprint: post.fingerprint,
+        embedding: vectors[index]!,
+        inputTokens: null,
+      })),
+    ),
+  );
+
+  log(input, 'history.posts_embedded', summary);
+  return summary;
+}
+
+function plan<T extends { id: number; storedFingerprint: string | null }>(
+  model: string,
+  items: T[],
+  textOf: (item: T) => string | null,
+): { summary: HistoryEmbeddingSummary; pending: Pending[]; stale: number[] } {
   const summary: HistoryEmbeddingSummary = {
     model,
     items: items.length,
@@ -68,12 +143,11 @@ export async function embedPublicationHistory(input: {
     requests: 0,
     inputTokens: 0,
   };
-
-  const pending: { itemId: number; text: string; fingerprint: string; changed: boolean }[] = [];
+  const pending: Pending[] = [];
   const stale: number[] = [];
 
   for (const item of items) {
-    const text = buildHistoryEmbeddingText(item);
+    const text = textOf(item);
     if (text === null) {
       summary.skippedNoText += 1;
       if (item.storedFingerprint !== null) stale.push(item.id);
@@ -85,19 +159,24 @@ export async function embedPublicationHistory(input: {
       summary.alreadyEmbedded += 1;
       continue;
     }
-    pending.push({ itemId: item.id, text, fingerprint, changed: item.storedFingerprint !== null });
+    pending.push({ id: item.id, text, fingerprint, changed: item.storedFingerprint !== null });
   }
+  return { summary, pending, stale };
+}
 
-  if (input.dryRun) {
-    summary.removedStale = stale.length;
-    summary.embedded = pending.filter((item) => !item.changed).length;
-    summary.reembedded = pending.length - summary.embedded;
-    return summary;
-  }
-
-  await deleteHistoryEmbeddings(db, { itemIds: stale, model });
+function dryRun(summary: HistoryEmbeddingSummary, pending: Pending[], stale: number[]): HistoryEmbeddingSummary {
   summary.removedStale = stale.length;
+  summary.embedded = pending.filter((item) => !item.changed).length;
+  summary.reembedded = pending.length - summary.embedded;
+  return summary;
+}
 
+async function embedPending(
+  input: EmbedOptions,
+  summary: HistoryEmbeddingSummary,
+  pending: Pending[],
+  store: (request: Pending[], vectors: number[][]) => Promise<void>,
+): Promise<void> {
   const requests = packByBudget(pending, (item) => item.text.length, EMBEDDING_REQUEST_MAX_CHARS).flatMap(
     (group) => chunk(group, EMBEDDING_REQUEST_MAX_INPUTS),
   );
@@ -105,21 +184,13 @@ export async function embedPublicationHistory(input: {
   for (const request of requests) {
     input.signal?.throwIfAborted();
     try {
-      const result = await embeddings.embed(
+      const result = await input.embeddings.embed(
         request.map((item) => item.text),
         { signal: input.signal },
       );
       summary.requests += 1;
       summary.inputTokens += result.inputTokens;
-      await upsertHistoryEmbeddings(
-        db,
-        request.map((item, index) => ({
-          itemId: item.itemId,
-          model,
-          contentFingerprint: item.fingerprint,
-          embedding: result.vectors[index]!,
-        })),
-      );
+      await store(request, result.vectors);
       for (const item of request) {
         if (item.changed) summary.reembedded += 1;
         else summary.embedded += 1;
@@ -129,17 +200,18 @@ export async function embedPublicationHistory(input: {
       // One failed request leaves its items for the next run; the rest go on.
       summary.failed += request.length;
       input.logger?.warn('history.embed_request_failed', {
-        workspaceId,
+        workspaceId: input.workspaceId,
         items: request.length,
         error: describeError(error),
       });
     }
   }
+}
 
+function log(input: EmbedOptions, event: string, summary: HistoryEmbeddingSummary) {
   // Usage under a key the logger does not take for a secret: it redacts anything named *token*.
   const { inputTokens, ...counts } = summary;
-  input.logger?.info('history.embedded', { ...counts, workspaceId, usage: { input: inputTokens } });
-  return summary;
+  input.logger?.info(event, { ...counts, workspaceId: input.workspaceId, usage: { input: inputTokens } });
 }
 
 function chunk<T>(items: T[], size: number): T[][] {

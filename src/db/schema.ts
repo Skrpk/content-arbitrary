@@ -497,6 +497,12 @@ export interface HistoryRetrievalRecord {
   embeddingModel: string | null;
   /** `publication_history_items` ids, most similar first, with cosine similarity. */
   matches: { id: number; similarity: number }[];
+  /**
+   * The approved-posts prompt only: the search among posts the editor had
+   * already approved — `processed_posts` ids, most similar first. `status`
+   * above covers history; this has its own, as either can be empty alone.
+   */
+  approved?: { status: HistoryRetrievalStatus; matches: { id: number; similarity: number }[] };
   error?: string;
 }
 
@@ -737,9 +743,12 @@ export const publicationHistoryEmbeddings = pgTable(
 );
 
 /**
- * The embedding of a post's text as Radar searched history with it. Kept so a
- * backfill can reproduce, when it reads results back, exactly the search its
- * requests were built from, and so a post is not embedded twice.
+ * The embedding of a processed post's text: as a candidate, what Radar
+ * searches with — kept so a backfill can reproduce, when it reads results
+ * back, exactly the search its requests were built from, and so a post is not
+ * embedded twice; once the editor approves it, what later candidates are
+ * compared with to spot a repeat. `npm run history:embed` fills it in for
+ * posts that were never searched with.
  */
 export const radarCandidateEmbeddings = pgTable(
   'radar_candidate_embeddings',

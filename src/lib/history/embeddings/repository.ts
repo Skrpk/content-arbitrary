@@ -1,11 +1,13 @@
-import { and, asc, count, eq, inArray, lt, sql } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, isNotNull, lt, ne, sql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import {
+  processedPosts,
   publicationHistoryEmbeddings,
   publicationHistoryItems,
   radarCandidateEmbeddings,
   type HistoryContentType,
 } from '@/db/schema';
+import { APPROVED_STATUSES } from '@/lib/radar/repository';
 
 /** A workspace's history items with the fingerprint of their stored vector for `model`, if any. */
 export async function loadHistoryForEmbedding(db: Database, input: { workspaceId: number; model: string }) {
@@ -170,13 +172,24 @@ export async function findCandidateEmbedding(
   return row?.embedding ?? null;
 }
 
-export async function upsertCandidateEmbedding(
-  db: Database,
-  row: { processedPostId: number; model: string; contentFingerprint: string; embedding: number[]; inputTokens: number },
-): Promise<void> {
+export interface CandidateEmbeddingRow {
+  processedPostId: number;
+  model: string;
+  contentFingerprint: string;
+  embedding: number[];
+  /** Tokens of the request that made it, or null when it was one of several. */
+  inputTokens: number | null;
+}
+
+export async function upsertCandidateEmbedding(db: Database, row: CandidateEmbeddingRow): Promise<void> {
+  await upsertCandidateEmbeddings(db, [row]);
+}
+
+export async function upsertCandidateEmbeddings(db: Database, rows: CandidateEmbeddingRow[]): Promise<void> {
+  if (rows.length === 0) return;
   await db
     .insert(radarCandidateEmbeddings)
-    .values({ ...row, dimensions: row.embedding.length })
+    .values(rows.map((row) => ({ ...row, dimensions: row.embedding.length })))
     .onConflictDoUpdate({
       target: [radarCandidateEmbeddings.processedPostId, radarCandidateEmbeddings.model],
       set: {
@@ -187,4 +200,92 @@ export async function upsertCandidateEmbedding(
         createdAt: new Date(),
       },
     });
+}
+
+/** A workspace's processed posts with text, and the fingerprint of their stored vector for `model`, if any. */
+export async function loadProcessedPostsForEmbedding(db: Database, input: { workspaceId: number; model: string }) {
+  return db
+    .select({
+      id: processedPosts.id,
+      text: processedPosts.sourceText,
+      storedFingerprint: radarCandidateEmbeddings.contentFingerprint,
+    })
+    .from(processedPosts)
+    .leftJoin(
+      radarCandidateEmbeddings,
+      and(eq(radarCandidateEmbeddings.processedPostId, processedPosts.id), eq(radarCandidateEmbeddings.model, input.model)),
+    )
+    .where(and(eq(processedPosts.workspaceId, input.workspaceId), isNotNull(processedPosts.sourceText)))
+    .orderBy(asc(processedPosts.id));
+}
+
+/** One post the editor already approved, found similar to a new one. */
+export interface ApprovedMatch {
+  processedPostId: number;
+  /** Cosine similarity of the two embeddings, -1..1. */
+  similarity: number;
+  text: string | null;
+  sourceUsername: string | null;
+  /** When the editor approved it. */
+  approvedAt: Date;
+}
+
+interface ApprovedScope {
+  workspaceId: number;
+  model: string;
+  before: Date;
+  /** The candidate itself, never its own match. */
+  excludePostId: number;
+}
+
+/** How many embedded posts the editor had approved before `before` — zero means nothing to search. */
+export async function countSearchableApproved(db: Database, input: ApprovedScope): Promise<number> {
+  const [row] = await db
+    .select({ total: count() })
+    .from(radarCandidateEmbeddings)
+    .innerJoin(processedPosts, eq(processedPosts.id, radarCandidateEmbeddings.processedPostId))
+    .where(approvedBefore(input));
+  return row?.total ?? 0;
+}
+
+/**
+ * The `limit` posts the editor had approved before `before` nearest to
+ * `embedding`, most similar first. Like the history search, every boundary is
+ * in the query: this workspace, this model and length, approved — published
+ * or scheduled — and decided strictly before the candidate arrived, so a
+ * backfill never sees an approval the editor had not yet made.
+ */
+export async function findSimilarApprovedPosts(
+  db: Database,
+  input: ApprovedScope & { embedding: number[]; limit: number },
+): Promise<ApprovedMatch[]> {
+  const query = sql`${`[${input.embedding.join(',')}]`}::vector`;
+  const distance = sql`${radarCandidateEmbeddings.embedding} <=> ${query}`;
+
+  const rows = await db
+    .select({
+      processedPostId: processedPosts.id,
+      similarity: sql<number>`1 - (${distance})`.mapWith(Number),
+      text: processedPosts.sourceText,
+      sourceUsername: processedPosts.xAuthorUsername,
+      approvedAt: processedPosts.reviewedAt,
+    })
+    .from(radarCandidateEmbeddings)
+    .innerJoin(processedPosts, eq(processedPosts.id, radarCandidateEmbeddings.processedPostId))
+    .where(and(approvedBefore(input), eq(radarCandidateEmbeddings.dimensions, input.embedding.length)))
+    .orderBy(distance, asc(processedPosts.id))
+    .limit(input.limit);
+
+  // reviewed_at is non-null by the filter.
+  return rows.map((row) => ({ ...row, approvedAt: row.approvedAt! }));
+}
+
+function approvedBefore(input: ApprovedScope) {
+  return and(
+    eq(processedPosts.workspaceId, input.workspaceId),
+    eq(radarCandidateEmbeddings.model, input.model),
+    inArray(processedPosts.status, [...APPROVED_STATUSES]),
+    lt(processedPosts.reviewedAt, input.before),
+    ne(processedPosts.id, input.excludePostId),
+  );
 }

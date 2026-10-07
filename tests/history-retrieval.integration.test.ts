@@ -19,6 +19,9 @@ import { findSimilarHistoricalItems } from '@/lib/history/embeddings/repository'
 import { HISTORY_RETRIEVAL_LIMIT, retrieveSimilarPublications } from '@/lib/history/embeddings/retrieval';
 import { ingestRadarBatch, submitRadarBackfill, waitForBatch } from '@/lib/radar/backfill';
 import { RADAR_PROMPT_BASELINE, RADAR_PROMPT_RETRIEVAL } from '@/lib/radar/prompt';
+
+/** The baseline against history retrieval alone; the approved-posts prompt has its own suite. */
+const V1_V2 = [RADAR_PROMPT_BASELINE, RADAR_PROMPT_RETRIEVAL] as const;
 import { createRadarRun, runLiveRadar } from '@/lib/radar/shadow';
 import { createTestLogger, ensureTestWorkspace } from './helpers';
 import { fakeEmbedding, fakeEmbeddings } from './history-fakes';
@@ -425,7 +428,7 @@ describeIfDb('Shadow Radar with similar past publications', () => {
     const { provider, requests } = fakeAnthropic(() => messageResponse(withContext));
     const embeddings = fakeEmbeddings();
 
-    await runLiveRadar(createRadarRun({ provider, embeddings: embeddings.provider }), db, subject(candidate.id), createTestLogger());
+    await runLiveRadar(createRadarRun({ promptVersions: V1_V2, provider, embeddings: embeddings.provider }), db, subject(candidate.id), createTestLogger());
 
     expect(requests).toHaveLength(2);
     const [baseline, retrieval] = [...requests].sort((a, b) =>
@@ -462,7 +465,7 @@ describeIfDb('Shadow Radar with similar past publications', () => {
     const { provider, requests } = fakeAnthropic(() => messageResponse(radarOutput({ score: 61 })));
 
     await runLiveRadar(
-      createRadarRun({ provider, embeddings: fakeEmbeddings({ fail: () => true }).provider }),
+      createRadarRun({ promptVersions: V1_V2, provider, embeddings: fakeEmbeddings({ fail: () => true }).provider }),
       db,
       subject(candidate.id),
       createTestLogger(),
@@ -481,9 +484,9 @@ describeIfDb('Shadow Radar with similar past publications', () => {
     const candidate = await post({ decision: 'pending', createdAt: new Date() });
     const { provider } = fakeAnthropic(() => messageResponse(radarOutput()));
 
-    await runLiveRadar(createRadarRun({ provider, embeddings: fakeEmbeddings().provider }), db, subject(candidate.id), createTestLogger());
+    await runLiveRadar(createRadarRun({ promptVersions: V1_V2, provider, embeddings: fakeEmbeddings().provider }), db, subject(candidate.id), createTestLogger());
     const other = await post({ decision: 'pending', createdAt: new Date() });
-    await runLiveRadar(createRadarRun({ provider }), db, subject(other.id), createTestLogger());
+    await runLiveRadar(createRadarRun({ promptVersions: V1_V2, provider }), db, subject(other.id), createTestLogger());
 
     const retrievalRows = (await db.select().from(radarEvaluations)).filter(
       (row) => row.promptVersion === RADAR_PROMPT_RETRIEVAL,
@@ -502,7 +505,7 @@ describeIfDb('Shadow Radar with similar past publications', () => {
     const { provider } = fakeAnthropic(() => messageResponse(radarOutput()));
     const embeddings = fakeEmbeddings();
 
-    await runLiveRadar(createRadarRun({ provider, embeddings: embeddings.provider }), db, subject(candidate.id, ''), createTestLogger());
+    await runLiveRadar(createRadarRun({ promptVersions: V1_V2, provider, embeddings: embeddings.provider }), db, subject(candidate.id, ''), createTestLogger());
 
     expect(embeddings.calls).toEqual([]);
     const row = (await db.select().from(radarEvaluations)).find((r) => r.promptVersion === RADAR_PROMPT_RETRIEVAL)!;
@@ -518,7 +521,7 @@ describeIfDb('Shadow Radar with similar past publications', () => {
     const candidate = await post({ decision: 'pending', createdAt: new Date() });
     const { provider, requests } = fakeAnthropic(() => messageResponse(radarOutput()));
 
-    await runLiveRadar(createRadarRun({ provider, embeddings: fakeEmbeddings().provider }), db, subject(candidate.id), createTestLogger());
+    await runLiveRadar(createRadarRun({ promptVersions: V1_V2, provider, embeddings: fakeEmbeddings().provider }), db, subject(candidate.id), createTestLogger());
 
     expect(JSON.stringify(requests)).not.toContain('OTHER TENANT');
     const row = (await db.select().from(radarEvaluations)).find((r) => r.promptVersion === RADAR_PROMPT_RETRIEVAL)!;
@@ -554,6 +557,7 @@ describeIfDb('backfill with similar past publications', () => {
         : radarOutput({ score: 70 }),
     }));
     const submitted = await submitRadarBackfill({
+      promptVersions: V1_V2,
       db,
       provider: fake.provider,
       embeddings,

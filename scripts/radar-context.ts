@@ -7,7 +7,7 @@
  *   npm run radar:context -- --workspace 2 [--post <processed post id>] [--prompt radar-v1]
  *
  * Without --post, the workspace's most recent post; without --prompt, the
- * retrieval prompt, whose similar-publication search embeds the post once
+ * newest prompt, whose similar-publication search embeds the post once
  * (a fraction of a cent, stored and reused). The context is built as of the
  * post's arrival, as a backfill would: only decisions made before it, a
  * history profile only if it was made from publications before it, and only
@@ -27,7 +27,8 @@ import {
   describeStoredMedia,
   isRadarPromptVersion,
   RADAR_EXAMPLES_PER_CLASS,
-  RADAR_PROMPT_RETRIEVAL,
+  RADAR_PROMPT_APPROVED,
+  usesApprovedRetrieval,
   usesHistoryRetrieval,
 } from '../src/lib/radar/prompt';
 import { loadRadarHistory } from '../src/lib/radar/repository';
@@ -42,7 +43,7 @@ async function main() {
   if (!Number.isSafeInteger(workspaceId) || workspaceId <= 0) {
     throw new Error('Pass the workspace: --workspace <id>');
   }
-  const promptVersion = argument('prompt') ?? RADAR_PROMPT_RETRIEVAL;
+  const promptVersion = argument('prompt') ?? RADAR_PROMPT_APPROVED;
   if (!isRadarPromptVersion(promptVersion)) throw new Error(`Unknown prompt version "${promptVersion}"`);
   const db = getDb();
   const [workspace] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId));
@@ -79,6 +80,7 @@ async function main() {
         processedPostId: post.id,
         candidateText: post.sourceText,
         before: post.createdAt,
+        includeApproved: usesApprovedRetrieval(promptVersion),
       })
     : null;
 
@@ -92,6 +94,12 @@ async function main() {
         (found ? ` · ${found}` : '') +
         (retrieval.error ? ` · ${retrieval.error}` : ''),
     );
+    if (retrieval.approved) {
+      const approved = retrieval.approved.matches
+        .map((match) => `post ${match.processedPostId} (${match.similarity.toFixed(3)})`)
+        .join(', ');
+      console.log(`# Similar approved posts: ${retrieval.approved.status}${approved ? ` · ${approved}` : ''}`);
+    }
   }
   console.log('\n## Instructions (system)\n');
   console.log(buildSystemPrompt(workspace.editorialProfile, history.approvalRate, publication?.profile, promptVersion));
@@ -105,6 +113,7 @@ async function main() {
     history.examples,
     undefined,
     retrieval?.matches ?? null,
+    usesApprovedRetrieval(promptVersion) ? (retrieval?.approved?.matches ?? []) : null,
   );
   for (const part of content) console.log(part.type === 'text' ? part.text : '[image]');
 }
