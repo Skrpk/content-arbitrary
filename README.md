@@ -1250,7 +1250,7 @@ stored with the post's vector.
 | `ANTHROPIC_API_KEY` | — | Needed for Radar with `RADAR_PROVIDER=anthropic`. |
 | `CAPTION_PREFIX` | empty | Text prepended, separated by a blank line. |
 | `CAPTION_SUFFIX` | empty | Text appended, separated by a blank line. |
-| `INCLUDE_SOURCE_LINK` | `true` | Append `Source: https://x.com/…`. |
+| `INCLUDE_SOURCE_LINK` | `true` | Append `Source: https://x.com/…`. Ignored with `REQUIRE_APPROVAL`: the review message already links the original, so the post goes without it. |
 | `INCLUDE_REPLIES` | `false` | Publish replies. |
 | `INCLUDE_REPOSTS` | `false` | Publish reposts/retweets. |
 | `INCLUDE_QUOTES` | `true` | Publish quote posts that carry their own media. |

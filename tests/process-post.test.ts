@@ -770,6 +770,18 @@ describe('processPost text-only posts', () => {
     expect(outcome.approval?.payload.overflowMessage).toBeUndefined();
   });
 
+  it('leaves the source line out of a post under review: the buttons message links the original', async () => {
+    const { outcome, telegramCalls } = await run(makePost([], 'Just words'), {
+      textOnly: true,
+      env: { REQUIRE_APPROVAL: 'true', TELEGRAM_ADMIN_CHAT_ID: '555001', TELEGRAM_WEBHOOK_SECRET: 'a'.repeat(64) },
+    });
+
+    const url = 'https://x.com/testaccount/status/1234567890123456789';
+    expect(bodyOf(telegramCalls[0]!).text).toBe('Just words');
+    expect(outcome.approval?.payload.caption).toBe('Just words');
+    expect(bodyOf(telegramCalls[1]!).text).toContain(url);
+  });
+
   it('only logs it on a dry run', async () => {
     const { outcome, telegramCalls } = await run(makePost([], 'Just words'), {
       textOnly: true,
@@ -903,7 +915,7 @@ describe('processPost translation', () => {
       ? ((JSON.parse(call.body) as { text?: string; caption?: string }).text ?? '')
       : String(call.body.get('caption') ?? '');
 
-  it('sends the reviewer the translated caption, still with the source link', async () => {
+  it('sends the reviewer the translated caption', async () => {
     const { outcome, telegramCalls } = await run(makePost([photo('a')], 'A rare photo of Saturn'), {
       translate: async (text) => (text === 'A rare photo of Saturn' ? 'Рідкісне фото Сатурна' : null),
       env: approval,
@@ -912,8 +924,7 @@ describe('processPost translation', () => {
     expect(outcome.status).toBe('awaiting-approval');
     expect(sentText(telegramCalls[0]!)).toContain('Рідкісне фото Сатурна');
     expect(sentText(telegramCalls[0]!)).not.toContain('A rare photo');
-    expect(outcome.caption).toContain('Рідкісне фото Сатурна');
-    expect(outcome.caption).toContain('https://x.com/testaccount/status/1234567890123456789');
+    expect(outcome.caption).toBe('Рідкісне фото Сатурна');
     // What approval publishes is what was reviewed.
     expect(outcome.approval?.payload.caption).toBe(outcome.caption);
   });

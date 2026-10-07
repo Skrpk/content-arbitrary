@@ -115,7 +115,7 @@ export async function processPost(
       text,
       username: post.authorUsername,
       postId: post.id,
-      includeSourceLink: env.INCLUDE_SOURCE_LINK,
+      includeSourceLink: sourceLineInPost(env),
       prefix: env.CAPTION_PREFIX,
       suffix: env.CAPTION_SUFFIX,
       footer: options.footer,
@@ -464,7 +464,7 @@ async function processTextPost(
       text: body,
       username: post.authorUsername,
       postId: post.id,
-      includeSourceLink: env.INCLUDE_SOURCE_LINK,
+      includeSourceLink: sourceLineInPost(env),
       prefix: env.CAPTION_PREFIX,
       suffix: env.CAPTION_SUFFIX,
       footer: options.footer,
@@ -548,6 +548,15 @@ async function processTextPost(
       permanent,
     };
   }
+}
+
+/**
+ * Whether the post itself ends with the "Source:" line. Under review it does
+ * not: the message with the buttons already carries the link to the original,
+ * so the post the reviewer approves — and the channel reads — is clean of it.
+ */
+function sourceLineInPost(env: Env): boolean {
+  return env.INCLUDE_SOURCE_LINK && !env.REQUIRE_APPROVAL;
 }
 
 function isPermanentTelegramError(error: unknown): boolean {
