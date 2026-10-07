@@ -7,8 +7,8 @@ import { TELEGRAM_WEB_APP_SCRIPT, theme } from '@/lib/telegram/webapp-client';
 /**
  * The source stats Mini App.
  *
- * Opened from the button under /sourcestats. Per source — channel by channel
- * for a reviewer of several — what it brought in over a period, how much of
+ * Opened from the button under /sourcestats. Per source — grouped by
+ * channel, each with its own totals — what it brought in over a period, how much of
  * it was approved, why the rest was turned down, and roughly what reading it
  * from X cost: the numbers to decide which accounts are worth keeping. Every
  * request carries Telegram's signed `initData`, as on the other pages.
@@ -205,15 +205,26 @@ export default function SourceStatsPage() {
               if (channel.sources.length === 0) return null;
               const totals = totalsOf(channel.sources);
               return (
-                <div key={channel.id} style={{ marginBottom: '1.25rem' }}>
-                  {data.channels.length > 1 ? (
-                    <h2 style={{ fontSize: '0.95rem', fontWeight: 600, margin: '0 0 0.5rem' }}>
-                      📢 {channel.name}
-                    </h2>
-                  ) : null}
+                <section key={channel.id} style={{ marginBottom: '1.75rem' }}>
+                  <h2
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'baseline',
+                      gap: '0.5rem',
+                      fontSize: '1rem',
+                      fontWeight: 700,
+                      margin: '0 0 0.35rem',
+                      paddingBottom: '0.35rem',
+                      borderBottom: `2px solid ${theme.button}`,
+                    }}
+                  >
+                    <span>📢 {channel.name}</span>
+                    <span style={{ color: rateColour(totals.approvalRate) }}>{percent(totals.approvalRate)}</span>
+                  </h2>
 
                   <p style={{ margin: '0 0 0.75rem', fontSize: '0.85rem', color: theme.hint }}>
-                    {totals.posts} posts · {totals.approved} approved ({percent(totals.approvalRate)}) · X reads ≈{' '}
+                    {channel.sources.length} {channel.sources.length === 1 ? 'source' : 'sources'} · {totals.posts} posts · {totals.approved} approved · X reads ≈{' '}
                     {dollars(totals.readCostUsd)} · {dollars(totals.costPerApprovedUsd)} per approved
                   </p>
 
@@ -289,7 +300,7 @@ export default function SourceStatsPage() {
                       </div>
                     </section>
                   ))}
-                </div>
+                </section>
               );
             })}
 

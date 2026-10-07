@@ -23,7 +23,7 @@ import {
   syncStateKey,
   updateSourceSettings,
 } from '@/lib/sources/repository';
-import { dispatchCommand } from '@/lib/telegram/commands';
+import { BOT_COMMANDS, dispatchCommand, HELP_TEXT } from '@/lib/telegram/commands';
 import { findWorkspacesByAdminChatId } from '@/lib/workspace';
 import { upsertSyncState } from '@/lib/sync/repository';
 import { XClient } from '@/lib/x/client';
@@ -246,6 +246,20 @@ describeIfDb('sources repository', () => {
     // Re-adding the account later reads on from it rather than re-reading the window.
     const rows = await db.select().from(syncState);
     expect(rows.map((row) => row.source)).toContain('x:99');
+  });
+});
+
+describeIfDb('the command menu', () => {
+  it('lists only commands Telegram accepts, that /help names and the bot answers', async () => {
+    expect(new Set(BOT_COMMANDS.map((entry) => entry.command)).size).toBe(BOT_COMMANDS.length);
+
+    for (const { command, description } of BOT_COMMANDS) {
+      expect(command).toMatch(/^[a-z0-9_]{1,32}$/);
+      expect(description.length).toBeGreaterThan(0);
+      expect(description.length).toBeLessThanOrEqual(256);
+      expect(HELP_TEXT).toContain(`/${command}`);
+      expect(await dispatchCommand(makeContext(), { command, args: '' })).not.toBeNull();
+    }
   });
 });
 

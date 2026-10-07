@@ -149,6 +149,23 @@ function channelsOf(context: CommandContext): WorkspaceRef[] {
     : [{ id: context.workspaceId, name: '' }];
 }
 
+/**
+ * The commands in the bot's menu, beside the message field — registered with
+ * Telegram by `npm run telegram:commands`. Rerun that after changing this.
+ * Telegram takes names of 1–32 lowercase letters, digits and underscores, and
+ * descriptions of up to 256 characters.
+ */
+export const BOT_COMMANDS: { command: string; description: string }[] = [
+  { command: 'sources', description: 'List every source' },
+  { command: 'sourcestats', description: 'How each source performs: posts, approvals, cost' },
+  { command: 'addsource', description: 'Start watching an account: /addsource @username' },
+  { command: 'removesource', description: 'Stop watching and forget it: /removesource @username' },
+  { command: 'pausesource', description: 'Keep it, but skip it on sync: /pausesource @username' },
+  { command: 'resumesource', description: 'Watch it again: /resumesource @username' },
+  { command: 'scheduled', description: 'Posts waiting to be published at a set time' },
+  { command: 'help', description: 'What the bot can do' },
+];
+
 const HELP_TEXT = [
   '<b>Source management</b>',
   '',
@@ -164,6 +181,8 @@ const HELP_TEXT = [
   '/scheduled — posts waiting to be published at a set time',
   '',
   'Per-source options, such as mirroring posts without media, are under ⚙️ Settings in /sources.',
+  '',
+  '/help — this list',
 ].join('\n');
 
 /** Shared argument handling for the four commands that take a handle. */

@@ -19,6 +19,7 @@
     "db:studio": "drizzle-kit studio",
     "sync:local": "tsx scripts/run-sync.ts",
     "telegram:check": "tsx scripts/telegram-check.ts",
+    "telegram:commands": "tsx scripts/telegram-commands.ts",
     "webhook:set": "tsx scripts/setup-webhook.ts set",
     "webhook:info": "tsx scripts/setup-webhook.ts info",
     "webhook:delete": "tsx scripts/setup-webhook.ts delete",
