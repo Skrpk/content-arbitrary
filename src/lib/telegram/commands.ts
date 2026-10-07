@@ -3,7 +3,7 @@ import { describeError } from '@/lib/errors';
 import type { Logger } from '@/lib/logger';
 import { escapeHtml } from '@/lib/telegram/format-caption';
 import { normalizeXUsername } from '@/lib/sources/normalize';
-import { addSource, listSources, updateSourceUsername } from '@/lib/sources/repository';
+import { addSource, updateSourceUsername } from '@/lib/sources/repository';
 import type { XClient } from '@/lib/x/client';
 import { formatScheduleTime } from '@/lib/sync/approval';
 import { listScheduledPosts } from '@/lib/sync/repository';
@@ -28,7 +28,8 @@ export interface CommandReply {
   text: string;
   /**
    * The reply concerns sources that exist, so it should carry the button that
-   * opens their settings. The webhook adds it when a Mini App is configured.
+   * opens their settings. The webhook adds it when a Mini App is configured,
+   * below the stats button when there is one.
    */
   offerSettings?: boolean;
   /** The reply should carry the button that opens the source stats page. */
@@ -104,8 +105,8 @@ const CHOICE_QUESTIONS: Record<SourceCommand, (handle: string) => string> = {
   addsource: (handle) => `Add <b>@${handle}</b> to which channel?`,
 };
 
-/** Commands that were replaced by the /sourcestats buttons, answered with a pointer there. */
-const MOVED_TO_STATS = new Set(['removesource', 'deletesource', 'pausesource', 'resumesource']);
+/** Commands that /sourcestats replaced, answered with a pointer there. */
+const MOVED_TO_STATS = new Set(['sources', 'removesource', 'deletesource', 'pausesource', 'resumesource']);
 
 /** A channel button's data, well inside Telegram's 64 bytes: `wc:a:12:karpathy`. */
 export function buildChannelChoiceData(
@@ -149,7 +150,6 @@ function channelsOf(context: CommandContext): WorkspaceRef[] {
  * descriptions of up to 256 characters.
  */
 export const BOT_COMMANDS: { command: string; description: string }[] = [
-  { command: 'sources', description: 'List every source' },
   { command: 'sourcestats', description: 'How each source performs: posts, approvals, cost' },
   { command: 'addsource', description: 'Start watching an account: /addsource @username' },
   { command: 'scheduled', description: 'Posts waiting to be published at a set time' },
@@ -159,17 +159,15 @@ export const BOT_COMMANDS: { command: string; description: string }[] = [
 const HELP_TEXT = [
   '<b>Source management</b>',
   '',
-  '/sources — list every source',
-  '/sourcestats — how each source performs: posts, approvals, cost',
+  '/sourcestats — every source and how it performs: posts, approvals, cost',
   '/addsource @username — start watching an account',
   '',
-  'Pause, resume or remove a source with the buttons under it in /sourcestats.',
+  'Pause, resume or remove a source with the buttons under it in /sourcestats; options such as mirroring ' +
+    'posts without media are under its ⚙️ Settings button.',
   '',
   '<b>Publishing</b>',
   '',
   '/scheduled — posts waiting to be published at a set time',
-  '',
-  'Per-source options, such as mirroring posts without media, are under ⚙️ Settings in /sources.',
   '',
   '/help — this list',
 ].join('\n');
@@ -190,41 +188,6 @@ async function resolveHandleArgument(
       : 'That is not a valid X handle. Handles are 1–15 characters: letters, digits and underscore.';
 
   return { ok: false, reply: `⚠️ ${reason}` };
-}
-
-export async function handleSources(context: CommandContext): Promise<CommandReply> {
-  const channels = channelsOf(context);
-  const listed = await Promise.all(
-    channels.map(async (channel) => ({ channel, sources: await listSources(context.db, channel.id) })),
-  );
-  const all = listed.flatMap((entry) => entry.sources);
-
-  if (all.length === 0) {
-    return {
-      text: ['No sources yet.', '', 'Add the first one:', '<code>/addsource @username</code>'].join(
-        '\n',
-      ),
-    };
-  }
-
-  const lineFor = (source: (typeof all)[number]) =>
-    `${source.enabled ? '✅' : '⏸'} @${escapeHtml(source.username)}` +
-    (source.includeTextOnly ? ' · text posts too' : '');
-
-  // One list, or one per channel when there are several to tell apart.
-  const body =
-    channels.length > 1
-      ? listed.flatMap(({ channel, sources }) => [
-          '',
-          `<b>📢 ${escapeHtml(channel.name)}</b>`,
-          ...(sources.length > 0 ? sources.map(lineFor) : ['—']),
-        ])
-      : ['', ...all.map(lineFor)];
-
-  const paused = all.filter((source) => !source.enabled).length;
-  const footer = paused > 0 ? ['', `${paused} paused — resume in /sourcestats.`] : [];
-
-  return { text: ['<b>Sources</b>', ...body, ...footer].join('\n'), offerSettings: true };
 }
 
 export async function handleAddSource(
@@ -387,8 +350,9 @@ export async function dispatchCommand(
 
   if (MOVED_TO_STATS.has(command)) {
     return {
-      text: 'Pausing, resuming and removing a source are now buttons under it in /sourcestats.',
+      text: 'Your sources, their numbers and the buttons to pause, resume or remove them are in /sourcestats.',
       offerStats: true,
+      offerSettings: true,
     };
   }
 
@@ -396,16 +360,16 @@ export async function dispatchCommand(
     case 'start':
     case 'help':
       return { text: HELP_TEXT };
-    case 'sources':
-      return handleSources(context);
     case 'scheduled':
       return { text: await handleScheduled(context) };
     case 'sourcestats':
       return {
         text:
           '<b>Source stats</b>\n\nPer source: posts it brought in, how many you approved and why the rest ' +
-          'were rejected, and roughly what reading them from X cost.',
+          'were rejected, and roughly what reading them from X cost — with buttons to pause, resume or ' +
+          'remove each. ⚙️ Settings has the per-source options.',
         offerStats: true,
+        offerSettings: true,
       };
     case 'addsource':
       return channels.length > 1

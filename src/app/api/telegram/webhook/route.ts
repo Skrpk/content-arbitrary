@@ -486,17 +486,16 @@ async function handleCommandMessage(
   }
 }
 
-/** A command reply's own buttons, or the Mini App button it offers. */
+/** A command reply's own buttons, or the Mini App buttons it offers: stats first, then settings. */
 function replyMarkupFor(reply: CommandReply, appBaseUrl: string | undefined) {
   if (reply.replyMarkup) return reply.replyMarkup;
   if (!appBaseUrl) return undefined;
-  if (reply.offerSettings) {
-    return { inline_keyboard: [[{ text: '⚙️ Settings', web_app: { url: buildSettingsUrl(appBaseUrl) } }]] };
-  }
-  if (reply.offerStats) {
-    return { inline_keyboard: [[{ text: '📊 Open stats', web_app: { url: buildSourceStatsUrl(appBaseUrl) } }]] };
-  }
-  return undefined;
+
+  const rows = [
+    ...(reply.offerStats ? [[{ text: '📊 Open stats', web_app: { url: buildSourceStatsUrl(appBaseUrl) } }]] : []),
+    ...(reply.offerSettings ? [[{ text: '⚙️ Settings', web_app: { url: buildSettingsUrl(appBaseUrl) } }]] : []),
+  ];
+  return rows.length > 0 ? { inline_keyboard: rows } : undefined;
 }
 
 /**

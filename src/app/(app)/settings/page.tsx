@@ -7,7 +7,7 @@ import { TELEGRAM_WEB_APP_SCRIPT, theme } from '@/lib/telegram/webapp-client';
 /**
  * The source settings Mini App.
  *
- * Opened from the Settings button under /sources or /addsource. Lists the
+ * Opened from the Settings button under /sourcestats or /addsource. Lists the
  * reviewer's own sources — channel by channel when they review several — with
  * their switches; each switch saves as soon as it
  * is flipped. As with the review pages, every request carries Telegram's

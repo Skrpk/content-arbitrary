@@ -287,9 +287,6 @@ describeIfDb('source commands', () => {
     expect(
       (await dispatchCommand(makeContext(), { command: 'addsource', args: '' }))?.offerSettings,
     ).toBeFalsy();
-    expect(
-      (await dispatchCommand(makeContext(), { command: 'sources', args: '' }))?.offerSettings,
-    ).toBe(true);
   });
 
   it('starts a new source on media posts only, and says how to change it', async () => {
@@ -297,16 +294,6 @@ describeIfDb('source commands', () => {
 
     expect((await listSources(db))[0]!.includeTextOnly).toBe(false);
     expect(reply).toContain('Settings');
-  });
-
-  it('marks a source that mirrors text posts in the list', async () => {
-    await dispatchCommand(makeContext(), { command: 'addsource', args: 'karpathy' });
-    const [source] = await listSources(db);
-    await db.update(sources).set({ includeTextOnly: true }).where(eq(sources.id, source!.id));
-
-    expect(await replyText(makeContext(), { command: 'sources', args: '' })).toContain(
-      '✅ @karpathy · text posts too',
-    );
   });
 
   it.each([['@karpathy'], ['https://x.com/karpathy'], ['x.com/karpathy']])(
@@ -347,34 +334,14 @@ describeIfDb('source commands', () => {
     expect(reply).toContain('/addsource @username');
   });
 
-  it('lists sources with their enabled state', async () => {
-    await dispatchCommand(makeContext(), { command: 'addsource', args: 'karpathy' });
-    const sama = await dispatchCommand(makeContext(), { command: 'addsource', args: 'sama' });
-    expect(sama).not.toBeNull();
-    const [paused] = await db.select().from(sources).where(eq(sources.username, 'sama'));
-    await setSourceEnabled(db, { id: paused!.id, enabled: false });
-
-    const reply = await replyText(makeContext(), { command: 'sources', args: '' });
-
-    expect(reply).toContain('✅ @karpathy');
-    expect(reply).toContain('⏸ @sama');
-  });
-
-  it('guides the admin when there are no sources', async () => {
-    const reply = await replyText(makeContext(), { command: 'sources', args: '' });
-
-    expect(reply).toContain('No sources yet');
-    expect(reply).toContain('/addsource @username');
-  });
-
-  it.each(['pausesource', 'resumesource', 'removesource', 'deletesource'])(
-    'points /%s to the buttons in /sourcestats, and changes nothing',
+  it.each(['sources', 'pausesource', 'resumesource', 'removesource', 'deletesource'])(
+    'points /%s to /sourcestats, and changes nothing',
     async (command) => {
       await dispatchCommand(makeContext(), { command: 'addsource', args: 'karpathy' });
 
       const reply = await dispatchCommand(makeContext(), { command, args: '@karpathy' });
 
-      expect(reply).toMatchObject({ offerStats: true });
+      expect(reply).toMatchObject({ offerStats: true, offerSettings: true });
       expect(reply?.text).toContain('/sourcestats');
       expect(await listEnabledSources(db, 'x')).toHaveLength(1);
     },

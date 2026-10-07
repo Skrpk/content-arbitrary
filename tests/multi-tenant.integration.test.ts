@@ -15,7 +15,6 @@ import { syncPosts } from '@/lib/sync/sync-posts';
 import { addSource, deleteSource, listSources } from '@/lib/sources/repository';
 import { claimForDecision, getSyncState, upsertSyncState } from '@/lib/sync/repository';
 import { advisoryLockKey } from '@/lib/sync/locks';
-import { dispatchCommand } from '@/lib/telegram/commands';
 import {
   destinationFor,
   ensureDefaultWorkspace,
@@ -34,10 +33,6 @@ import { createTestLogger, instantSleep, withEnv, ensureTestWorkspace, POSTED_AT
  * and cannot act on another tenant's posts. A tenant that is misconfigured or
  * busy is passed over without taking the run down with it.
  */
-
-/** The reply's text, which is what most assertions here are about. */
-const replyText = async (...args: Parameters<typeof dispatchCommand>) =>
-  (await dispatchCommand(...args))?.text ?? null;
 
 const connectionString = process.env.TEST_DATABASE_URL;
 const describeIfDb = connectionString ? describe : describe.skip;
@@ -411,39 +406,6 @@ describeIfDb('tenants that cannot publish', () => {
 
 describeIfDb('tenant isolation', () => {
   beforeEach(setUpTenants);
-
-  it('shows a reviewer only their own sources', async () => {
-    await addSource(db, { platform: 'x', externalId: '111', username: 'alpha' });
-    await addSource(db, {
-      platform: 'x',
-      externalId: '222',
-      username: 'beta',
-      workspaceId: TENANT_B,
-    });
-
-    const contextFor = (workspaceId: number) => ({
-      db,
-      xClient: new XClient({
-        bearerToken: 'test',
-        baseUrl: 'https://api.x.example',
-        fetchImpl: vi.fn() as unknown as typeof fetch,
-        attempts: 1,
-      }),
-      logger: createTestLogger(),
-      workspaceId,
-    });
-
-    const replyA = await replyText(contextFor(DEFAULT_WORKSPACE_ID), {
-      command: 'sources',
-      args: '',
-    });
-    const replyB = await replyText(contextFor(TENANT_B), { command: 'sources', args: '' });
-
-    expect(replyA).toContain('@alpha');
-    expect(replyA).not.toContain('@beta');
-    expect(replyB).toContain('@beta');
-    expect(replyB).not.toContain('@alpha');
-  });
 
   it('will not let a reviewer remove another tenant\'s source', async () => {
     const { source } = await addSource(db, { platform: 'x', externalId: '111', username: 'alpha' });

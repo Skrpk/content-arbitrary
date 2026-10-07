@@ -457,29 +457,17 @@ describeIfDb('Approve', () => {
   });
 });
 
-describeIfDb('the Settings button on source commands', () => {
+describeIfDb('the Mini App buttons on source commands', () => {
   const markupOf = () => callsTo('sendMessage').at(-1)?.body.reply_markup;
 
-  it('comes with the source list when the Mini App is configured', async () => {
-    await db.insert(sources).values({ externalId: '999', username: 'someone' });
-
-    await send('/sources');
-
-    expect(markupOf()).toEqual({
-      inline_keyboard: [[{ text: '⚙️ Settings', web_app: { url: 'https://example.vercel.app/settings' } }]],
-    });
-  });
-
-  it('is left out without a Mini App', async () => {
-    await db.insert(sources).values({ externalId: '999', username: 'someone' });
-
-    await send('/sources', { APP_BASE_URL: undefined });
+  it('are left out without a Mini App', async () => {
+    await send('/sourcestats', { APP_BASE_URL: undefined });
 
     expect(callsTo('sendMessage')).toHaveLength(1);
     expect(markupOf()).toBeUndefined();
   });
 
-  it('is left out of an answer that is only a usage hint', async () => {
+  it('are left out of an answer that is only a usage hint', async () => {
     await send('/addsource');
 
     expect(callsTo('sendMessage')).toHaveLength(1);
@@ -488,11 +476,14 @@ describeIfDb('the Settings button on source commands', () => {
 });
 
 describeIfDb('/sourcestats', () => {
-  it('answers with the button that opens the stats page', async () => {
+  it('answers with the buttons that open the stats and settings pages', async () => {
     await send('/sourcestats');
 
     expect(callsTo('sendMessage').at(-1)?.body.reply_markup).toEqual({
-      inline_keyboard: [[{ text: '📊 Open stats', web_app: { url: 'https://example.vercel.app/source-stats' } }]],
+      inline_keyboard: [
+        [{ text: '📊 Open stats', web_app: { url: 'https://example.vercel.app/source-stats' } }],
+        [{ text: '⚙️ Settings', web_app: { url: 'https://example.vercel.app/settings' } }],
+      ],
     });
   });
 });

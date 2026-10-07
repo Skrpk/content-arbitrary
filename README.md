@@ -559,8 +559,7 @@ environment change and no redeploy:
 
 | Command | What it does |
 | --- | --- |
-| `/sources` | List every source and whether it is active |
-| `/sourcestats` | Open a page with how each source performs — and buttons to pause, resume or remove it |
+| `/sourcestats` | Open a page with every source and how it performs — and buttons to pause, resume or remove it |
 | `/addsource @karpathy` | Start watching an account |
 
 `/addsource` accepts whatever is easiest to paste — `karpathy`, `@karpathy`,
@@ -570,7 +569,7 @@ Pausing, resuming and removing a source are buttons under it on the `/sourcestat
 to its numbers: posts it brought in, how many were approved, why the rest were rejected, and
 roughly what reading it from X cost. A resumed source picks up only what is posted from then on;
 a removed one keeps its past posts. The old `/pausesource`, `/resumesource` and `/removesource`
-commands now just point there.
+commands, and `/sources` that listed them, now just point there.
 
 The bot's command menu — the list beside the message field — is `BOT_COMMANDS` in
 `src/lib/telegram/commands.ts`; register it with `npm run telegram:commands` after changing it.
@@ -582,7 +581,7 @@ The commands arrive over the same webhook as the Approve buttons, so
 
 ### Per-source settings
 
-With `APP_BASE_URL` set, the replies to `/sources` and `/addsource` carry a **⚙️ Settings**
+With `APP_BASE_URL` set, the replies to `/sourcestats` and `/addsource` carry a **⚙️ Settings**
 button. It opens a Mini App listing your sources, each with its own switches, saved as soon as
 they are flipped:
 
@@ -625,7 +624,7 @@ the single-account version left behind rather than re-reading (and re-paying for
 
 The import happens once, recorded as `workspaces.legacy_source_imported_at`, so a source you
 deliberately remove does not reappear on the next run. Keep the two variables until you have
-seen the source appear in `/sources`; after that they are ignored and can be deleted. New
+seen the source appear in `/sourcestats`; after that they are ignored and can be deleted. New
 installations should leave them blank and use `/addsource`.
 
 ## Multiple channels
@@ -666,8 +665,8 @@ The same person may be the reviewer of any number of workspaces — use the same
   the workspace, and the reviewer only has to be its reviewer;
 - review messages start with `📢 <name>`, so the two channels' posts can be told apart;
 - `/addsource` asks which channel with a button per channel;
-- `/sources`, `/scheduled`, the ⚙️ Settings page and the `/sourcestats` page cover every
-  channel, grouped by name.
+- `/scheduled`, the ⚙️ Settings page and the `/sourcestats` page cover every channel, grouped
+  by name.
 
 A reviewer of a single channel sees none of this — no labels, no questions.
 

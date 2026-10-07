@@ -297,21 +297,6 @@ describeIfDb('source commands for two channels', () => {
 
     expect(await sourcesOf(ALPHA)).toEqual(['karpathy']);
   });
-
-  it('lists the sources of both channels, each under its name', async () => {
-    await db.insert(sources).values([
-      { workspaceId: ALPHA, externalId: '1', username: 'alpha_src' },
-      { workspaceId: BETA, externalId: '2', username: 'beta_src' },
-      { workspaceId: GAMMA, externalId: '3', username: 'gamma_src' },
-    ]);
-
-    await command('/sources');
-
-    const { text } = lastReply();
-    expect(text).toContain('<b>📢 Alpha</b>\n✅ @alpha_src');
-    expect(text).toContain('<b>📢 Beta</b>\n✅ @beta_src');
-    expect(text).not.toContain('gamma_src');
-  });
 });
 
 describeIfDb('Mini Apps for two channels', () => {
