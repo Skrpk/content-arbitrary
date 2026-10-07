@@ -38,7 +38,7 @@ export function renderOgImage(locale: Locale): ImageResponse {
               fontSize: 30,
             }}
           >
-            X → TG
+            {meta.ogBadge}
           </div>
           {SITE_NAME}
         </div>

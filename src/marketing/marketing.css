@@ -172,9 +172,8 @@ a {
   flex-shrink: 0;
   display: inline-grid;
   place-items: center;
-  min-width: 2.4rem;
+  width: 2rem;
   height: 2rem;
-  padding: 0 0.4rem;
   border-radius: 8px;
   background: var(--accent);
   color: var(--accent-text);
@@ -319,6 +318,33 @@ a {
 
 .mockup {
   margin: 0;
+}
+
+.mockup__original {
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.mockup__original p {
+  margin: 0;
+}
+
+.mockup__original .mockup__original-label {
+  margin-bottom: 0.3rem;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.mockup__arrow {
+  margin: 0.5rem 0;
+  text-align: center;
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 600;
 }
 
 .mockup__chat {

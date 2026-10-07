@@ -16,13 +16,23 @@ interface Item {
 }
 
 export interface LandingContent {
-  meta: { title: string; description: string; ogHeadline: string; ogSubline: string };
+  meta: { title: string; description: string; ogHeadline: string; ogSubline: string; ogBadge: string };
   nav: { features: string; howItWorks: string; faq: string; home: string; main: string };
   skipLink: string;
   connect: string;
   languageSwitch: { label: string; names: Record<Locale, string> };
   hero: { eyebrow: string; title: string; lead: string; primary: string; secondary: string };
-  mockup: { label: string; text: string; caption: string };
+  mockup: {
+    label: string;
+    /** The source's post as it was published on X, in English. */
+    originalLabel: string;
+    original: string;
+    rewritten: string;
+    /** The same post as the reviewer receives it, in the channel's language. */
+    text: string;
+    textLang: string;
+    caption: string;
+  };
   features: { title: string; lead: string; items: (Item & { icon: string })[] };
   steps: { title: string; lead: string; items: Item[] };
   audiences: { title: string; items: Item[] };
@@ -31,15 +41,20 @@ export interface LandingContent {
   footer: { disclaimer: string; contact: string };
 }
 
+/** The same source post on every page: it is English on X whatever the site's language. */
+const ORIGINAL_POST =
+  'First images from our new mission are in: the probe has sent back the sharpest views of the surface ever taken. 🛰️';
+
 const en: LandingContent = {
   meta: {
-    title: 'Auto-post from X (Twitter) to your Telegram channel, with moderation',
+    title: 'An AI editor for your Telegram channel: posts from X in your language and voice',
     description:
-      'A Telegram bot that brings new posts from X (Twitter) into your Telegram channel — ' +
-      'photos, videos, albums and long posts. Approve, edit, reject and schedule them right ' +
-      'in Telegram.',
-    ogHeadline: 'Auto-post from X to your Telegram channel',
-    ogSubline: 'Approve, edit and schedule posts right in Telegram',
+      'A Telegram bot that follows the X accounts you choose, rewrites their new posts in your ' +
+      'channel’s language and style, and sends them to you for review — photos, videos, albums ' +
+      'and long posts. Approve, edit, reject or schedule them right in Telegram.',
+    ogHeadline: 'An AI editor for your Telegram channel',
+    ogSubline: 'Posts from X, rewritten in your language and voice — you approve',
+    ogBadge: 'For Telegram channels',
   },
   nav: {
     features: 'Features',
@@ -52,38 +67,47 @@ const en: LandingContent = {
   connect: 'Get started',
   languageSwitch: { label: 'Language', names: { en: 'EN', uk: 'UK' } },
   hero: {
-    eyebrow: 'A Telegram bot for channel admins',
-    title: 'Auto-post from X (Twitter) to your Telegram channel — with moderation',
+    eyebrow: 'An AI editorial assistant for Telegram channels',
+    title: 'Posts from the sources you follow, written for your channel and waiting for your approval',
     lead:
-      'The bot follows the X accounts you pick and sends their new photo and video posts to ' +
-      'you for review. Approve, edit, reject or schedule — and the post appears in your ' +
-      'channel. All inside Telegram.',
+      'The bot follows the X accounts you pick, rewrites every new post in your channel’s ' +
+      'language and style, and sends it to you exactly as it will appear. Approve, edit, reject ' +
+      'or schedule: the routine is the bot’s, the decisions stay yours. All inside Telegram.',
     primary: 'Connect your channel',
     secondary: 'How it works',
   },
   mockup: {
-    label: 'How a post arrives for review in Telegram',
-    text: 'First images from the new mission: the probe sent back record-resolution shots of the surface.',
-    caption: 'A new post in your chat with the bot — before it reaches the channel.',
+    label: 'How a post from X arrives for review, rewritten for the channel',
+    originalLabel: 'On X · @source_account',
+    original: ORIGINAL_POST,
+    rewritten: 'Rewritten for a Spanish-language channel',
+    text: '🛰 Primeras imágenes de la nueva misión: la sonda ha enviado las vistas más nítidas de la superficie jamás tomadas.',
+    textLang: 'es',
+    caption: 'The post in your chat with the bot, in your channel’s language — before it reaches the channel.',
   },
   features: {
-    title: 'Everything you need to run a channel on X content',
-    lead: 'No copying by hand, no re-uploading videos, no hunting for what you already posted.',
+    title: 'From a source’s post to your channel’s post',
+    lead: 'No copying, no translating by hand, no re-uploading videos: what is left for you is the editorial decision.',
     items: [
       {
-        icon: '🖼',
-        title: 'Photos, videos and albums',
-        text: 'A post with several photos or videos arrives as one album, just like the original. Videos come in the best quality Telegram accepts.',
+        icon: '🌐',
+        title: 'In your channel’s language',
+        text: 'Set your channel’s language once, and every post arrives already in it: rewritten the way a channel writes, not translated word for word. Facts, numbers and names stay as in the original.',
+      },
+      {
+        icon: '🎙',
+        title: 'In your channel’s voice',
+        text: 'We import your channel’s past posts, and the bot picks up how it writes — tone, length, paragraphs, emoji — and writes new posts to match.',
       },
       {
         icon: '✅',
-        title: 'Review before publishing',
-        text: 'Every new post comes to you in the bot first. Approve it and it goes to the channel. Nothing is published without your say.',
+        title: 'Nothing goes out without you',
+        text: 'Every post comes to you in the bot first. Approve it and it goes to the channel; reject it with a reason. Nothing is published without your say.',
       },
       {
         icon: '✏️',
-        title: 'Edit the text',
-        text: 'Rewrite the caption for your channel right in Telegram, in a built-in editor with a character counter. The media stays as it is.',
+        title: 'Edit before publishing',
+        text: 'Polish any post right in Telegram, in a built-in editor with a character counter. The media stays as it is.',
       },
       {
         icon: '🕒',
@@ -92,23 +116,18 @@ const en: LandingContent = {
       },
       {
         icon: '📚',
-        title: 'Several X accounts at once',
-        text: 'Follow several sources for one channel. Add, pause and remove them with a single command in the bot.',
+        title: 'Several sources per channel',
+        text: 'Follow several X accounts for one channel. Add, pause and remove them with a single command in the bot.',
       },
       {
-        icon: '📝',
-        title: 'Long posts in full',
-        text: 'A long X post is published whole: the caption under the media, and the full text as a follow-up message when it does not fit.',
-      },
-      {
-        icon: '🔗',
-        title: 'Link to the source',
-        text: 'Every post links back to the original on X. Reposts and replies are skipped, so only the author’s own posts reach your channel.',
+        icon: '🖼',
+        title: 'Photos, videos, albums, long posts',
+        text: 'Albums arrive as albums, videos in the best quality Telegram accepts, and a long post whole — with the rest of the text as a follow-up when it does not fit.',
       },
       {
         icon: '🛡',
-        title: 'No duplicates',
-        text: 'The bot remembers every post it has published. A double tap or two overlapping runs will not publish it twice.',
+        title: 'No duplicates, always the source',
+        text: 'The bot remembers every post it has published, so nothing goes out twice, and every post links back to the original on X.',
       },
     ],
   },
@@ -116,12 +135,15 @@ const en: LandingContent = {
     title: 'How it works',
     lead: 'Setup takes a few minutes and needs no code.',
     items: [
-      { title: 'Get in touch', text: 'We connect your channel and set you up as its moderator.' },
+      { title: 'Get in touch', text: 'We connect your channel, set its language and set you up as its moderator.' },
       { title: 'Add the bot to your channel', text: 'Make the bot an admin of your Telegram channel with the right to post.' },
-      { title: 'Pick X accounts', text: 'Send the bot /addsource @username and it starts following that account.' },
+      {
+        title: 'Pick sources, share your channel',
+        text: 'Send the bot /addsource @username for each X account. Send us your channel’s export from Telegram Desktop, and posts will be written in its voice.',
+      },
       {
         title: 'Review and publish',
-        text: 'New posts arrive in the bot exactly as they will look in the channel. Tap Approve and it is published.',
+        text: 'New posts arrive in the bot in your channel’s language, exactly as they will look. Tap Approve and it is published.',
       },
     ],
   },
@@ -129,22 +151,37 @@ const en: LandingContent = {
     title: 'Who it is for',
     items: [
       {
-        title: 'News and niche channels',
-        text: 'Bring in posts from the key accounts in your niche fast, and keep only the editorial work for yourself.',
+        title: 'Channels whose sources speak another language',
+        text: 'Run a channel in your language on the best accounts in English: posts arrive already rewritten, in your style.',
       },
       {
-        title: 'Admins short on time',
-        text: 'Instead of copying text and re-uploading media by hand — one tap per post.',
+        title: 'News and niche channels',
+        text: 'Bring in posts from the key accounts of your niche fast, and keep only the editorial work for yourself.',
       },
       {
         title: 'Channel networks',
-        text: 'One service for several channels, each with its own sources and its own moderator.',
+        text: 'One service for several channels, each with its own sources, language and moderator.',
       },
     ],
   },
   faq: {
     title: 'Frequently asked questions',
     items: [
+      {
+        question: 'Is it a word-for-word translation?',
+        answer:
+          'No. Each post is rewritten as your channel would write it — in its language, tone and format — sticking to the facts, numbers and names of the original and adding none of its own. You see every post before it goes out and can edit it, and the link to the original is always there.',
+      },
+      {
+        question: 'How does the bot learn my channel’s style?',
+        answer:
+          'From your channel’s own posts: you export its history from Telegram Desktop, we import it once, and the bot builds a profile of how your channel writes. Without it, posts are still rewritten in your channel’s language, in a neutral style.',
+      },
+      {
+        question: 'What if a post is already in my channel’s language?',
+        answer:
+          'It is left as it is. And if a rewrite ever fails, the post still arrives — in its original language — rather than being lost.',
+      },
       {
         question: 'Do I need my own X API access?',
         answer:
@@ -183,7 +220,7 @@ const en: LandingContent = {
   },
   cta: {
     title: 'Connect your channel',
-    text: 'Message us on Telegram — we will help you set up the bot and choose accounts to follow.',
+    text: 'Message us on Telegram — we will set up the bot, your channel’s language and the accounts to follow.',
     button: 'Message us on Telegram',
   },
   footer: {
@@ -195,13 +232,14 @@ const en: LandingContent = {
 
 const uk: LandingContent = {
   meta: {
-    title: 'Автопостинг з X (Twitter) у Telegram-канал з модерацією',
+    title: 'AI-редактор для Telegram-каналу: пости з X вашою мовою і вашим стилем',
     description:
-      'Telegram-бот, який автоматично переносить нові пости з X (Twitter) у ваш Telegram-канал: ' +
-      'фото, відео, альбоми й довгі тексти. Погоджуйте, редагуйте, відхиляйте та плануйте ' +
-      'публікації прямо в Telegram.',
-    ogHeadline: 'Автопостинг з X у Telegram-канал',
-    ogSubline: 'Погоджуйте, редагуйте й плануйте пости прямо в Telegram',
+      'Telegram-бот, який стежить за обраними акаунтами в X, переписує їхні нові пости мовою ' +
+      'й у стилі вашого каналу та надсилає вам на погодження — фото, відео, альбоми й довгі ' +
+      'тексти. Погоджуйте, редагуйте, відхиляйте й плануйте публікації прямо в Telegram.',
+    ogHeadline: 'AI-редактор для вашого Telegram-каналу',
+    ogSubline: 'Пости з X, переписані вашою мовою і стилем — ви погоджуєте',
+    ogBadge: 'Для Telegram-каналів',
   },
   nav: {
     features: 'Можливості',
@@ -214,38 +252,47 @@ const uk: LandingContent = {
   connect: 'Підключити',
   languageSwitch: { label: 'Мова', names: { en: 'EN', uk: 'UK' } },
   hero: {
-    eyebrow: 'Telegram-бот для адмінів каналів',
-    title: 'Автопостинг з X (Twitter) у ваш Telegram-канал — з модерацією',
+    eyebrow: 'AI-помічник редактора Telegram-каналу',
+    title: 'Пости з ваших джерел, написані під ваш канал, — чекають лише вашого рішення',
     lead:
-      'Бот стежить за обраними акаунтами в X і надсилає нові пости з фото й відео вам на ' +
-      'погодження. Затвердіть, відредагуйте, відхиліть чи заплануйте — і пост з’явиться в ' +
-      'каналі. Усе прямо в Telegram.',
+      'Бот стежить за обраними акаунтами в X, переписує кожен новий пост мовою й у стилі вашого ' +
+      'каналу та надсилає його вам саме таким, яким він вийде. Погодьте, відредагуйте, відхиліть ' +
+      'чи заплануйте: рутина — на боті, рішення — за вами. Усе прямо в Telegram.',
     primary: 'Підключити канал',
     secondary: 'Як це працює',
   },
   mockup: {
-    label: 'Так пост приходить на погодження в Telegram',
-    text: 'Перші кадри з нової місії: зонд передав знімки поверхні з рекордною роздільністю.',
-    caption: 'Новий пост у вашому чаті з ботом — до публікації в каналі.',
+    label: 'Так пост з X приходить на погодження — вже переписаний для каналу',
+    originalLabel: 'У X · @source_account',
+    original: ORIGINAL_POST,
+    rewritten: 'Переписано для україномовного каналу',
+    text: '🛰 Перші кадри з нової місії: зонд передав найчіткіші знімки поверхні за всю історію спостережень.',
+    textLang: 'uk',
+    caption: 'Пост у вашому чаті з ботом — уже мовою каналу, до публікації.',
   },
   features: {
-    title: 'Усе, щоб вести канал на контенті з X',
-    lead: 'Без ручного копіювання, перезавантаження відео й пошуку, що ви вже публікували.',
+    title: 'Від поста джерела до поста вашого каналу',
+    lead: 'Без копіювання, ручного перекладу й перезавантаження відео: вам лишається тільки редакторське рішення.',
     items: [
       {
-        icon: '🖼',
-        title: 'Фото, відео й альбоми',
-        text: 'Пост із кількома фото чи відео приходить одним альбомом, як в оригіналі. Відео — у найкращій якості, яку приймає Telegram.',
+        icon: '🌐',
+        title: 'Мовою вашого каналу',
+        text: 'Вкажіть мову каналу один раз — і кожен пост приходить уже нею: переписаний так, як пише канал, а не перекладений дослівно. Факти, цифри й імена — як в оригіналі.',
+      },
+      {
+        icon: '🎙',
+        title: 'Голосом вашого каналу',
+        text: 'Ми імпортуємо минулі пости каналу, і бот переймає, як він пише, — тон, довжину, абзаци, емодзі — та пише нові пости так само.',
       },
       {
         icon: '✅',
-        title: 'Модерація перед публікацією',
-        text: 'Кожен новий пост спершу приходить вам у бот. Погодили — пішов у канал. Нічого не публікується без вашого рішення.',
+        title: 'Нічого без вашого рішення',
+        text: 'Кожен пост спершу приходить вам у бот. Погодили — пішов у канал, відхилили — з причиною. Нічого не публікується без вас.',
       },
       {
         icon: '✏️',
-        title: 'Редагування тексту',
-        text: 'Перепишіть підпис під свій канал прямо в Telegram — у вбудованому редакторі з лічильником символів. Медіа лишається без змін.',
+        title: 'Редагування перед публікацією',
+        text: 'Доведіть будь-який пост до ладу прямо в Telegram — у вбудованому редакторі з лічильником символів. Медіа лишається без змін.',
       },
       {
         icon: '🕒',
@@ -254,23 +301,18 @@ const uk: LandingContent = {
       },
       {
         icon: '📚',
-        title: 'Кілька акаунтів X одночасно',
-        text: 'Стежте за кількома джерелами для одного каналу. Додавайте, ставте на паузу й прибирайте їх однією командою в боті.',
+        title: 'Кілька джерел на канал',
+        text: 'Стежте за кількома акаунтами X для одного каналу. Додавайте, ставте на паузу й прибирайте їх однією командою в боті.',
       },
       {
-        icon: '📝',
-        title: 'Довгі пости повністю',
-        text: 'Довгий пост із X публікується цілим: підпис під медіа, а повний текст — окремим повідомленням, якщо він не вміщується.',
-      },
-      {
-        icon: '🔗',
-        title: 'Посилання на джерело',
-        text: 'Під кожним постом — посилання на оригінал у X. Репости й відповіді пропускаються, тож у канал іде лише власний контент автора.',
+        icon: '🖼',
+        title: 'Фото, відео, альбоми, довгі пости',
+        text: 'Альбоми приходять альбомами, відео — у найкращій якості, яку приймає Telegram, а довгий пост — цілим: решта тексту окремим повідомленням, якщо не вміщується.',
       },
       {
         icon: '🛡',
-        title: 'Жодних дублів',
-        text: 'Бот пам’ятає кожен опублікований пост. Подвійне натискання кнопки чи збіг двох запусків не опублікують його вдруге.',
+        title: 'Без дублів, завжди з джерелом',
+        text: 'Бот пам’ятає кожен опублікований пост, тож нічого не вийде двічі, а під кожним постом — посилання на оригінал у X.',
       },
     ],
   },
@@ -278,12 +320,15 @@ const uk: LandingContent = {
     title: 'Як це працює',
     lead: 'Налаштування займає кілька хвилин і не потребує коду.',
     items: [
-      { title: 'Напишіть нам', text: 'Ми підключимо ваш канал і вас як модератора.' },
+      { title: 'Напишіть нам', text: 'Ми підключимо ваш канал, задамо його мову й зробимо вас модератором.' },
       { title: 'Додайте бота в канал', text: 'Зробіть бота адміністратором свого Telegram-каналу з правом публікації.' },
-      { title: 'Вкажіть акаунти X', text: 'Напишіть боту /addsource @username — і він почне стежити за акаунтом.' },
+      {
+        title: 'Оберіть джерела й покажіть канал',
+        text: 'Напишіть боту /addsource @username для кожного акаунта X. Надішліть нам експорт каналу з Telegram Desktop — і пости писатимуться його голосом.',
+      },
       {
         title: 'Погоджуйте й публікуйте',
-        text: 'Нові пости приходять вам у бот рівно такими, як виглядатимуть у каналі. Approve — і пост опубліковано.',
+        text: 'Нові пости приходять у бот мовою вашого каналу, рівно такими, як виглядатимуть. Approve — і пост опубліковано.',
       },
     ],
   },
@@ -291,22 +336,37 @@ const uk: LandingContent = {
     title: 'Для кого',
     items: [
       {
+        title: 'Канали, чиї джерела пишуть іншою мовою',
+        text: 'Ведіть український канал на найкращих англомовних акаунтах: пости приходять уже переписаними, у вашому стилі.',
+      },
+      {
         title: 'Новинні й тематичні канали',
         text: 'Оперативно переносьте пости з ключових акаунтів своєї ніші й залишайте собі лише редакторську роботу.',
       },
       {
-        title: 'Адміни, які цінують час',
-        text: 'Замість копіювання й перезавантаження медіа вручну — одне натискання на кожен пост.',
-      },
-      {
         title: 'Мережі каналів',
-        text: 'Один сервіс на кілька каналів: у кожного свої джерела й свій модератор.',
+        text: 'Один сервіс на кілька каналів: у кожного свої джерела, своя мова й свій модератор.',
       },
     ],
   },
   faq: {
     title: 'Часті запитання',
     items: [
+      {
+        question: 'Це дослівний переклад?',
+        answer:
+          'Ні. Кожен пост переписується так, як написав би його ваш канал, — його мовою, тоном і форматом, — тримаючись фактів, цифр та імен оригіналу й нічого не додаючи від себе. Ви бачите кожен пост до публікації й можете його відредагувати, а посилання на оригінал завжди поруч.',
+      },
+      {
+        question: 'Як бот дізнається стиль мого каналу?',
+        answer:
+          'З постів самого каналу: ви експортуєте його історію з Telegram Desktop, ми один раз її імпортуємо, і бот складає профіль того, як пише канал. Без цього пости все одно переписуються мовою каналу, просто в нейтральному стилі.',
+      },
+      {
+        question: 'А якщо пост уже мовою мого каналу?',
+        answer:
+          'Він лишається як є. А якщо переписати пост колись не вдасться, він однаково прийде — мовою оригіналу, — а не загубиться.',
+      },
       {
         question: 'Чи потрібен мені власний доступ до X API?',
         answer:
@@ -345,7 +405,7 @@ const uk: LandingContent = {
   },
   cta: {
     title: 'Підключіть свій канал',
-    text: 'Напишіть нам у Telegram — допоможемо налаштувати бота й підібрати акаунти для стеження.',
+    text: 'Напишіть нам у Telegram — налаштуємо бота, мову каналу й акаунти для стеження.',
     button: 'Написати в Telegram',
   },
   footer: {

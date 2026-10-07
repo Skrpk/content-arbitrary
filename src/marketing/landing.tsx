@@ -7,18 +7,32 @@ import { localePath, type Locale } from './i18n';
  * only their arrangement, shared by every language.
  */
 
-/** A static picture of the review message, with the bot's real buttons. */
+/**
+ * A static picture of what the bot does with a post: the source's original on
+ * X, and the review message it becomes — rewritten in the channel's language,
+ * with the bot's real buttons.
+ */
 function ReviewMockup({ locale }: { locale: Locale }) {
   const text = CONTENT[locale].mockup;
 
   return (
     <figure className="mockup" aria-label={text.label}>
+      <div className="mockup__original">
+        <p className="mockup__original-label">{text.originalLabel}</p>
+        <p lang="en">{text.original}</p>
+      </div>
+      <p className="mockup__arrow">
+        <span aria-hidden="true">↓ </span>
+        {text.rewritten}
+      </p>
       <div className="mockup__chat">
         <div className="mockup__bubble">
           <div className="mockup__media" aria-hidden="true">
             <span>📷</span>
           </div>
-          <p className="mockup__text">{text.text}</p>
+          <p className="mockup__text" lang={text.textLang}>
+            {text.text}
+          </p>
           <p className="mockup__source">Source: x.com/…/status/1750…</p>
         </div>
         <div className="mockup__bubble mockup__bubble--control">

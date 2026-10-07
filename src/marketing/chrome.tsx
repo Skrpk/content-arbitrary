@@ -17,7 +17,13 @@ export function SiteHeader({ locale, path = '' }: { locale: Locale; path?: strin
       <div className="container site-header__inner">
         <Link href={home} className="brand" aria-label={`${SITE_NAME} — ${text.nav.home}`}>
           <span className="brand__mark" aria-hidden="true">
-            X→✈
+            {/* A radar sweep: what the product does with a channel's sources. */}
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M12 12 19 5" />
+              <path d="M19.8 9a8 8 0 1 1-4.8-4.8" />
+              <path d="M15.5 10.7a4 4 0 1 1-2.2-2.2" />
+              <circle cx="12" cy="12" r="1" fill="currentColor" />
+            </svg>
           </span>
           <span>{SITE_NAME}</span>
         </Link>
