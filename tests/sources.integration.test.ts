@@ -240,7 +240,9 @@ describeIfDb('sources repository', () => {
     const added = await addSource(db, { platform: 'x', externalId: '99', username: 'gone' });
     await upsertSyncState(db, { source: syncStateKey(added.source), lastSeenPostId: '555' });
 
-    expect(await deleteSource(db, added.source.id)).toBe(true);
+    expect(await deleteSource(db, { id: added.source.id, workspaceIds: [DEFAULT_WORKSPACE_ID] })).toMatchObject({
+      id: added.source.id,
+    });
     expect(await findSourceByExternalId(db, { platform: 'x', externalId: '99' })).toBeNull();
 
     // Re-adding the account later reads on from it rather than re-reading the window.
@@ -347,8 +349,10 @@ describeIfDb('source commands', () => {
 
   it('lists sources with their enabled state', async () => {
     await dispatchCommand(makeContext(), { command: 'addsource', args: 'karpathy' });
-    await dispatchCommand(makeContext(), { command: 'addsource', args: 'sama' });
-    await dispatchCommand(makeContext(), { command: 'pausesource', args: 'sama' });
+    const sama = await dispatchCommand(makeContext(), { command: 'addsource', args: 'sama' });
+    expect(sama).not.toBeNull();
+    const [paused] = await db.select().from(sources).where(eq(sources.username, 'sama'));
+    await setSourceEnabled(db, { id: paused!.id, enabled: false });
 
     const reply = await replyText(makeContext(), { command: 'sources', args: '' });
 
@@ -363,46 +367,18 @@ describeIfDb('source commands', () => {
     expect(reply).toContain('/addsource @username');
   });
 
-  it('removes a source', async () => {
-    await dispatchCommand(makeContext(), { command: 'addsource', args: 'karpathy' });
-    const reply = await replyText(makeContext(), {
-      command: 'removesource',
-      args: '@karpathy',
-    });
+  it.each(['pausesource', 'resumesource', 'removesource', 'deletesource'])(
+    'points /%s to the buttons in /sourcestats, and changes nothing',
+    async (command) => {
+      await dispatchCommand(makeContext(), { command: 'addsource', args: 'karpathy' });
 
-    expect(reply).toContain('Removed');
-    expect(await countSources(db)).toBe(0);
-  });
+      const reply = await dispatchCommand(makeContext(), { command, args: '@karpathy' });
 
-  it('says so when removing something that is not there', async () => {
-    const reply = await replyText(makeContext(), {
-      command: 'removesource',
-      args: '@karpathy',
-    });
-    expect(reply).toContain('not in your sources');
-  });
-
-  it('pauses and resumes a source', async () => {
-    await dispatchCommand(makeContext(), { command: 'addsource', args: 'karpathy' });
-
-    await dispatchCommand(makeContext(), { command: 'pausesource', args: 'karpathy' });
-    expect(await listEnabledSources(db, 'x')).toHaveLength(0);
-    expect(await countSources(db)).toBe(1);
-
-    await dispatchCommand(makeContext(), { command: 'resumesource', args: 'karpathy' });
-    expect(await listEnabledSources(db, 'x')).toHaveLength(1);
-  });
-
-  it('is idempotent when pausing twice', async () => {
-    await dispatchCommand(makeContext(), { command: 'addsource', args: 'karpathy' });
-    await dispatchCommand(makeContext(), { command: 'pausesource', args: 'karpathy' });
-    const reply = await replyText(makeContext(), {
-      command: 'pausesource',
-      args: 'karpathy',
-    });
-
-    expect(reply).toContain('already paused');
-  });
+      expect(reply).toMatchObject({ offerStats: true });
+      expect(reply?.text).toContain('/sourcestats');
+      expect(await listEnabledSources(db, 'x')).toHaveLength(1);
+    },
+  );
 
   /**
    * Authorisation is a workspace lookup: the sender's id is both the proof they

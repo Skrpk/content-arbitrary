@@ -12,7 +12,7 @@ import {
   telegramMessages,
   workspaces,
 } from '@/db/schema';
-import { GET, POST } from '@/app/api/telegram/webapp/sources/route';
+import { DELETE, GET, POST } from '@/app/api/telegram/webapp/sources/route';
 import { ensureTestWorkspace, withEnv } from './helpers';
 
 /**
@@ -71,6 +71,18 @@ function change(body: unknown, authorization = auth()) {
     POST(
       new Request('https://example.vercel.app/api/telegram/webapp/sources', {
         method: 'POST',
+        headers: { 'content-type': 'application/json', authorization },
+        body: JSON.stringify(body),
+      }),
+    ),
+  );
+}
+
+function remove(body: unknown, authorization = auth()) {
+  return withEnv(routeEnv, () =>
+    DELETE(
+      new Request('https://example.vercel.app/api/telegram/webapp/sources', {
+        method: 'DELETE',
         headers: { 'content-type': 'application/json', authorization },
         body: JSON.stringify(body),
       }),
@@ -198,5 +210,51 @@ describeIfDb('POST /api/telegram/webapp/sources', () => {
 
     expect(response.status).toBe(400);
     expect(await reload(source.id)).toMatchObject({ enabled: true, includeTextOnly: false });
+  });
+});
+
+describeIfDb('DELETE /api/telegram/webapp/sources', () => {
+  const exists = async (id: number) =>
+    (await db.select().from(sources).where(eq(sources.id, id))).length === 1;
+
+  it('removes the source, and keeps its posts and cursor', async () => {
+    const source = await addSource('alpha');
+    await db.insert(processedPosts).values({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      sourceId: source.id,
+      xPostId: '1',
+      xPostUrl: 'https://x.com/alpha/status/1',
+      status: 'published',
+    });
+    await db.insert(syncState).values({ source: 'x:alpha-id', workspaceId: DEFAULT_WORKSPACE_ID, lastSeenPostId: '1' });
+
+    const response = await remove({ sourceId: source.id });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ removed: source.id });
+    expect(await exists(source.id)).toBe(false);
+    expect(await db.select().from(processedPosts)).toEqual([expect.objectContaining({ sourceId: null })]);
+    expect(await db.select().from(syncState)).toHaveLength(1);
+  });
+
+  it('cannot remove another tenant\'s source', async () => {
+    const theirs = await addSource('beta', OTHER_WORKSPACE);
+
+    expect((await remove({ sourceId: theirs.id })).status).toBe(404);
+    expect(await exists(theirs.id)).toBe(true);
+  });
+
+  it('lets a stranger remove nothing', async () => {
+    const source = await addSource('alpha');
+
+    expect((await remove({ sourceId: source.id }, auth(STRANGER_ID))).status).toBe(401);
+    expect(await exists(source.id)).toBe(true);
+  });
+
+  it.each([[{}], [{ sourceId: 'one' }], [{ sourceId: 1, workspaceId: 2 }]])('refuses %j', async (body) => {
+    const source = await addSource('alpha');
+
+    expect((await remove(body)).status).toBe(400);
+    expect(await exists(source.id)).toBe(true);
   });
 });

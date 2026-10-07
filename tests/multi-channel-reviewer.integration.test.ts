@@ -290,33 +290,12 @@ describeIfDb('source commands for two channels', () => {
     expect(callsTo('editMessageText')[0]?.body.text).toBe('⚠️ That channel is not one of yours.');
   });
 
-  it('pauses at once when only one channel watches the account', async () => {
-    await db.insert(sources).values({ workspaceId: BETA, externalId: '33836629', username: 'karpathy' });
-
-    await command('/pausesource @karpathy');
-
-    expect(lastReply().buttons).toEqual([]);
-    expect(lastReply().text).toContain('📢 Beta');
-    const [source] = await db.select().from(sources).where(eq(sources.workspaceId, BETA));
-    expect(source?.enabled).toBe(false);
-  });
-
-  it('asks which channel when both watch the account', async () => {
-    await db.insert(sources).values([
-      { workspaceId: ALPHA, externalId: '33836629', username: 'karpathy' },
-      { workspaceId: BETA, externalId: '33836629', username: 'karpathy' },
-    ]);
-
-    await command('/removesource @karpathy');
-
-    expect(lastReply().buttons.map((button) => button.callback_data)).toEqual([
-      `wc:r:${ALPHA}:karpathy`,
-      `wc:r:${BETA}:karpathy`,
-    ]);
+  it('ignores a remove button left from before removing moved to /sourcestats', async () => {
+    await db.insert(sources).values({ workspaceId: ALPHA, externalId: '33836629', username: 'karpathy' });
 
     await press(`wc:r:${ALPHA}:karpathy`);
-    expect(await sourcesOf(ALPHA)).toEqual([]);
-    expect(await sourcesOf(BETA)).toEqual(['karpathy']);
+
+    expect(await sourcesOf(ALPHA)).toEqual(['karpathy']);
   });
 
   it('lists the sources of both channels, each under its name', async () => {

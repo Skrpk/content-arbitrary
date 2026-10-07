@@ -196,17 +196,27 @@ export async function updateSourceUsername(
 }
 
 /**
- * Remove a source permanently.
+ * Remove a source permanently, only within the given workspaces — the ones
+ * the reviewer asking reviews for. Another tenant's id deletes nothing and
+ * returns null, like an id that does not exist.
  *
- * Its `sync_state` cursor is deliberately left behind: it is keyed by the
+ * Its posts stay, detached from it (`source_id` set null). Its `sync_state` cursor is deliberately left behind: it is keyed by the
  * platform id, so re-adding the same account later reads only from where it
  * stopped instead of re-reading (and re-paying for) the whole window. What
  * it posted in between is still passed over — the new row's
  * `following_since` is where a source starts.
  */
-export async function deleteSource(db: Database, id: number): Promise<boolean> {
-  const rows = await db.delete(sources).where(eq(sources.id, id)).returning({ id: sources.id });
-  return rows.length > 0;
+export async function deleteSource(
+  db: Database,
+  input: { id: number; workspaceIds: number[] },
+): Promise<Source | null> {
+  if (input.workspaceIds.length === 0) return null;
+
+  const rows = await db
+    .delete(sources)
+    .where(and(eq(sources.id, input.id), inArray(sources.workspaceId, input.workspaceIds)))
+    .returning();
+  return rows[0] ?? null;
 }
 
 /** Stable `sync_state` key for a source. Unchanged from the single-source era. */

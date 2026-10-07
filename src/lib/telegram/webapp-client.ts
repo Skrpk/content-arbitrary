@@ -9,6 +9,8 @@ export interface TelegramWebApp {
   expand: () => void;
   close: () => void;
   themeParams?: Record<string, string>;
+  /** Telegram's own yes/no dialog; absent on clients older than Bot API 6.2. */
+  showConfirm?: (message: string, callback: (confirmed: boolean) => void) => void;
 }
 
 declare global {

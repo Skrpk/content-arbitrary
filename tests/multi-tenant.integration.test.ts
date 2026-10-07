@@ -12,7 +12,7 @@ import {
   workspaces,
 } from '@/db/schema';
 import { syncPosts } from '@/lib/sync/sync-posts';
-import { addSource, listSources } from '@/lib/sources/repository';
+import { addSource, deleteSource, listSources } from '@/lib/sources/repository';
 import { claimForDecision, getSyncState, upsertSyncState } from '@/lib/sync/repository';
 import { advisoryLockKey } from '@/lib/sync/locks';
 import { dispatchCommand } from '@/lib/telegram/commands';
@@ -446,24 +446,9 @@ describeIfDb('tenant isolation', () => {
   });
 
   it('will not let a reviewer remove another tenant\'s source', async () => {
-    await addSource(db, { platform: 'x', externalId: '111', username: 'alpha' });
+    const { source } = await addSource(db, { platform: 'x', externalId: '111', username: 'alpha' });
 
-    const reply = await replyText(
-      {
-        db,
-        xClient: new XClient({
-          bearerToken: 'test',
-          baseUrl: 'https://api.x.example',
-          fetchImpl: vi.fn() as unknown as typeof fetch,
-          attempts: 1,
-        }),
-        logger: createTestLogger(),
-        workspaceId: TENANT_B,
-      },
-      { command: 'removesource', args: '@alpha' },
-    );
-
-    expect(reply).toContain('not in your sources');
+    expect(await deleteSource(db, { id: source.id, workspaceIds: [TENANT_B] })).toBeNull();
     expect(await listSources(db, DEFAULT_WORKSPACE_ID)).toHaveLength(1);
   });
 

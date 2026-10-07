@@ -3,14 +3,7 @@ import { describeError } from '@/lib/errors';
 import type { Logger } from '@/lib/logger';
 import { escapeHtml } from '@/lib/telegram/format-caption';
 import { normalizeXUsername } from '@/lib/sources/normalize';
-import {
-  addSource,
-  deleteSource,
-  findSourceByUsername,
-  listSources,
-  setSourceEnabled,
-  updateSourceUsername,
-} from '@/lib/sources/repository';
+import { addSource, listSources, updateSourceUsername } from '@/lib/sources/repository';
 import type { XClient } from '@/lib/x/client';
 import { formatScheduleTime } from '@/lib/sync/approval';
 import { listScheduledPosts } from '@/lib/sync/repository';
@@ -97,22 +90,22 @@ export interface CommandContext {
   workspaces?: WorkspaceRef[];
 }
 
-/** The commands that act on one source in one channel. */
-type SourceCommand = 'addsource' | 'removesource' | 'pausesource' | 'resumesource';
+/**
+ * The commands that act on one source in one channel — now only adding one:
+ * pausing, resuming and removing are buttons on the /sourcestats page.
+ */
+type SourceCommand = 'addsource';
 
 const CHOICE_CODES: Record<SourceCommand, string> = {
   addsource: 'a',
-  removesource: 'r',
-  pausesource: 'p',
-  resumesource: 'u',
 };
 
 const CHOICE_QUESTIONS: Record<SourceCommand, (handle: string) => string> = {
   addsource: (handle) => `Add <b>@${handle}</b> to which channel?`,
-  removesource: (handle) => `Remove <b>@${handle}</b> from which channel?`,
-  pausesource: (handle) => `Pause <b>@${handle}</b> in which channel?`,
-  resumesource: (handle) => `Resume <b>@${handle}</b> in which channel?`,
 };
+
+/** Commands that were replaced by the /sourcestats buttons, answered with a pointer there. */
+const MOVED_TO_STATS = new Set(['removesource', 'deletesource', 'pausesource', 'resumesource']);
 
 /** A channel button's data, well inside Telegram's 64 bytes: `wc:a:12:karpathy`. */
 export function buildChannelChoiceData(
@@ -130,7 +123,7 @@ export function buildChannelChoiceData(
 export function parseChannelChoice(
   data: string | undefined,
 ): { command: SourceCommand; workspaceId: number; username: string } | null {
-  const match = /^wc:([arpu]):(\d{1,12}):([A-Za-z0-9_]{1,15})$/.exec(data?.trim() ?? '');
+  const match = /^wc:(a):(\d{1,12}):([A-Za-z0-9_]{1,15})$/.exec(data?.trim() ?? '');
   if (!match) return null;
 
   const workspaceId = Number(match[2]);
@@ -159,9 +152,6 @@ export const BOT_COMMANDS: { command: string; description: string }[] = [
   { command: 'sources', description: 'List every source' },
   { command: 'sourcestats', description: 'How each source performs: posts, approvals, cost' },
   { command: 'addsource', description: 'Start watching an account: /addsource @username' },
-  { command: 'removesource', description: 'Stop watching and forget it: /removesource @username' },
-  { command: 'pausesource', description: 'Keep it, but skip it on sync: /pausesource @username' },
-  { command: 'resumesource', description: 'Watch it again: /resumesource @username' },
   { command: 'scheduled', description: 'Posts waiting to be published at a set time' },
   { command: 'help', description: 'What the bot can do' },
 ];
@@ -172,9 +162,8 @@ const HELP_TEXT = [
   '/sources — list every source',
   '/sourcestats — how each source performs: posts, approvals, cost',
   '/addsource @username — start watching an account',
-  '/removesource @username — stop watching and forget it',
-  '/pausesource @username — keep it, but skip it on sync',
-  '/resumesource @username — watch it again',
+  '',
+  'Pause, resume or remove a source with the buttons under it in /sourcestats.',
   '',
   '<b>Publishing</b>',
   '',
@@ -185,7 +174,7 @@ const HELP_TEXT = [
   '/help — this list',
 ].join('\n');
 
-/** Shared argument handling for the four commands that take a handle. */
+/** Argument handling for a command that takes a handle. */
 async function resolveHandleArgument(
   args: string,
   usage: string,
@@ -233,7 +222,7 @@ export async function handleSources(context: CommandContext): Promise<CommandRep
       : ['', ...all.map(lineFor)];
 
   const paused = all.filter((source) => !source.enabled).length;
-  const footer = paused > 0 ? ['', `${paused} paused — /resumesource to re-enable.`] : [];
+  const footer = paused > 0 ? ['', `${paused} paused — resume in /sourcestats.`] : [];
 
   return { text: ['<b>Sources</b>', ...body, ...footer].join('\n'), offerSettings: true };
 }
@@ -271,7 +260,7 @@ export async function handleAddSource(
   if (!result.created) {
     const note = result.source.enabled
       ? ''
-      : '\n\nIt is currently paused — /resumesource to watch it again.';
+      : '\n\nIt is currently paused — resume it in /sourcestats.';
     return {
       text: `ℹ️ <b>@${escapeHtml(user.username)}</b> is already in your sources.${note}`,
       offerSettings: true,
@@ -289,52 +278,6 @@ export async function handleAddSource(
       'Posts with photos or videos only. Use Settings to mirror text posts too.',
     offerSettings: true,
   };
-}
-
-/** Find a source by handle, preferring an exact match on what X currently reports. */
-async function findByHandle(context: CommandContext, username: string) {
-  return findSourceByUsername(context.db, {
-    platform: 'x',
-    username,
-    workspaceId: context.workspaceId,
-  });
-}
-
-export async function handleRemoveSource(context: CommandContext, args: string): Promise<string> {
-  const resolved = await resolveHandleArgument(args, '/removesource @username');
-  if (!resolved.ok) return resolved.reply;
-
-  const source = await findByHandle(context, resolved.username);
-  if (!source) return `ℹ️ <b>@${escapeHtml(resolved.username)}</b> is not in your sources.`;
-
-  await deleteSource(context.db, source.id);
-  context.logger.info('command.source_removed', { username: source.username, id: source.id });
-
-  return `🗑 <b>Removed</b>\n\n@${escapeHtml(source.username)} will no longer be synced.`;
-}
-
-async function setEnabled(
-  context: CommandContext,
-  args: string,
-  enabled: boolean,
-): Promise<string> {
-  const usage = enabled ? '/resumesource @username' : '/pausesource @username';
-  const resolved = await resolveHandleArgument(args, usage);
-  if (!resolved.ok) return resolved.reply;
-
-  const source = await findByHandle(context, resolved.username);
-  if (!source) return `ℹ️ <b>@${escapeHtml(resolved.username)}</b> is not in your sources.`;
-
-  if (source.enabled === enabled) {
-    return `ℹ️ <b>@${escapeHtml(source.username)}</b> is already ${enabled ? 'active' : 'paused'}.`;
-  }
-
-  await setSourceEnabled(context.db, { id: source.id, enabled });
-  context.logger.info('command.source_enabled_changed', { username: source.username, enabled });
-
-  return enabled
-    ? `▶️ <b>@${escapeHtml(source.username)}</b> resumed — only what it posts from now on.`
-    : `⏸ <b>@${escapeHtml(source.username)}</b> paused — kept, but skipped on sync.`;
 }
 
 /**
@@ -381,19 +324,10 @@ async function runInChannel(
   switch (command) {
     case 'addsource':
       return handleAddSource(single, username);
-    case 'removesource':
-      return { text: await handleRemoveSource(single, username) };
-    case 'pausesource':
-      return { text: await setEnabled(single, username, false) };
-    case 'resumesource':
-      return { text: await setEnabled(single, username, true) };
   }
 }
 
-/**
- * A source command from a reviewer of several channels: act at once when only
- * one channel can be meant, otherwise ask with a button per channel.
- */
+/** A source command from a reviewer of several channels: ask which, with a button per channel. */
 async function sourceCommandAcrossChannels(
   context: CommandContext,
   command: SourceCommand,
@@ -404,35 +338,10 @@ async function sourceCommandAcrossChannels(
   if (!resolved.ok) return { text: resolved.reply };
   const { username } = resolved;
 
-  // Adding fits any channel; the rest only those already watching the account.
-  const candidates =
-    command === 'addsource'
-      ? channels
-      : (
-          await Promise.all(
-            channels.map(async (channel) =>
-              (await findSourceByUsername(context.db, {
-                platform: 'x',
-                username,
-                workspaceId: channel.id,
-              }))
-                ? channel
-                : null,
-            ),
-          )
-        ).filter((channel): channel is WorkspaceRef => channel !== null);
-
-  if (candidates.length === 0) {
-    return { text: `ℹ️ <b>@${escapeHtml(username)}</b> is not in your sources.` };
-  }
-  if (candidates.length === 1) {
-    return runChosenChannel(context, { command, workspaceId: candidates[0]!.id, username });
-  }
-
   return {
     text: CHOICE_QUESTIONS[command](escapeHtml(username)),
     replyMarkup: {
-      inline_keyboard: candidates.map((channel) => [
+      inline_keyboard: channels.map((channel) => [
         {
           text: `📢 ${channel.name}`,
           callback_data: buildChannelChoiceData(command, channel.id, username),
@@ -473,8 +382,15 @@ export async function dispatchCommand(
   context: CommandContext,
   parsed: ParsedCommand,
 ): Promise<CommandReply | null> {
-  const command = parsed.command === 'deletesource' ? 'removesource' : parsed.command;
+  const { command } = parsed;
   const channels = channelsOf(context);
+
+  if (MOVED_TO_STATS.has(command)) {
+    return {
+      text: 'Pausing, resuming and removing a source are now buttons under it in /sourcestats.',
+      offerStats: true,
+    };
+  }
 
   switch (command) {
     case 'start':
@@ -492,9 +408,6 @@ export async function dispatchCommand(
         offerStats: true,
       };
     case 'addsource':
-    case 'removesource':
-    case 'pausesource':
-    case 'resumesource':
       return channels.length > 1
         ? sourceCommandAcrossChannels(context, command, parsed.args, channels)
         : runInChannel(context, command, parsed.args);

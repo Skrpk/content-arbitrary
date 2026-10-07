@@ -10,8 +10,9 @@ import { TELEGRAM_WEB_APP_SCRIPT, theme } from '@/lib/telegram/webapp-client';
  * Opened from the button under /sourcestats. Per source — grouped by
  * channel, each with its own totals — what it brought in over a period, how much of
  * it was approved, why the rest was turned down, and roughly what reading it
- * from X cost: the numbers to decide which accounts are worth keeping. Every
- * request carries Telegram's signed `initData`, as on the other pages.
+ * from X cost: the numbers to decide which accounts are worth keeping — and
+ * the buttons to act on them: pause, resume, remove. Every request carries
+ * Telegram's signed `initData`, as on the other pages.
  */
 
 type Period = '7d' | '30d' | 'all';
@@ -52,6 +53,15 @@ const PERIODS: { key: Period; label: string }[] = [
   { key: 'all', label: 'All time' },
 ];
 
+const actionButton = {
+  flex: 1,
+  padding: '0.45rem 0',
+  border: 'none',
+  borderRadius: '0.5rem',
+  fontSize: '0.85rem',
+  fontWeight: 600,
+} as const;
+
 const percent = (rate: number | null) => (rate === null ? '—' : `${Math.round(rate * 100)}%`);
 const dollars = (usd: number | null) => (usd === null ? '—' : `$${usd.toFixed(usd < 1 ? 3 : 2)}`);
 
@@ -63,6 +73,15 @@ function ago(iso: string | null): string {
   const hours = Math.round(minutes / 60);
   if (hours < 48) return `${hours}h ago`;
   return `${Math.round(hours / 24)}d ago`;
+}
+
+/** Ask before something that cannot be undone, in Telegram's own dialog where there is one. */
+function confirmFirst(message: string): Promise<boolean> {
+  const app = window.Telegram?.WebApp;
+  if (app?.showConfirm) {
+    return new Promise((resolve) => app.showConfirm!(message, resolve));
+  }
+  return Promise.resolve(window.confirm(message));
 }
 
 /** Green when most is approved, red when almost nothing is. */
@@ -95,6 +114,9 @@ export default function SourceStatsPage() {
   const [data, setData] = useState<StatsResponse | null>(null);
   /** Only the latest period's answer is shown, whatever order they arrive in. */
   const latest = useRef(0);
+  /** Sources with a pause, resume or removal on its way to the server. */
+  const [busy, setBusy] = useState<Set<number>>(new Set());
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const load = useCallback(async (next: Period) => {
     const app = window.Telegram?.WebApp;
@@ -134,6 +156,71 @@ export default function SourceStatsPage() {
       setMessage(error instanceof Error ? error.message : 'Could not load the stats.');
     }
   }, []);
+
+  /** Change one source in what is shown, or drop it with `null`. */
+  const patchSource = useCallback((sourceId: number, change: Partial<SourceView> | null) => {
+    setData((current) =>
+      current && {
+        ...current,
+        channels: current.channels.map((channel) => ({
+          ...channel,
+          sources: change
+            ? channel.sources.map((item) => (item.sourceId === sourceId ? { ...item, ...change } : item))
+            : channel.sources.filter((item) => item.sourceId !== sourceId),
+        })),
+      },
+    );
+  }, []);
+
+  /** Run one source action against the API, with the source marked busy meanwhile. */
+  const act = useCallback(
+    async (source: SourceView, method: 'POST' | 'DELETE', body: Record<string, unknown>) => {
+      const app = window.Telegram?.WebApp;
+      if (!app?.initData) return false;
+
+      setBusy((current) => new Set(current).add(source.sourceId));
+      setActionError(null);
+      try {
+        const response = await fetch('/api/telegram/webapp/sources', {
+          method,
+          headers: { Authorization: `tma ${app.initData}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ sourceId: source.sourceId, ...body }),
+        });
+        const result = (await response.json()) as { error?: string };
+        if (!response.ok) throw new Error(result.error ?? `Request failed (${response.status})`);
+        return true;
+      } catch (error: unknown) {
+        setActionError(`@${source.username}: ${error instanceof Error ? error.message : 'could not save'}`);
+        return false;
+      } finally {
+        setBusy((current) => {
+          const next = new Set(current);
+          next.delete(source.sourceId);
+          return next;
+        });
+      }
+    },
+    [],
+  );
+
+  const togglePause = useCallback(
+    async (source: SourceView) => {
+      if (await act(source, 'POST', { enabled: !source.enabled })) {
+        patchSource(source.sourceId, { enabled: !source.enabled });
+      }
+    },
+    [act, patchSource],
+  );
+
+  const remove = useCallback(
+    async (source: SourceView) => {
+      const confirmed = await confirmFirst(
+        `Remove @${source.username}? It stops being synced and leaves this list; its past posts stay.`,
+      );
+      if (confirmed && (await act(source, 'DELETE', {}))) patchSource(source.sourceId, null);
+    },
+    [act, patchSource],
+  );
 
   const labelOf = (reason: string | null) =>
     reason === null ? 'No reason given' : (data?.reasonLabels[reason] ?? reason);
@@ -197,6 +284,10 @@ export default function SourceStatsPage() {
 
         {data && phase !== 'error' ? (
           <div style={{ opacity: phase === 'loading' ? 0.5 : 1 }}>
+            {actionError ? (
+              <p style={{ color: '#e53935', fontSize: '0.85rem', margin: '0 0 0.75rem' }}>{actionError}</p>
+            ) : null}
+
             {data.channels.every((channel) => channel.sources.length === 0) ? (
               <p style={{ color: theme.hint }}>No sources yet. Add one in the chat with /addsource @username.</p>
             ) : null}
@@ -298,6 +389,40 @@ export default function SourceStatsPage() {
                         X reads ≈ {dollars(source.readCostUsd)} · {dollars(source.costPerApprovedUsd)} per approved ·
                         last post {ago(source.lastPostAt)}
                       </div>
+
+                      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.65rem' }}>
+                        <button
+                          type="button"
+                          disabled={busy.has(source.sourceId)}
+                          onClick={() => {
+                            void togglePause(source);
+                          }}
+                          style={{
+                            ...actionButton,
+                            background: theme.button,
+                            color: theme.buttonText,
+                            opacity: busy.has(source.sourceId) ? 0.6 : 1,
+                          }}
+                        >
+                          {source.enabled ? '⏸ Pause' : '▶️ Resume'}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy.has(source.sourceId)}
+                          onClick={() => {
+                            void remove(source);
+                          }}
+                          style={{
+                            ...actionButton,
+                            background: 'transparent',
+                            color: '#e53935',
+                            border: '1px solid #e53935',
+                            opacity: busy.has(source.sourceId) ? 0.6 : 1,
+                          }}
+                        >
+                          🗑 Remove
+                        </button>
+                      </div>
                     </section>
                   ))}
                 </section>
@@ -306,7 +431,8 @@ export default function SourceStatsPage() {
 
             <p style={{ fontSize: '0.75rem', color: theme.hint, margin: 0 }}>
               Approval rate is approved out of decided. X reads are an estimate at ${data.postReadUsd} per post the
-              bot kept; posts X returned that it skipped are not counted, so the real figure is a little higher.
+              bot kept; posts X returned that it skipped are not counted, so the real figure is a little higher. A
+              resumed source picks up only what is posted from then on.
             </p>
           </div>
         ) : null}

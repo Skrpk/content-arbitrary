@@ -1,12 +1,12 @@
 import { z } from 'zod';
 import type { Source } from '@/db/schema';
 import { describeError } from '@/lib/errors';
-import { listSources, updateSourceSettings } from '@/lib/sources/repository';
+import { deleteSource, listSources, updateSourceSettings } from '@/lib/sources/repository';
 import { authorizeReviewer, json } from '@/lib/telegram/webapp-request';
 
 /**
- * The settings Mini App's API: list the reviewer's sources, channel by
- * channel, and change their per-source switches.
+ * The source Mini Apps' API: list the reviewer's sources, channel by
+ * channel, change their per-source switches, and remove one.
  *
  * Guarded like the other Mini App endpoints — signed `initData` naming a
  * workspace's reviewer — and every read and write is scoped to the workspaces
@@ -28,6 +28,8 @@ const updateSchema = z
   .refine((body) => body.enabled !== undefined || body.includeTextOnly !== undefined, {
     message: 'nothing to change',
   });
+
+const deleteSchema = z.object({ sourceId: z.number().int().positive() }).strict();
 
 /** Only what the page shows; the X id and timestamps stay server-side. */
 const view = (source: Source) => ({
@@ -84,4 +86,36 @@ export async function POST(request: Request): Promise<Response> {
 
   auth.logger.info('webapp.source_settings_changed', { sourceId, ...settings });
   return json({ source: view(updated) });
+}
+
+/** Remove a source for good. Its posts and its cursor stay behind. */
+export async function DELETE(request: Request): Promise<Response> {
+  let auth: Awaited<ReturnType<typeof authorizeReviewer>>;
+  try {
+    auth = await authorizeReviewer(request);
+  } catch (error) {
+    return json({ error: describeError(error) }, 500);
+  }
+  if (!auth.ok) return auth.response;
+
+  let body: z.infer<typeof deleteSchema>;
+  try {
+    body = deleteSchema.parse(await request.json());
+  } catch (error) {
+    auth.logger.warn('webapp.bad_request', { error: describeError(error) });
+    return json({ error: 'bad request' }, 400);
+  }
+
+  const removed = await deleteSource(auth.db, {
+    id: body.sourceId,
+    workspaceIds: auth.workspaces.map((workspace) => workspace.id),
+  });
+  if (!removed) return json({ error: 'No such source.' }, 404);
+
+  auth.logger.info('webapp.source_removed', {
+    sourceId: removed.id,
+    workspaceId: removed.workspaceId,
+    username: removed.username,
+  });
+  return json({ removed: removed.id });
 }

@@ -560,13 +560,20 @@ environment change and no redeploy:
 | Command | What it does |
 | --- | --- |
 | `/sources` | List every source and whether it is active |
+| `/sourcestats` | Open a page with how each source performs — and buttons to pause, resume or remove it |
 | `/addsource @karpathy` | Start watching an account |
-| `/removesource @karpathy` | Stop watching and forget it |
-| `/pausesource @karpathy` | Keep it on the list but skip it on sync |
-| `/resumesource @karpathy` | Watch it again — from now on; what it posted while paused is skipped |
 
 `/addsource` accepts whatever is easiest to paste — `karpathy`, `@karpathy`,
 `x.com/karpathy`, a full profile URL, or even a link to one of the account's posts.
+
+Pausing, resuming and removing a source are buttons under it on the `/sourcestats` page, next
+to its numbers: posts it brought in, how many were approved, why the rest were rejected, and
+roughly what reading it from X cost. A resumed source picks up only what is posted from then on;
+a removed one keeps its past posts. The old `/pausesource`, `/resumesource` and `/removesource`
+commands now just point there.
+
+The bot's command menu — the list beside the message field — is `BOT_COMMANDS` in
+`src/lib/telegram/commands.ts`; register it with `npm run telegram:commands` after changing it.
 
 Only a workspace's reviewer may run these, for the workspaces that name them; anyone else is
 ignored without a reply.
@@ -581,7 +588,7 @@ they are flipped:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| Active | on | Off is the same as `/pausesource`. |
+| Active | on | Off pauses the source, like ⏸ Pause on the `/sourcestats` page. |
 | Posts without media | off | Also mirror the account's text-only posts, as text messages (`sendMessage`, up to 4096 characters, with the same prefix, source link and suffix as a caption). |
 
 A new source mirrors media posts only, as every source always has. Turning **Posts without
@@ -658,10 +665,9 @@ The same person may be the reviewer of any number of workspaces — use the same
 - every button and Mini App acts on the post's own channel, whichever it is: the post decides
   the workspace, and the reviewer only has to be its reviewer;
 - review messages start with `📢 <name>`, so the two channels' posts can be told apart;
-- `/addsource` asks which channel with a button per channel; `/removesource`, `/pausesource`
-  and `/resumesource` act at once when only one channel watches the account, and ask when
-  several do;
-- `/sources`, `/scheduled` and the ⚙️ Settings page cover every channel, grouped by name.
+- `/addsource` asks which channel with a button per channel;
+- `/sources`, `/scheduled`, the ⚙️ Settings page and the `/sourcestats` page cover every
+  channel, grouped by name.
 
 A reviewer of a single channel sees none of this — no labels, no questions.
 
