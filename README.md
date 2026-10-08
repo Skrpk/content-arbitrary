@@ -1030,16 +1030,22 @@ shown (8 October 2026) are a little less independent a test of Radar than those 
 channel publishes and what it turns down), the
 [publication-history profile](#publication-history) when one has been generated, the editor's 10
 most recent approvals and 10 most recent rejections with their reasons, the share of posts they
-approve, and the post: its source, text and kind of media. Each post is scored twice when it has a picture — on the text alone and on the
-text with its first photo (or a video's still) — to find out whether the image is worth paying for.
+approve, and the post: its source, text and kind of media. A post's picture is not sent with
+every version: its first photo is [understood once](#image-understanding), and the media prompt
+reads that description. (The earlier experiment — scoring the text with its raw first photo too,
+the `text_image` variant — runs live only with `RADAR_LIVE_IMAGE_VARIANT=true`; backfills still
+score it.)
 
-**Prompts, side by side.** Three versions build on each other, so each addition is measured on
+**Prompts, side by side.** Four versions build on each other, so each addition is measured on
 the same posts, not on two different sets: `radar-v1` (the baseline above);
 `radar-v2-history-retrieval`, which adds the channel's [five most similar past
-publications](#similar-past-publications) and asks what they show; and
+publications](#similar-past-publications) and asks what they show;
 `radar-v3-retrieval-approved`, which also adds the [five most similar posts the editor already
-approved](#similar-approved-posts). Live, every post is scored with `radar-v1` and the newest;
-backfills score all three by default. `LIVE_RADAR_PROMPT_VERSIONS` in
+approved](#similar-approved-posts); and `radar-v4-media-understanding`, which also reads what
+images show — the new post's, and the past publications', approved posts' and examples' — from
+their [stored descriptions](#image-understanding), never the image itself. Live, every post is
+scored with `radar-v1`, `radar-v3` and `radar-v4`; backfills score all four by default.
+`LIVE_RADAR_PROMPT_VERSIONS` in
 [`src/lib/radar/prompt.ts`](src/lib/radar/prompt.ts) is the live list.
 
 **What it records**, in `radar_evaluations`: a 0–100 score (the probability the editor publishes
@@ -1302,6 +1308,68 @@ extra call, and runs even for a workspace with no imported history. What it foun
 tokens and the cost; the per-post calls are logged (`radar.history_retrieved`) and their tokens
 stored with the post's vector.
 
+### Image understanding
+
+A post that says only "wow" under a photo of an aurora is about the aurora — but text search,
+and a text-only Radar prompt, cannot know it. So a post's first photo is looked at once by a
+vision model, and what it shows is stored as a few short, factual fields: a one- or two-sentence
+`summary`, the `content_type` (photo, illustration, screenshot, meme, chart, diagram, other), up
+to six `topics` and `entities`, any meaningful `visible_text`, and an `information_value`
+(decorative, supporting, essential: how much the post depends on the image). Those words are then
+reused everywhere, with no second look:
+
+- **Radar** — `radar-v4-media-understanding` reads them in place of the image;
+- **similarity search** — a post's embedded text is its title and text plus what its image shows
+  (`buildSemanticContentRepresentation`), for new posts and past publications alike, so an
+  image-only post can be found, and find others.
+
+**Once, and only once.** An understanding is stored in `media_understandings` under the SHA-256
+of the image's bytes and the model, prompt version and detail level — never a URL, and never a
+workspace: the model is shown the image and the caption, nothing of any channel, so the same
+picture means the same thing to every tenant and is looked at once for all of them. Every Radar
+version, the retrieval and later backfills read the stored row. A new post's photo is the one
+already downloaded for the send; it is fetched only when the send does not download it
+(`MEDIA_UPLOAD_MODE=url`). A post records which image it is in `processed_posts.image_fingerprint`;
+each `radar_evaluations` row of the media prompt records which understanding it read
+(`media_understanding_id`, whose row names the model and prompt version).
+
+**The call.** `MEDIA_UNDERSTANDING_MODEL` (GPT-6 Luna by default), OpenAI's Responses API, no
+reasoning, the image at `low` detail, a short prompt that treats everything in the image and the
+caption as data, never instructions, and never names a person from their appearance. Only the
+first photo of a post is looked at — an album's others, videos, GIFs and anything that is not a
+JPEG, PNG or WebP are not, yet. It is enrichment, never in the way: an image that cannot be
+fetched, a timeout or a refusal is recorded (a failed row, retried by the next request for the
+same image) and the post is scored and reviewed as it would have been. The usage the API reports
+and its list-price cost are stored on each row.
+
+**The history's images** are read from the export's files, once:
+
+```bash
+npm run history:understand-images -- --workspace 2 --media-root ./ChatExport_2026-10-06 --dry-run
+npm run history:understand-images -- --workspace 2 --media-root ./ChatExport_2026-10-06 --limit 50
+npm run history:understand-images -- --workspace 2 --media-root ./ChatExport_2026-10-06
+npm run history:embed -- --workspace 2
+```
+
+`--media-root` is the folder with `result.json` and `photos/`; each item's stored `relativePath`
+is read under it, and never outside it. An item whose photo the export left out, or whose file is
+missing, is skipped and counted (`Skipped unavailable`), never fetched from Telegram. It is
+resumable: what is already understood is passed over, so a run that stopped, or one with
+`--limit`, is simply run again. `history:embed` then embeds again only the items whose image was
+newly understood, and gives image-only posts their first vector; posts without an image keep
+their vectors untouched. It uses the standard API, not the batch one: a channel's history is a
+few hundred images.
+
+**Cost**, measured: about 700 input and 85 output tokens an image, **≈ $0.00011 an image** at
+GPT-6 Luna's list price, ≈ $0.011 per 100, and ≈ $0.016 for VECTOR's 143 history posts with a
+photo. Live, one such call per new post with a photo, then the media prompt is one more text call
+— and since the raw image is no longer sent to every version, an image post costs less to score
+than before.
+
+**Comparing.** `npm run radar:report -- --workspace 2 --compare radar-v3-retrieval-approved,radar-v4-media-understanding`
+puts the two side by side on the same posts — and again on the posts with images only, where an
+effect would otherwise drown among text posts — with what the images cost to look at.
+
 ## Configuration reference
 
 | Variable | Default | Description |
@@ -1325,6 +1393,8 @@ stored with the post's vector.
 | `RADAR_MODEL` | provider's default | Overrides the chosen provider's model id. |
 | `OPENAI_API_KEY` | — | Needed for Radar with `RADAR_PROVIDER=openai`. Without the chosen provider's key, Radar is off. Also used for history embeddings, whatever the provider. |
 | `HISTORY_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI model for [similar past publications](#similar-past-publications). Vectors are kept per model; after changing it, run `npm run history:embed` again. |
+| `MEDIA_UNDERSTANDING_MODEL` | `gpt-6-luna` | OpenAI model that looks at a post's first photo once ([image understanding](#image-understanding)). Needs `OPENAI_API_KEY`. Understandings are kept per model; a new one means looking again. |
+| `RADAR_LIVE_IMAGE_VARIANT` | `false` | Also score every live post with its raw first photo, once per prompt version — the earlier `text_image` experiment. |
 | `ANTHROPIC_API_KEY` | — | Needed for Radar with `RADAR_PROVIDER=anthropic`. |
 | `CAPTION_PREFIX` | empty | Text prepended, separated by a blank line. |
 | `CAPTION_SUFFIX` | empty | Text appended, separated by a blank line. |
@@ -1476,8 +1546,15 @@ src/
       adapters/telegram-json.ts  Telegram Desktop JSON export
       profile/                 History → editorial profile: sources, prompts, map/reduce, store
       embeddings/              Embedded text and fingerprint, OpenAI embeddings, backfill, search
+    media/
+      understanding.ts         ImageUnderstanding, its prompt, schema and config
+      provider.ts              The vision call: one low-detail image, no reasoning
+      understand.ts            Understand an image at most once, never throwing
+      repository.ts            media_understandings, by fingerprint and config
+      history.ts               The history's images, from the export's files
 scripts/                       migrate, run-sync, telegram-check, telegram-commands, rss-check,
-                               import-history, history-profile, history-embed, radar-backfill,
+                               import-history, history-profile, history-embed,
+                               history-understand-images, radar-backfill,
                                radar-report, radar-context
 tests/                         Unit + integration suites
 ```

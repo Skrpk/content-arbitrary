@@ -8,6 +8,7 @@ import {
   RADAR_EXAMPLES_PER_CLASS,
   usesApprovedRetrieval,
   usesHistoryRetrieval,
+  usesMediaUnderstanding,
   type RadarImage,
   type RadarItem,
   type RadarPromptVersion,
@@ -18,6 +19,7 @@ import { loadRadarPublicationProfile } from '@/lib/history/profile/repository';
 import type { PublicationProfile } from '@/lib/history/profile/schema';
 import type { EmbeddingProvider } from '@/lib/history/embeddings/provider';
 import { retrieveSimilarPublications, toRetrievalRecord } from '@/lib/history/embeddings/retrieval';
+import type { ImageUnderstanding, MediaUnderstandingConfig } from '@/lib/media/understanding';
 
 /**
  * Shadow Radar: score a post and record the prediction, and nothing else.
@@ -44,6 +46,14 @@ export interface RadarRun {
   embeddings: EmbeddingProvider | null;
   /** Every post is scored with each of these. */
   promptVersions: readonly RadarPromptVersion[];
+  /** Whose image understandings the media prompt and retrieval read; null without them. */
+  mediaConfig: MediaUnderstandingConfig | null;
+  /**
+   * Also score with the raw image (`text_image`), once per version that is
+   * not the media one — the earlier experiment, off by default: the image is
+   * understood once and every version reads that.
+   */
+  imageVariant: boolean;
   deadline: number;
   consecutiveFailures: number;
   now: () => number;
@@ -53,6 +63,8 @@ export function createRadarRun(options: {
   provider: RadarProvider;
   embeddings?: EmbeddingProvider | null;
   promptVersions?: readonly RadarPromptVersion[];
+  mediaConfig?: MediaUnderstandingConfig | null;
+  imageVariant?: boolean;
   now?: () => number;
   budgetMs?: number;
   /** Never past this (epoch ms) — the sync's own deadline. */
@@ -64,6 +76,8 @@ export function createRadarRun(options: {
     provider: options.provider,
     embeddings: options.embeddings ?? null,
     promptVersions: options.promptVersions ?? LIVE_RADAR_PROMPT_VERSIONS,
+    mediaConfig: options.mediaConfig ?? null,
+    imageVariant: options.imageVariant ?? false,
     deadline: options.notAfter === undefined ? ownDeadline : Math.min(ownDeadline, options.notAfter),
     consecutiveFailures: 0,
     now,
@@ -75,8 +89,14 @@ export interface RadarSubject {
   processedPostId: number;
   profile: string;
   item: RadarItem;
-  /** The post's first image, when it has one; without it only the text variant runs. */
+  /** The post's first image, when it has one — sent only for the raw-image experiment. */
   image?: RadarImage;
+  /**
+   * What the post's first image shows, understood once before scoring; null
+   * when it has no image or it could not be understood. The media prompt
+   * reads it, and it is embedded with the text for retrieval.
+   */
+  media?: { understanding: ImageUnderstanding | null; understandingId: number | null } | null;
 }
 
 /**
@@ -89,7 +109,6 @@ export async function runLiveRadar(
   logger: Logger,
 ): Promise<void> {
   try {
-    const variants = variantsFor(subject.image);
     const remaining = run.deadline - run.now();
 
     if (remaining <= 0 || run.consecutiveFailures >= LIVE_MAX_CONSECUTIVE_FAILURES) {
@@ -98,7 +117,7 @@ export async function runLiveRadar(
       logger.warn('radar.skipped', { processedPostId: subject.processedPostId, reason });
       await Promise.all(
         run.promptVersions.flatMap((version) =>
-          variants.map((variant) =>
+          variantsFor(version, subject.image, run.imageVariant).map((variant) =>
             insertRadarEvaluation(db, {
               ...setup(subject, run.provider, 'live', variant, version),
               status: 'skipped',
@@ -118,6 +137,8 @@ export async function runLiveRadar(
       timeoutMs: Math.min(LIVE_CALL_TIMEOUT_MS, remaining),
       embeddings: run.embeddings,
       promptVersions: run.promptVersions,
+      mediaConfig: run.mediaConfig,
+      imageVariant: run.imageVariant,
       logger,
     });
 
@@ -148,6 +169,9 @@ export async function scoreAndRecord(
     logger: Logger;
     embeddings?: EmbeddingProvider | null;
     promptVersions?: readonly RadarPromptVersion[];
+    mediaConfig?: MediaUnderstandingConfig | null;
+    /** Score with the raw image too; see RadarRun.imageVariant. */
+    imageVariant?: boolean;
   },
 ): Promise<('ok' | 'failed' | 'exists')[]> {
   const pending: { version: RadarPromptVersion; variant: RadarVariant }[] = [];
@@ -158,17 +182,19 @@ export async function scoreAndRecord(
       model: provider.model,
       promptVersion: version,
     });
-    for (const variant of variantsFor(subject.image)) {
+    for (const variant of variantsFor(version, subject.image, options.imageVariant ?? false)) {
       if (!done.has(variant)) pending.push({ version, variant });
     }
   }
   if (pending.length === 0) return ['exists'];
 
+  const media = pending.some(({ version }) => usesMediaUnderstanding(version));
   const history = await loadRadarHistory(db, {
     workspaceId: subject.workspaceId,
     before: options.before,
     excludePostId: subject.processedPostId,
     perClass: RADAR_EXAMPLES_PER_CLASS,
+    mediaConfig: media ? options.mediaConfig : null,
   });
   const examplePostIds = history.examples.map((example) => example.postId);
   const publication = await publicationContext(db, subject.workspaceId, options.before, options.logger);
@@ -182,6 +208,8 @@ export async function scoreAndRecord(
         workspaceId: subject.workspaceId,
         processedPostId: subject.processedPostId,
         candidateText: subject.item.text,
+        candidateImage: subject.media?.understanding ?? null,
+        mediaConfig: media ? options.mediaConfig : null,
         before: options.before,
         includeApproved: pending.some(({ version }) => usesApprovedRetrieval(version)),
         timeoutMs: Math.min(RETRIEVAL_TIMEOUT_MS, options.timeoutMs),
@@ -192,6 +220,8 @@ export async function scoreAndRecord(
   return Promise.all(
     pending.map(async ({ version, variant }): Promise<'ok' | 'failed'> => {
       const image = variant === 'text_image' ? subject.image : undefined;
+      const readsMedia = usesMediaUnderstanding(version);
+      const mediaUnderstandingId = readsMedia ? (subject.media?.understandingId ?? null) : null;
       const shown = usesHistoryRetrieval(version) ? retrieval : null;
       const withApproved = usesApprovedRetrieval(version);
       const historyRetrieval = shown ? toRetrievalRecord(shown, { approved: withApproved }) : null;
@@ -208,6 +238,7 @@ export async function scoreAndRecord(
             promptVersion: version,
             similarPublications: shown?.matches ?? null,
             similarApproved: withApproved ? (shown?.approved?.matches ?? []) : null,
+            media: readsMedia ? { image: subject.media?.understanding ?? null } : null,
           },
           { timeoutMs: options.timeoutMs },
         );
@@ -216,6 +247,7 @@ export async function scoreAndRecord(
           ...setup(subject, provider, options.mode, variant, version),
           status: 'ok',
           imageIncluded: Boolean(image),
+          mediaUnderstandingId,
           examplePostIds,
           publicationHistoryProfileId,
           historyRetrieval,
@@ -246,6 +278,7 @@ export async function scoreAndRecord(
           ...setup(subject, provider, options.mode, variant, version),
           status: 'failed',
           imageIncluded: Boolean(image),
+          mediaUnderstandingId,
           examplePostIds,
           publicationHistoryProfileId,
           historyRetrieval,
@@ -288,9 +321,13 @@ async function publicationContext(
   }
 }
 
-function variantsFor(image: RadarImage | undefined): RadarVariant[] {
-  // With no image the text_image variant would be the text one again, at a cost.
-  return image ? ['text', 'text_image'] : ['text'];
+/**
+ * What a version is scored as. The raw image goes to a model only in the
+ * experiment, and never to the media prompt, which reads its description;
+ * with no image the text_image variant would be the text one again, at a cost.
+ */
+function variantsFor(version: RadarPromptVersion, image: RadarImage | undefined, imageVariant: boolean): RadarVariant[] {
+  return image && imageVariant && !usesMediaUnderstanding(version) ? ['text', 'text_image'] : ['text'];
 }
 
 function setup(

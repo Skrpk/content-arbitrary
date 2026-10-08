@@ -6,6 +6,7 @@ import type {
   RadarImage,
   RadarItem,
   RadarPromptVersion,
+  RadarMediaContext,
   RadarSimilarApproved,
   RadarSimilarPublication,
 } from '@/lib/radar/prompt';
@@ -69,6 +70,8 @@ export interface RadarInput {
   similarPublications?: RadarSimilarPublication[] | null;
   /** Approved-posts prompt only: the most similar posts the editor already approved. */
   similarApproved?: RadarSimilarApproved[] | null;
+  /** Media prompt only: what the post's first image shows, in place of the image. */
+  media?: RadarMediaContext | null;
 }
 
 export interface TokenUsage {

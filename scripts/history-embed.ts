@@ -8,8 +8,12 @@
  * Uses OpenAI's HISTORY_EMBEDDING_MODEL (text-embedding-3-small by default)
  * and OPENAI_API_KEY, whatever RADAR_PROVIDER is. Incremental: only items that
  * have no vector for that model, or whose text changed since, are embedded —
- * run it after every `npm run history:import`. Items without text are left
- * without a vector. --dry-run counts what would be embedded and calls nothing.
+ * run it after every `npm run history:import`. What each item's first image
+ * shows is embedded with its text once `npm run history:understand-images`
+ * has looked at it, so run this after that too; only the items whose image
+ * was newly understood are embedded again. Items with neither text nor an
+ * understood image are left without a vector. --dry-run counts what would be
+ * embedded and calls nothing.
  */
 import 'dotenv/config';
 import { eq } from 'drizzle-orm';
@@ -23,6 +27,7 @@ import {
   type HistoryEmbeddingSummary,
 } from '../src/lib/history/embeddings/embed';
 import { createEmbeddingProvider, embeddingCostUsd } from '../src/lib/history/embeddings/provider';
+import { mediaUnderstandingConfig } from '../src/lib/media/understanding';
 
 function argument(name: string): string | undefined {
   const index = process.argv.indexOf(`--${name}`);
@@ -51,6 +56,8 @@ async function main() {
     embeddings,
     workspaceId,
     dryRun,
+    // What images were understood is embedded with the text: run after history:understand-images.
+    mediaConfig: mediaUnderstandingConfig(env),
     logger: createLogger({ app: 'content-arbitrary', surface: 'history-embed' }),
     signal: controller.signal,
   };
@@ -62,11 +69,11 @@ async function main() {
     console.log('');
     console.log(title);
     row(noun, summary.items);
-    row('Eligible text', summary.eligible);
+    row('Eligible', `${summary.eligible} (text, or an understood image)`);
     row('Already embedded', summary.alreadyEmbedded);
     row(dryRun ? 'Would embed' : 'Embedded', summary.embedded);
-    row(dryRun ? 'Would re-embed' : 'Re-embedded', `${summary.reembedded} (text changed)`);
-    row('Skipped no text', summary.skippedNoText);
+    row(dryRun ? 'Would re-embed' : 'Re-embedded', `${summary.reembedded} (text or image understanding changed)`);
+    row('Skipped no text', `${summary.skippedNoText} (no text and no understood image)`);
     if (summary.removedStale > 0) row(dryRun ? 'Would remove' : 'Removed stale', summary.removedStale);
     row('Failed', summary.failed);
   };

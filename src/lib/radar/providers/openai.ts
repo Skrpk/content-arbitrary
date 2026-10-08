@@ -88,6 +88,7 @@ export function createOpenAiRadar(options: {
           input.image,
           input.similarPublications,
           input.similarApproved,
+          input.media,
         ).map(
           toOpenAiPart,
         ),

@@ -15,13 +15,20 @@ import {
   RADAR_EXAMPLES_PER_CLASS,
   RADAR_PROMPT_BASELINE,
   RADAR_PROMPT_APPROVED,
+  RADAR_PROMPT_MEDIA,
   RADAR_PROMPT_RETRIEVAL,
   RADAR_PROMPT_VERSIONS,
   usesApprovedRetrieval,
   usesHistoryRetrieval,
+  usesMediaUnderstanding,
   type RadarImage,
   type RadarPromptVersion,
 } from '@/lib/radar/prompt';
+import type { ImageUnderstander } from '@/lib/media/provider';
+import { loadUnderstandings, understandingOf } from '@/lib/media/repository';
+import { downloadImage, understandImage } from '@/lib/media/understand';
+import type { ImageUnderstanding, MediaUnderstandingConfig } from '@/lib/media/understanding';
+import { setPostImageFingerprint } from '@/lib/sync/repository';
 import type { RadarProvider } from '@/lib/radar/providers';
 import {
   findEvaluatedVariants,
@@ -96,6 +103,7 @@ const PROMPT_TAGS: Record<RadarPromptVersion, string> = {
   [RADAR_PROMPT_BASELINE]: '',
   [RADAR_PROMPT_RETRIEVAL]: 'v2r',
   [RADAR_PROMPT_APPROVED]: 'v3a',
+  [RADAR_PROMPT_MEDIA]: 'v4m',
 };
 
 /**
@@ -144,6 +152,12 @@ export async function submitRadarBackfill(input: {
   promptVersions?: readonly RadarPromptVersion[];
   /** For the retrieval prompt's similar past publications. */
   embeddings?: EmbeddingProvider | null;
+  /**
+   * For the media prompt: looks at a post's first photo once, when it has no
+   * stored understanding yet. Without it, only stored understandings are used.
+   */
+  understander?: ImageUnderstander | null;
+  mediaConfig?: MediaUnderstandingConfig | null;
   workspaceId: number;
   profile: string;
   /** Fewest approvals and fewest rejections a post needs behind it to be scored. */
@@ -163,6 +177,7 @@ export async function submitRadarBackfill(input: {
       method: processedPosts.telegramMethod,
       mediaCount: processedPosts.mediaCount,
       reviewMedia: processedPosts.reviewMedia,
+      imageFingerprint: processedPosts.imageFingerprint,
     })
     .from(processedPosts)
     .where(
@@ -207,7 +222,6 @@ export async function submitRadarBackfill(input: {
     if (input.limit !== undefined && summary.posts >= input.limit) break;
 
     const wantsImage = !input.textOnly && hasReviewImage(post.reviewMedia);
-    const wanted: RadarVariant[] = wantsImage ? ['text', 'text_image'] : ['text'];
     const missing: { version: RadarPromptVersion; variant: RadarVariant }[] = [];
     for (const version of versions) {
       const done = await findEvaluatedVariants(input.db, {
@@ -217,6 +231,8 @@ export async function submitRadarBackfill(input: {
         promptVersion: version,
         scoredOnly: true,
       });
+      // The media prompt reads the image's description; it is never sent the image.
+      const wanted: RadarVariant[] = wantsImage && !usesMediaUnderstanding(version) ? ['text', 'text_image'] : ['text'];
       for (const variant of wanted) if (!done.has(variant)) missing.push({ version, variant });
     }
     if (missing.length === 0) {
@@ -252,6 +268,18 @@ export async function submitRadarBackfill(input: {
       continue;
     }
 
+    const readsMedia = requests.some(({ version }) => usesMediaUnderstanding(version));
+    const media = await postImageUnderstanding(input, post, readsMedia);
+    const mediaHistory = readsMedia
+      ? await loadRadarHistory(input.db, {
+          workspaceId: input.workspaceId,
+          before: post.createdAt,
+          excludePostId: post.id,
+          perClass: RADAR_EXAMPLES_PER_CLASS,
+          mediaConfig: input.mediaConfig,
+        })
+      : history;
+
     const retrieval = requests.some(({ version }) => usesHistoryRetrieval(version))
       ? await retrieveSimilarPublications({
           db: input.db,
@@ -259,6 +287,8 @@ export async function submitRadarBackfill(input: {
           workspaceId: input.workspaceId,
           processedPostId: post.id,
           candidateText: post.sourceText,
+          candidateImage: media?.understanding ?? null,
+          mediaConfig: readsMedia ? input.mediaConfig : null,
           before: post.createdAt,
           includeApproved: requests.some(({ version }) => usesApprovedRetrieval(version)),
           logger: input.logger,
@@ -282,12 +312,13 @@ export async function submitRadarBackfill(input: {
           text: post.sourceText ?? '',
           media: describeStoredMedia(post.method, post.mediaCount),
         },
-        examples: history.examples,
+        examples: usesMediaUnderstanding(version) ? mediaHistory.examples : history.examples,
         image: variant === 'text_image' ? image : undefined,
         publicationProfile: publication?.profile ?? null,
         promptVersion: version,
         similarPublications: usesHistoryRetrieval(version) ? (retrieval?.matches ?? []) : null,
         similarApproved: usesApprovedRetrieval(version) ? (retrieval?.approved?.matches ?? []) : null,
+        media: usesMediaUnderstanding(version) ? { image: media?.understanding ?? null } : null,
       });
 
       const bytes = JSON.stringify(request).length;
@@ -334,12 +365,19 @@ export async function ingestRadarBatch(input: {
   workspaceId: number;
   /** The embedding model the requests were searched with; needed to record what they were shown. */
   embeddingModel?: string | null;
+  /** Whose image understandings the requests read; needed to record which one each media score used. */
+  mediaConfig?: MediaUnderstandingConfig | null;
   logger: Logger;
 }): Promise<IngestSummary> {
   const summary: IngestSummary = { scored: 0, failed: 0 };
   const posts = new Map<
     number,
-    { createdAt: Date; sourceText: string | null; examplePostIds: number[] } | null
+    {
+      createdAt: Date;
+      sourceText: string | null;
+      examplePostIds: number[];
+      image: { understanding: ImageUnderstanding | null; id: number | null };
+    } | null
   >();
   const retrievals = new Map<number, HistoryRetrieval | null>();
 
@@ -354,16 +392,29 @@ export async function ingestRadarBatch(input: {
     // the request was built from, read again with the same cutoff.
     if (!posts.has(key.processedPostId)) {
       const [post] = await input.db
-        .select({ createdAt: processedPosts.createdAt, sourceText: processedPosts.sourceText })
+        .select({
+          createdAt: processedPosts.createdAt,
+          sourceText: processedPosts.sourceText,
+          imageFingerprint: processedPosts.imageFingerprint,
+        })
         .from(processedPosts)
         .where(
           and(eq(processedPosts.id, key.processedPostId), eq(processedPosts.workspaceId, input.workspaceId)),
         );
+      // The understanding the requests read, if the post's image had one: stored, so read back.
+      const stored =
+        post?.imageFingerprint && input.mediaConfig
+          ? (
+              await loadUnderstandings(input.db, { fingerprints: [post.imageFingerprint], config: input.mediaConfig })
+            ).get(post.imageFingerprint)
+          : undefined;
       posts.set(
         key.processedPostId,
         post
           ? {
-              ...post,
+              createdAt: post.createdAt,
+              sourceText: post.sourceText,
+              image: { understanding: understandingOf(stored), id: stored?.id ?? null },
               examplePostIds: (
                 await loadRadarHistory(input.db, {
                   workspaceId: input.workspaceId,
@@ -398,6 +449,7 @@ export async function ingestRadarBatch(input: {
                 workspaceId: input.workspaceId,
                 processedPostId: key.processedPostId,
                 candidateText: post.sourceText,
+                candidateImage: post.image.understanding,
                 before: post.createdAt,
                 includeApproved: true,
               })
@@ -424,6 +476,7 @@ export async function ingestRadarBatch(input: {
       model: input.provider.model,
       promptVersion: key.promptVersion,
       imageIncluded: key.variant === 'text_image',
+      mediaUnderstandingId: usesMediaUnderstanding(key.promptVersion) ? post.image.id : null,
       examplePostIds: post.examplePostIds,
       publicationHistoryProfileId: key.historyProfileId,
       historyRetrieval,
@@ -459,6 +512,69 @@ export async function ingestRadarBatch(input: {
   }
 
   return summary;
+}
+
+/**
+ * What a decided post's first photo shows: its stored understanding, or — when
+ * the media prompt is about to read it and there is none — one vision call,
+ * on the reviewer's copy from Telegram, else X's URL. Null for a post whose
+ * first item is not a photo; never throws.
+ */
+async function postImageUnderstanding(
+  input: {
+    db: Database;
+    telegram?: TelegramClient;
+    understander?: ImageUnderstander | null;
+    mediaConfig?: MediaUnderstandingConfig | null;
+    logger: Logger;
+  },
+  post: { id: number; sourceText: string | null; reviewMedia: ReviewMediaItem[] | null; imageFingerprint: string | null },
+  understandIfMissing: boolean,
+): Promise<{ understanding: ImageUnderstanding | null; understandingId: number | null } | null> {
+  const first = post.reviewMedia?.[0];
+  if (first?.kind !== 'photo' || !input.mediaConfig) return null;
+
+  try {
+    if (post.imageFingerprint) {
+      const stored = (
+        await loadUnderstandings(input.db, { fingerprints: [post.imageFingerprint], config: input.mediaConfig })
+      ).get(post.imageFingerprint);
+      if (stored) return { understanding: understandingOf(stored), understandingId: stored.id };
+    }
+    if (!understandIfMissing || !input.understander) return { understanding: null, understandingId: null };
+
+    const bytes = await reviewPhotoBytes(input.telegram, first, input.logger);
+    if (!bytes) return { understanding: null, understandingId: null };
+    const result = await understandImage({
+      db: input.db,
+      understander: input.understander,
+      config: input.mediaConfig,
+      bytes,
+      caption: post.sourceText,
+      logger: input.logger,
+    });
+    if (result.fingerprint) await setPostImageFingerprint(input.db, { id: post.id, fingerprint: result.fingerprint });
+    return { understanding: result.understanding, understandingId: result.understanding ? (result.row?.id ?? null) : null };
+  } catch (error) {
+    input.logger.warn('media.understanding_failed', { processedPostId: post.id, error: describeError(error) });
+    return { understanding: null, understandingId: null };
+  }
+}
+
+/** A reviewed photo's bytes: Telegram's copy, which does not expire, else X's URL. */
+async function reviewPhotoBytes(
+  telegram: TelegramClient | undefined,
+  photo: ReviewMediaItem,
+  logger: Logger,
+): Promise<Uint8Array | null> {
+  if (photo.fileId && telegram) {
+    try {
+      return (await telegram.downloadFile(photo.fileId)).bytes;
+    } catch (error) {
+      logger.warn('radar.backfill_image_unavailable', { error: describeError(error) });
+    }
+  }
+  return photo.url ? downloadImage(photo.url, { logger }) : null;
 }
 
 /** Whether the post's first item has a picture to show: a photo, or a video's still. */

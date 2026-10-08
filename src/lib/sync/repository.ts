@@ -779,6 +779,14 @@ export async function findKnownPostIds(
   return new Set(rows.map((row) => row.xPostId));
 }
 
+/** Record which image a post's first image is, by its bytes' fingerprint. */
+export async function setPostImageFingerprint(db: Database, input: { id: number; fingerprint: string }): Promise<void> {
+  await db
+    .update(processedPosts)
+    .set({ imageFingerprint: input.fingerprint })
+    .where(eq(processedPosts.id, input.id));
+}
+
 /** Post ids we have already reached a terminal decision on. */
 export async function findTerminalPostIds(
   db: Database,

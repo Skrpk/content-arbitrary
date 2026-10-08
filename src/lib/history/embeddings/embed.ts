@@ -19,6 +19,8 @@ import {
   embeddingFingerprint,
 } from '@/lib/history/embeddings/text';
 import { packByBudget } from '@/lib/history/profile/prompt';
+import { loadUnderstandings, understandingOf } from '@/lib/media/repository';
+import type { ImageUnderstanding, MediaUnderstandingConfig } from '@/lib/media/understanding';
 
 /**
  * Embed what similar-publication search compares against: a workspace's
@@ -26,10 +28,17 @@ import { packByBudget } from '@/lib/history/profile/prompt';
  * item with text that has no vector for the current model, or whose vector
  * was made from different text.
  *
+ * What is embedded is the item's text and, once its first image has been
+ * understood (`history:understand-images`, or live for a new post), what the
+ * image shows — see buildSemanticContentRepresentation. Understanding an
+ * image changes that item's text, and so its fingerprint, and so it alone is
+ * embedded again; an image-only item, which had nothing to embed, gets its
+ * first vector.
+ *
  * Incremental by construction — an unchanged item's fingerprint matches its
  * stored vector and costs nothing — so it is safe to run after every import.
- * History items without text (photo- or video-only) are left as they are,
- * without a vector; one that has lost its text since loses its stale vector.
+ * Items with neither text nor an understood image are left without a vector;
+ * one that has lost both since loses its stale vector.
  */
 
 export interface HistoryEmbeddingSummary {
@@ -56,6 +65,8 @@ interface EmbedOptions {
   workspaceId: number;
   /** Count what would be embedded, without calling the API or writing. */
   dryRun?: boolean;
+  /** Whose image understandings to embed with the text; without it, text alone. */
+  mediaConfig?: MediaUnderstandingConfig | null;
   logger?: Logger;
   signal?: AbortSignal;
 }
@@ -71,7 +82,10 @@ export async function embedPublicationHistory(input: EmbedOptions): Promise<Hist
   const { db, embeddings, workspaceId } = input;
   const model = embeddings.model;
   const items = await loadHistoryForEmbedding(db, { workspaceId, model });
-  const { summary, pending, stale } = plan(model, items, buildHistoryEmbeddingText);
+  const images = await imagesOf(input, items);
+  const { summary, pending, stale } = plan(model, items, (item) =>
+    buildHistoryEmbeddingText(item, imageOf(images, item.imageFingerprint)),
+  );
 
   if (input.dryRun) return dryRun(summary, pending, stale);
 
@@ -103,7 +117,10 @@ export async function embedProcessedPosts(input: EmbedOptions): Promise<HistoryE
   const { db, embeddings, workspaceId } = input;
   const model = embeddings.model;
   const posts = await loadProcessedPostsForEmbedding(db, { workspaceId, model });
-  const { summary, pending, stale } = plan(model, posts, (post) => buildCandidateEmbeddingText(post.text));
+  const images = await imagesOf(input, posts);
+  const { summary, pending, stale } = plan(model, posts, (post) =>
+    buildCandidateEmbeddingText(post.text, imageOf(images, post.imageFingerprint)),
+  );
 
   // A post's text is never changed, so a post without text has no vector to drop.
   if (input.dryRun) return dryRun(summary, pending, stale);
@@ -123,6 +140,23 @@ export async function embedProcessedPosts(input: EmbedOptions): Promise<HistoryE
 
   log(input, 'history.posts_embedded', summary);
   return summary;
+}
+
+/** The current understandings of these items' images, by fingerprint; none without a config. */
+async function imagesOf(input: EmbedOptions, items: { imageFingerprint: string | null }[]) {
+  if (!input.mediaConfig) return new Map<string, ImageUnderstanding>();
+  const rows = await loadUnderstandings(input.db, {
+    fingerprints: items.flatMap((item) => (item.imageFingerprint ? [item.imageFingerprint] : [])),
+    config: input.mediaConfig,
+  });
+  return new Map([...rows].flatMap(([fingerprint, row]) => {
+    const understanding = understandingOf(row);
+    return understanding ? [[fingerprint, understanding] as const] : [];
+  }));
+}
+
+function imageOf(images: Map<string, ImageUnderstanding>, fingerprint: string | null): ImageUnderstanding | null {
+  return fingerprint ? (images.get(fingerprint) ?? null) : null;
 }
 
 function plan<T extends { id: number; storedFingerprint: string | null }>(

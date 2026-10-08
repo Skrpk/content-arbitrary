@@ -16,6 +16,12 @@
  * embedded first (npm run history:embed); do not re-embed history while a
  * batch is pending, or what is recorded as shown may differ from what was.
  *
+ * The media prompt (radar-v4-media-understanding) reads what each post's
+ * first photo shows instead of the photo: a post whose photo has no stored
+ * understanding is looked at once now (standard API, cached for good), from
+ * the reviewer's Telegram copy. Run history:understand-images and
+ * history:embed first, so past publications are described and searchable too.
+ *
  * Without --no-wait it submits, waits for the batch and reads the results in.
  * If it is interrupted while waiting, --resume picks the batch up again; do not
  * submit a second time, or the same posts are paid for twice.
@@ -39,6 +45,8 @@ import {
 } from '../src/lib/radar/prompt';
 import { createRadarProvider, providerOfBatch } from '../src/lib/radar/providers';
 import { TelegramClient } from '../src/lib/telegram/client';
+import { createImageUnderstander } from '../src/lib/media/provider';
+import { mediaUnderstandingConfig } from '../src/lib/media/understanding';
 
 function argument(name: string): string | undefined {
   const index = process.argv.indexOf(`--${name}`);
@@ -92,6 +100,9 @@ async function main() {
       textOnly: process.argv.includes('--text-only'),
       promptVersions,
       embeddings,
+      // The media prompt reads what a post's first photo shows: understood once, then stored.
+      understander: createImageUnderstander(env),
+      mediaConfig: mediaUnderstandingConfig(env),
       workspaceId,
       profile: workspace.editorialProfile,
       minPerClass: Number(argument('min-per-class') ?? 5),
@@ -123,6 +134,7 @@ async function main() {
         batchId,
         workspaceId,
         embeddingModel: env.HISTORY_EMBEDDING_MODEL,
+        mediaConfig: mediaUnderstandingConfig(env),
         logger,
       }),
     );

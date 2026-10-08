@@ -14,13 +14,18 @@ import {
   markPending,
   markPublished,
   markSkipped,
+  setPostImageFingerprint,
 } from '@/lib/sync/repository';
+import type { ImageUnderstander } from '@/lib/media/provider';
+import { downloadImage, understandImage } from '@/lib/media/understand';
+import type { ReviewMedia } from '@/lib/sync/process-post';
 import { describeMedia, type RadarImage } from '@/lib/radar/prompt';
 import { loadRadarNote } from '@/lib/radar/review-note';
 import { runLiveRadar, type RadarRun } from '@/lib/radar/shadow';
 import { translateForReview, type Translator } from '@/lib/translation/translate';
 import type { TelegramDestination } from '@/lib/workspace';
 import type { NormalizedPost, SourceSyncSummary } from '@/types';
+import type { ImageUnderstanding } from '@/lib/media/understanding';
 
 /**
  * One candidate, from claim to its recorded outcome — the part every source
@@ -45,6 +50,8 @@ export interface CandidateContext {
   translator?: Translator;
   /** The tenant's footer, added under every post. */
   footer?: PostFooter | null;
+  /** Looks at a post's first image once, before Radar; without it images are not understood. */
+  understander?: ImageUnderstander | null;
 }
 
 /**
@@ -109,7 +116,8 @@ export async function processCandidate(
         ? (text) => translateForReview(context.translator!, text, postLogger)
         : undefined,
       beforeReview: context.radar
-        ? async () => {
+        ? async (media) => {
+            const understood = await understandFirstImage(post, media, context, row.id, postLogger);
             await runLiveRadar(
               context.radar!.run,
               db,
@@ -124,6 +132,7 @@ export async function processCandidate(
                   media: describeMedia(post.media),
                 },
                 image: firstImage(post),
+                media: understood,
               },
               postLogger,
             );
@@ -225,6 +234,49 @@ function reviewMediaOf(post: NormalizedPost, items: ApprovalMediaItem[]): Review
       ...(media?.previewUrl ? { previewUrl: media.previewUrl } : {}),
     };
   });
+}
+
+/**
+ * What the post's first image shows, understood at most once: from storage
+ * when that image was seen before (in any tenant), else by one vision call.
+ * Only a photo — video is not understood yet — and only the first. Null when
+ * there is no photo; never throws, so a failure only means Radar goes without.
+ */
+async function understandFirstImage(
+  post: NormalizedPost,
+  media: ReviewMedia,
+  context: CandidateContext,
+  processedPostId: number,
+  logger: Logger,
+): Promise<{ understanding: ImageUnderstanding | null; understandingId: number | null } | null> {
+  const first = post.media[0];
+  const config = context.radar?.run.mediaConfig;
+  if (first?.kind !== 'photo' || !context.understander || !config) return null;
+
+  try {
+    const bytes =
+      media.firstPhotoBytes ?? (await downloadImage(first.url, { fetchImpl: context.fetchImpl, logger }));
+    if (!bytes) return { understanding: null, understandingId: null };
+
+    const result = await understandImage({
+      db: context.db,
+      understander: context.understander,
+      config,
+      bytes,
+      caption: post.text,
+      logger,
+    });
+    if (result.fingerprint) {
+      await setPostImageFingerprint(context.db, { id: processedPostId, fingerprint: result.fingerprint });
+    }
+    return {
+      understanding: result.understanding,
+      understandingId: result.understanding ? (result.row?.id ?? null) : null,
+    };
+  } catch (error) {
+    logger.warn('media.understanding_failed', { error: describeError(error) });
+    return { understanding: null, understandingId: null };
+  }
 }
 
 /** The picture Radar is shown: the first photo, or the first video's still. */

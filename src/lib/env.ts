@@ -200,6 +200,23 @@ const schema = z
       .optional()
       .transform((value) => (value ? value : 'text-embedding-3-small')),
     ANTHROPIC_API_KEY: z.string().min(1).optional().or(z.literal('').transform(() => undefined)),
+    /**
+     * The OpenAI model that looks at a post's first image once and describes
+     * it, for Radar and similarity search to reuse. Always OpenAI, and only
+     * with OPENAI_API_KEY set. Understandings are stored per model, so a new
+     * one means looking at every image again.
+     */
+    MEDIA_UNDERSTANDING_MODEL: z
+      .string()
+      .trim()
+      .optional()
+      .transform((value) => (value ? value : 'gpt-6-luna')),
+    /**
+     * Also score every live post with its raw image (Radar's `text_image`
+     * variant), once per prompt version — the earlier experiment. Off: the
+     * image is understood once and every version reads that description.
+     */
+    RADAR_LIVE_IMAGE_VARIANT: booleanish(false),
 
     CRON_SECRET: z.string().min(16, 'CRON_SECRET must be at least 16 characters'),
     ADMIN_SECRET: z.string().min(16).optional().or(z.literal('').transform(() => undefined)),

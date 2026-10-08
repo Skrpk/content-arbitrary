@@ -8,6 +8,14 @@ import {
   type RadarVariant,
 } from '@/db/schema';
 import { describeStoredMedia, type RadarExample } from '@/lib/radar/prompt';
+import { loadUnderstandings } from '@/lib/media/repository';
+import type { MediaUnderstandingConfig } from '@/lib/media/understanding';
+
+/** An example's image description, as a property to spread — none at all without one. */
+function exampleImage(images: Map<string, { summary: string | null }>, fingerprint: string | null) {
+  const summary = fingerprint ? images.get(fingerprint)?.summary : null;
+  return summary ? { imageSummary: summary } : {};
+}
 
 /** Statuses that mean the editor said yes: published, or scheduled to be. */
 export const APPROVED_STATUSES = ['published', 'scheduled'] as const;
@@ -23,7 +31,14 @@ export const APPROVED_STATUSES = ['published', 'scheduled'] as const;
  */
 export async function loadRadarHistory(
   db: Database,
-  input: { workspaceId: number; before: Date; excludePostId?: number; perClass: number },
+  input: {
+    workspaceId: number;
+    before: Date;
+    excludePostId?: number;
+    perClass: number;
+    /** With it, each example says what its first image shows, when that was understood. */
+    mediaConfig?: MediaUnderstandingConfig | null;
+  },
 ): Promise<{ examples: RadarExample[]; approvalRate: number | null; decisions: number }> {
   const decidedBefore = and(
     eq(processedPosts.workspaceId, input.workspaceId),
@@ -42,6 +57,7 @@ export async function loadRadarHistory(
     status: processedPosts.status,
     rejectionReason: processedPosts.rejectionReason,
     rejectionNote: processedPosts.rejectionNote,
+    imageFingerprint: processedPosts.imageFingerprint,
   };
 
   const [approved, rejected, [totals]] = await Promise.all([
@@ -78,7 +94,15 @@ export async function loadRadarHistory(
       .where(and(decidedBefore, inArray(processedPosts.status, [...APPROVED_STATUSES, 'rejected']))),
   ]);
 
+  const images = input.mediaConfig
+    ? await loadUnderstandings(db, {
+        fingerprints: [...approved, ...rejected].flatMap((row) => (row.imageFingerprint ? [row.imageFingerprint] : [])),
+        config: input.mediaConfig,
+      })
+    : new Map<string, never>();
+
   const toExample = (row: (typeof approved)[number]): RadarExample => ({
+    ...exampleImage(images, row.imageFingerprint),
     postId: row.id,
     sourceUsername: row.sourceUsername ?? 'unknown',
     ...(isRssItemId(row.xPostId) ? { sourcePlatform: 'rss' as const } : {}),

@@ -28,6 +28,8 @@ import {
   tenantWaitedSince,
 } from '@/lib/sync/rotation';
 import { createRadarRun, type RadarRun } from '@/lib/radar/shadow';
+import { createImageUnderstander, type ImageUnderstander } from '@/lib/media/provider';
+import { mediaUnderstandingConfig } from '@/lib/media/understanding';
 import { syncXSource } from '@/lib/sync/sync-x-source';
 import { syncRssSource } from '@/lib/sync/sync-rss-source';
 import {
@@ -86,6 +88,8 @@ export interface SyncOptions {
   translationProvider?: RadarProvider | null;
   /** How RSS / Atom feeds are fetched; injected by tests. */
   feedFetch?: FetchFeedOptions;
+  /** Overrides the model that looks at a post's first image; injected by tests. */
+  imageUnderstander?: ImageUnderstander | null;
   /** Overrides when the run stops taking new posts (epoch ms); injected by tests. */
   deadline?: number;
   now?: () => number;
@@ -140,10 +144,19 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
             ? createRadarRun({
                 provider: radarProvider,
                 embeddings: createEmbeddingProvider(env),
+                mediaConfig: mediaUnderstandingConfig(env),
+                imageVariant: env.RADAR_LIVE_IMAGE_VARIANT,
                 notAfter: deadline,
               })
             : null))
         : null;
+
+    // Images are understood only on their way to Radar, which reads what they show.
+    const understander = radarRun
+      ? options.imageUnderstander !== undefined
+        ? options.imageUnderstander
+        : createImageUnderstander(env)
+      : null;
 
     // The same model rewrites posts for tenants that publish in another
     // language. Not in a dry run: nothing is sent, so nothing is paid for.
@@ -279,6 +292,7 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
                 : undefined,
             translator: await translatorFor(tenant),
             footer: parsePostFooter(tenant.postFooter),
+            understander,
             deadline,
             now,
           };

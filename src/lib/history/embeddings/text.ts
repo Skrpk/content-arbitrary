@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { ImageUnderstanding } from '@/lib/media/understanding';
 import { truncateToLength } from '@/lib/telegram/format-caption';
 
 /**
@@ -6,7 +7,9 @@ import { truncateToLength } from '@/lib/telegram/format-caption';
  * and the fingerprint that says whether a stored vector still matches it.
  *
  * Both sides get the same treatment so that what is compared is the writing
- * and its subject. Only the title and the text go in: platform, content type,
+ * and its subject. The title and the text go in, and — when its first image
+ * has been understood — what that image shows: a post that says only "wow"
+ * under a photo of an aurora is about the aurora. Platform, content type,
  * dates, ids and metrics are the same across a publication's history or are
  * not meaning at all, and would pull every vector the same way — or, since a
  * new post comes from X and the history from Telegram, apart by platform.
@@ -24,18 +27,60 @@ export const EMBEDDING_TEXT_VERSION = 'emb1';
  */
 export const EMBEDDING_TEXT_MAX = 6000;
 
-/** What a past publication is embedded as, or null when it has no text to embed. */
-export function buildHistoryEmbeddingText(item: { title: string | null; text: string | null }): string | null {
-  const title = normalise(item.title ?? '');
-  const text = normalise(item.text ?? '');
+/**
+ * A post or publication as one piece of text: title, text, then what its
+ * image shows. Every section is left out when empty, and without an image
+ * the result is exactly the title and text as they were always embedded — so
+ * adding image understanding changes the vectors of image posts only, and an
+ * image-only post, which had nothing to embed, now has.
+ *
+ *   <title>
+ *
+ *   <text>
+ *
+ *   IMAGE: View from the ISS of a green aurora over Earth's night side.
+ *   IMAGE TYPE: photo
+ *   IMAGE TOPICS: aurora, ISS, Earth observation
+ *   IMAGE ENTITIES: Earth, ISS
+ *   VISIBLE TEXT: …
+ */
+export function buildSemanticContentRepresentation(content: {
+  title?: string | null;
+  text?: string | null;
+  image?: ImageUnderstanding | null;
+}): string | null {
+  const title = normalise(content.title ?? '');
+  const text = normalise(content.text ?? '');
   // An export may repeat the title as the text's first line.
   const parts = text.startsWith(title) ? [text] : [title, text];
+  if (content.image) parts.push(renderImageUnderstanding(content.image));
   return finish(parts.filter((part) => part !== '').join('\n\n'));
 }
 
-/** What a new post is embedded as, or null when it has no text — media alone is not embedded yet. */
-export function buildCandidateEmbeddingText(text: string | null): string | null {
-  return finish(normalise(text ?? ''));
+/** What an image shows, as the labelled lines the semantic representation carries. */
+export function renderImageUnderstanding(image: ImageUnderstanding): string {
+  return [
+    `IMAGE: ${normalise(image.summary)}`,
+    `IMAGE TYPE: ${image.contentType}`,
+    image.topics.length > 0 ? `IMAGE TOPICS: ${image.topics.join(', ')}` : '',
+    image.entities.length > 0 ? `IMAGE ENTITIES: ${image.entities.join(', ')}` : '',
+    image.visibleText ? `VISIBLE TEXT: ${normalise(image.visibleText)}` : '',
+  ]
+    .filter((line) => line !== '')
+    .join('\n');
+}
+
+/** What a past publication is embedded as, or null when it has nothing to embed. */
+export function buildHistoryEmbeddingText(
+  item: { title: string | null; text: string | null },
+  image?: ImageUnderstanding | null,
+): string | null {
+  return buildSemanticContentRepresentation({ title: item.title, text: item.text, image });
+}
+
+/** What a new post is embedded as, or null when it has neither text nor an understood image. */
+export function buildCandidateEmbeddingText(text: string | null, image?: ImageUnderstanding | null): string | null {
+  return buildSemanticContentRepresentation({ text, image });
 }
 
 /** SHA-256 of the embedded text and the version of how it was built. */

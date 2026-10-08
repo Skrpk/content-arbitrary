@@ -17,6 +17,7 @@ export async function loadHistoryForEmbedding(db: Database, input: { workspaceId
       id: publicationHistoryItems.id,
       title: publicationHistoryItems.title,
       text: publicationHistoryItems.text,
+      imageFingerprint: publicationHistoryItems.imageFingerprint,
       storedFingerprint: publicationHistoryEmbeddings.contentFingerprint,
     })
     .from(publicationHistoryItems)
@@ -86,6 +87,10 @@ export interface HistoricalMatch {
   contentType: HistoryContentType;
   publishedAt: Date;
   canonicalUrl: string | null;
+  /** Its first image's fingerprint, to find what it shows; null without one read. */
+  imageFingerprint: string | null;
+  /** What its first image shows, when asked for and understood. */
+  imageSummary?: string | null;
 }
 
 /**
@@ -134,6 +139,7 @@ export async function findSimilarHistoricalItems(
       contentType: publicationHistoryItems.contentType,
       publishedAt: publicationHistoryItems.publishedAt,
       canonicalUrl: publicationHistoryItems.canonicalUrl,
+      imageFingerprint: publicationHistoryItems.imageFingerprint,
     })
     .from(publicationHistoryEmbeddings)
     .innerJoin(
@@ -209,6 +215,7 @@ export async function loadProcessedPostsForEmbedding(db: Database, input: { work
     .select({
       id: processedPosts.id,
       text: processedPosts.sourceText,
+      imageFingerprint: processedPosts.imageFingerprint,
       storedFingerprint: radarCandidateEmbeddings.contentFingerprint,
     })
     .from(processedPosts)
@@ -231,6 +238,10 @@ export interface ApprovedMatch {
   sourcePlatform?: 'rss';
   /** When the editor approved it. */
   approvedAt: Date;
+  /** Its first image's fingerprint, to find what it shows; null without one. */
+  imageFingerprint: string | null;
+  /** What its first image shows, when asked for and understood. */
+  imageSummary?: string | null;
 }
 
 interface ApprovedScope {
@@ -273,6 +284,7 @@ export async function findSimilarApprovedPosts(
       sourceUsername: processedPosts.xAuthorUsername,
       xPostId: processedPosts.xPostId,
       approvedAt: processedPosts.reviewedAt,
+      imageFingerprint: processedPosts.imageFingerprint,
     })
     .from(radarCandidateEmbeddings)
     .innerJoin(processedPosts, eq(processedPosts.id, radarCandidateEmbeddings.processedPostId))

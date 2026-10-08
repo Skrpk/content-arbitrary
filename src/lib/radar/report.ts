@@ -1,6 +1,7 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import {
+  mediaUnderstandings,
   processedPosts,
   radarEvaluations,
   type HistoricalAssessment,
@@ -43,6 +44,11 @@ export interface ReportRow {
   /** Why the editor turned it down, if they did. */
   rejectionReason: string | null;
   reviewedAt: Date | null;
+  /** Whether the post's first item is a photo — for the image-posts-only comparison. */
+  hasImage: boolean;
+  /** The image understanding a media-prompt score read, and what making it cost. */
+  mediaUnderstandingId: number | null;
+  visionCostUsd: number | null;
 }
 
 /**
@@ -98,9 +104,13 @@ export async function loadReportRows(db: Database, workspaceId: number): Promise
       rejectionReason: processedPosts.rejectionReason,
       postStatus: processedPosts.status,
       reviewedAt: processedPosts.reviewedAt,
+      hasImage: sql<boolean>`coalesce(${processedPosts.reviewMedia}->0->>'kind', '') = 'photo'`,
+      mediaUnderstandingId: radarEvaluations.mediaUnderstandingId,
+      visionCostUsd: mediaUnderstandings.costUsd,
     })
     .from(radarEvaluations)
     .innerJoin(processedPosts, eq(processedPosts.id, radarEvaluations.processedPostId))
+    .leftJoin(mediaUnderstandings, eq(mediaUnderstandings.id, radarEvaluations.mediaUnderstandingId))
     .where(and(eq(radarEvaluations.workspaceId, workspaceId)));
 
   return rows.map(({ postStatus, ...row }) => ({
@@ -329,69 +339,99 @@ export function formatPromptComparison(rows: ReportRow[], versions: [string, str
     const posts = [...a.keys()].filter((id) => b.has(id));
     if (posts.length === 0) continue;
 
-    const sides = [posts.map((id) => a.get(id)!), posts.map((id) => b.get(id)!)];
-    const approvedCount = sides[0]!.filter((row) => row.approved).length;
-    const column = (values: string[]) => values.map((value) => value.padStart(14)).join('');
-    const line = (label: string, compute: (side: ReportRow[]) => string) =>
-      `${label.padEnd(30)}${column(sides.map(compute))}`;
-
-    const lines = [
-      `== ${first} vs ${second} · ${setupKey}`,
-      `Same ${posts.length} posts, ${approvedCount} approved, ${posts.length - approvedCount} rejected`,
-      `${''.padEnd(30)}${column(['A', 'B'])}`,
-      line('Separation (AUC)', (side) => {
-        const approved = side.filter((row) => row.approved).map((row) => row.score!);
-        const rejected = side.filter((row) => !row.approved).map((row) => row.score!);
-        return approved.length > 0 && rejected.length > 0 ? auc(approved, rejected).toFixed(2) : 'n/a';
-      }),
-      line('Mean score, approved', (side) => meanOf(side.filter((row) => row.approved))),
-      line('Mean score, rejected', (side) => meanOf(side.filter((row) => !row.approved))),
-      line('Precision@80', (side) => {
-        const high = side.filter((row) => row.score! >= 80);
-        return `${high.filter((row) => row.approved).length}/${high.length} ${percent(high.filter((row) => row.approved).length, high.length)}`;
-      }),
-      ...THRESHOLDS.map((threshold) =>
-        line(`Recall@${threshold} · work saved`, (side) => {
-          const kept = side.filter((row) => row.approved && row.score! >= threshold).length;
-          const hidden = side.filter((row) => row.score! < threshold).length;
-          return `${percent(kept, approvedCount)} · ${percent(hidden, side.length)}`;
-        }),
-      ),
-      line('Missed approvals (<50)', (side) => String(side.filter((row) => row.approved && row.score! < 50).length)),
-      line('Tokens in / out', (side) => {
-        const input = sum(side.map((row) => row.inputTokens ?? 0));
-        const output = sum(side.map((row) => row.outputTokens ?? 0));
-        return `${Math.round(input / 1000)}k/${Math.round(output / 1000)}k`;
-      }),
-      line('Cost', (side) => {
-        const cost = costUsd(
-          side[0]!.model,
-          { inputTokens: sum(side.map((row) => row.inputTokens ?? 0)), outputTokens: sum(side.map((row) => row.outputTokens ?? 0)) },
-          { batch: side[0]!.mode === 'backfill' },
-        );
-        return cost === null ? 'n/a' : `$${cost.toFixed(4)}`;
-      }),
-      `A = ${first}, B = ${second}`,
-    ];
-
-    const missed = (side: ReportRow[]) =>
-      side.filter((row) => row.approved && row.score! < 50).map((row) => row.processedPostId);
-    const missedA = new Set(missed(sides[0]!));
-    const missedB = new Set(missed(sides[1]!));
-    const fixed = [...missedA].filter((id) => !missedB.has(id));
-    const broke = [...missedB].filter((id) => !missedA.has(id));
-    if (fixed.length > 0 || broke.length > 0) {
-      lines.push(
-        `Approvals B rescued from <50: ${fixed.length > 0 ? fixed.join(', ') : 'none'}; ` +
-          `newly missed by B: ${broke.length > 0 ? broke.join(', ') : 'none'}`,
-      );
+    sections.push(comparison(`${first} vs ${second} · ${setupKey}`, posts, a, b, versions));
+    // An effect on image posts can drown among text ones: they get their own table.
+    const withImages = posts.filter((id) => a.get(id)!.hasImage);
+    if (withImages.length > 0 && withImages.length < posts.length) {
+      sections.push(comparison(`${first} vs ${second} · ${setupKey} · posts with images only`, withImages, a, b, versions));
     }
-    sections.push(lines.join('\n'));
   }
 
   return sections.length > 0
     ? sections.join('\n\n')
     : `No posts decided and scored by both ${first} and ${second} yet.`;
+}
+
+/** One side-by-side table of two prompt versions on the same posts. */
+function comparison(
+  title: string,
+  posts: number[],
+  a: Map<number, ReportRow>,
+  b: Map<number, ReportRow>,
+  [first, second]: [string, string],
+): string {
+  const sides = [posts.map((id) => a.get(id)!), posts.map((id) => b.get(id)!)];
+  const approvedCount = sides[0]!.filter((row) => row.approved).length;
+  const column = (values: string[]) => values.map((value) => value.padStart(14)).join('');
+  const line = (label: string, compute: (side: ReportRow[]) => string) =>
+    `${label.padEnd(30)}${column(sides.map(compute))}`;
+  /** What looking at the images cost, once each, for the scores that read their descriptions. */
+  const vision = (side: ReportRow[]) => {
+    const understandings = new Map(
+      side.filter((row) => row.mediaUnderstandingId !== null).map((row) => [row.mediaUnderstandingId, row.visionCostUsd ?? 0]),
+    );
+    return { images: understandings.size, cost: sum([...understandings.values()]) };
+  };
+
+  const lines = [
+    `== ${title}`,
+    `Same ${posts.length} posts, ${approvedCount} approved, ${posts.length - approvedCount} rejected`,
+    `${''.padEnd(30)}${column(['A', 'B'])}`,
+    line('Separation (AUC)', (side) => {
+      const approved = side.filter((row) => row.approved).map((row) => row.score!);
+      const rejected = side.filter((row) => !row.approved).map((row) => row.score!);
+      return approved.length > 0 && rejected.length > 0 ? auc(approved, rejected).toFixed(2) : 'n/a';
+    }),
+    line('Mean score, approved', (side) => meanOf(side.filter((row) => row.approved))),
+    line('Mean score, rejected', (side) => meanOf(side.filter((row) => !row.approved))),
+    line('Precision@80', (side) => {
+      const high = side.filter((row) => row.score! >= 80);
+      return `${high.filter((row) => row.approved).length}/${high.length} ${percent(high.filter((row) => row.approved).length, high.length)}`;
+    }),
+    ...THRESHOLDS.map((threshold) =>
+      line(`Recall@${threshold} · work saved`, (side) => {
+        const kept = side.filter((row) => row.approved && row.score! >= threshold).length;
+        const hidden = side.filter((row) => row.score! < threshold).length;
+        return `${percent(kept, approvedCount)} · ${percent(hidden, side.length)}`;
+      }),
+    ),
+    line('Missed approvals (<50)', (side) => String(side.filter((row) => row.approved && row.score! < 50).length)),
+    line('Tokens in / out', (side) => {
+      const input = sum(side.map((row) => row.inputTokens ?? 0));
+      const output = sum(side.map((row) => row.outputTokens ?? 0));
+      return `${Math.round(input / 1000)}k/${Math.round(output / 1000)}k`;
+    }),
+    line('Cost', (side) => {
+      const cost = costUsd(
+        side[0]!.model,
+        { inputTokens: sum(side.map((row) => row.inputTokens ?? 0)), outputTokens: sum(side.map((row) => row.outputTokens ?? 0)) },
+        { batch: side[0]!.mode === 'backfill' },
+      );
+      return cost === null ? 'n/a' : `$${cost.toFixed(4)}`;
+    }),
+  ];
+  if (sides.some((side) => vision(side).images > 0)) {
+    lines.push(
+      line('Vision (images, once each)', (side) => {
+        const { images, cost } = vision(side);
+        return images === 0 ? '—' : `${images} · $${cost.toFixed(4)}`;
+      }),
+    );
+  }
+  lines.push(`A = ${first}, B = ${second}`);
+
+  const missed = (side: ReportRow[]) => side.filter((row) => row.approved && row.score! < 50).map((row) => row.processedPostId);
+  const missedA = new Set(missed(sides[0]!));
+  const missedB = new Set(missed(sides[1]!));
+  const fixed = [...missedA].filter((id) => !missedB.has(id));
+  const broke = [...missedB].filter((id) => !missedA.has(id));
+  if (fixed.length > 0 || broke.length > 0) {
+    lines.push(
+      `Approvals B rescued from <50: ${fixed.length > 0 ? fixed.join(', ') : 'none'}; ` +
+        `newly missed by B: ${broke.length > 0 ? broke.join(', ') : 'none'}`,
+    );
+  }
+  return lines.join('\n');
 }
 
 function meanOf(rows: ReportRow[]): string {

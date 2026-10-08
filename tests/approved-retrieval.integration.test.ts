@@ -205,7 +205,16 @@ describeIfDb('Shadow Radar with similar approved posts', () => {
       ),
     );
 
-    await runLiveRadar(createRadarRun({ provider, embeddings: fakeEmbeddings().provider }), db, subject(candidate.id), createTestLogger());
+    await runLiveRadar(
+      createRadarRun({
+        provider,
+        embeddings: fakeEmbeddings().provider,
+        promptVersions: [RADAR_PROMPT_BASELINE, RADAR_PROMPT_APPROVED],
+      }),
+      db,
+      subject(candidate.id),
+      createTestLogger(),
+    );
 
     expect(requests).toHaveLength(2);
     const newest = requests.find((request) => JSON.stringify(request).includes('similar_approved'))!;

@@ -4,6 +4,7 @@ import {
   boolean,
   check,
   customType,
+  doublePrecision,
   foreignKey,
   index,
   integer,
@@ -266,6 +267,12 @@ export const processedPosts = pgTable(
      * editor saw. Null on posts reviewed before the column existed.
      */
     reviewMedia: jsonb('review_media').$type<ReviewMediaItem[]>(),
+    /**
+     * SHA-256 of the post's first image, as downloaded — the key to its
+     * understanding in `media_understandings`. Null for a post without one,
+     * or reviewed before images were understood.
+     */
+    imageFingerprint: text('image_fingerprint'),
     /** Message in the admin's private chat carrying the Approve button. */
     adminChatId: text('admin_chat_id'),
     adminMessageId: bigint('admin_message_id', { mode: 'number' }),
@@ -475,6 +482,12 @@ export const radarEvaluations = pgTable(
     historyRetrieval: jsonb('history_retrieval').$type<HistoryRetrievalRecord>(),
     /** What the model said about those publications, when the prompt asked. */
     historicalAssessment: jsonb('historical_assessment').$type<HistoricalAssessment>(),
+    /**
+     * The image understanding the prompt carried in place of the image — its
+     * model and prompt version are on that row. Null for a version that does
+     * not use one, or a post without one.
+     */
+    mediaUnderstandingId: integer('media_understanding_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -483,6 +496,11 @@ export const radarEvaluations = pgTable(
       name: 'radar_evaluations_history_profile_id_fk',
       columns: [table.publicationHistoryProfileId],
       foreignColumns: [publicationHistoryProfiles.id],
+    }).onDelete('set null'),
+    foreignKey({
+      name: 'radar_evaluations_media_understanding_fk',
+      columns: [table.mediaUnderstandingId],
+      foreignColumns: [mediaUnderstandings.id],
     }).onDelete('set null'),
     index('radar_evaluations_history_profile_idx').on(table.publicationHistoryProfileId),
     // One prediction per post per setup: a retried post is not scored twice.
@@ -647,6 +665,12 @@ export const publicationHistoryItems = pgTable(
     metadata: jsonb('metadata').$type<Record<string, unknown>>(),
     /** The import that last inserted or changed this row. */
     importId: integer('import_id'),
+    /**
+     * SHA-256 of the item's first image file, read from the export — the key
+     * to its understanding in `media_understandings`. Null until
+     * `history:understand-images` has read the file.
+     */
+    imageFingerprint: text('image_fingerprint'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -797,6 +821,63 @@ export const radarCandidateEmbeddings = pgTable(
     check('radar_candidate_embeddings_dimensions_check', sql`vector_dims(${table.embedding}) = ${table.dimensions}`),
   ],
 );
+
+export const MEDIA_UNDERSTANDING_STATUSES = ['ok', 'failed'] as const;
+
+/**
+ * What a vision model made of one image: a short, factual description kept
+ * so the image is looked at once and the words are reused — by Radar, and in
+ * the text that is embedded for similarity search.
+ *
+ * Keyed by the image's bytes, not by a post or a workspace: the same picture
+ * in two tenants' posts, or in a post and an old publication, is understood
+ * once. A new model, prompt version or detail level is a new row, which is
+ * how a stale understanding is told from a current one. A failure is kept
+ * too, and retried by the next request for the same image.
+ */
+export const mediaUnderstandings = pgTable(
+  'media_understandings',
+  {
+    id: serial('id').primaryKey(),
+    /** SHA-256 of the image's bytes. */
+    fingerprint: text('fingerprint').notNull(),
+    model: text('model').notNull(),
+    promptVersion: text('prompt_version').notNull(),
+    /** The image detail level the model was given. */
+    detail: text('detail').notNull(),
+    status: text('status', { enum: MEDIA_UNDERSTANDING_STATUSES }).notNull(),
+
+    summary: text('summary'),
+    contentType: text('content_type'),
+    topics: text('topics').array().notNull().default(sql`'{}'::text[]`),
+    entities: text('entities').array().notNull().default(sql`'{}'::text[]`),
+    visibleText: text('visible_text'),
+    informationValue: text('information_value'),
+
+    mediaType: text('media_type'),
+    byteLength: integer('byte_length'),
+    inputTokens: integer('input_tokens'),
+    outputTokens: integer('output_tokens'),
+    /** List-price estimate from the usage the API reported. */
+    costUsd: doublePrecision('cost_usd'),
+    latencyMs: integer('latency_ms'),
+    error: text('error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('media_understandings_identity_key').on(
+      table.fingerprint,
+      table.model,
+      table.promptVersion,
+      table.detail,
+    ),
+    check('media_understandings_status_check', sql`${table.status} IN ('ok', 'failed')`),
+    check('media_understandings_ok_check', sql`${table.status} <> 'ok' OR ${table.summary} IS NOT NULL`),
+  ],
+);
+
+export type MediaUnderstandingRow = typeof mediaUnderstandings.$inferSelect;
 
 /** One media item of a reviewed post, as far as it is known. */
 export interface ReviewMediaItem {

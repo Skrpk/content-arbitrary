@@ -14,6 +14,8 @@ import {
   type HistoricalMatch,
 } from '@/lib/history/embeddings/repository';
 import { buildCandidateEmbeddingText, embeddingFingerprint } from '@/lib/history/embeddings/text';
+import { loadUnderstandings } from '@/lib/media/repository';
+import type { ImageUnderstanding, MediaUnderstandingConfig } from '@/lib/media/understanding';
 
 /**
  * The past publications of a workspace most similar to a new post — and, when
@@ -50,6 +52,13 @@ interface RetrievalInput {
   workspaceId: number;
   processedPostId: number;
   candidateText: string | null;
+  /** What the post's first image shows, embedded with its text when understood. */
+  candidateImage?: ImageUnderstanding | null;
+  /**
+   * When set, each match comes with what its own first image shows
+   * (`imageSummary`), for a prompt that reads image descriptions.
+   */
+  mediaConfig?: MediaUnderstandingConfig | null;
   /**
    * When the post arrived. Nothing published at or after it, and nothing the
    * editor approved at or after it, is searched.
@@ -64,7 +73,7 @@ export async function retrieveSimilarPublications(
   input: RetrievalInput & { embeddings: EmbeddingProvider | null; timeoutMs?: number; logger?: Logger },
 ): Promise<HistoryRetrieval> {
   const model = input.embeddings?.model ?? null;
-  const text = buildCandidateEmbeddingText(input.candidateText);
+  const text = buildCandidateEmbeddingText(input.candidateText, input.candidateImage);
   if (text === null) return none(input, model, 'no_text');
   if (!input.embeddings) return none(input, model, 'unavailable');
   const embeddings = input.embeddings;
@@ -110,7 +119,7 @@ export async function retrieveSimilarPublications(
  * failed.
  */
 export async function replaySimilarPublications(input: RetrievalInput & { model: string }): Promise<HistoryRetrieval> {
-  const text = buildCandidateEmbeddingText(input.candidateText);
+  const text = buildCandidateEmbeddingText(input.candidateText, input.candidateImage);
   if (text === null) return none(input, input.model, 'no_text');
   return search(input, input.model, text, async () => null);
 }
@@ -173,6 +182,8 @@ async function search(
         })
       : [];
 
+  if (input.mediaConfig) await describeImages(input.db, input.mediaConfig, [...matches, ...approvedMatches]);
+
   return {
     status: matches.length > 0 ? 'ok' : 'no_history',
     embeddingModel: model,
@@ -182,6 +193,21 @@ async function search(
       : {}),
     inputTokens,
   };
+}
+
+/** Attach what each match's first image shows, from stored understandings: one query, no vision call. */
+async function describeImages(
+  db: Database,
+  config: MediaUnderstandingConfig,
+  matches: { imageFingerprint: string | null; imageSummary?: string | null }[],
+): Promise<void> {
+  const understood = await loadUnderstandings(db, {
+    fingerprints: matches.flatMap((match) => (match.imageFingerprint ? [match.imageFingerprint] : [])),
+    config,
+  });
+  for (const match of matches) {
+    match.imageSummary = match.imageFingerprint ? (understood.get(match.imageFingerprint)?.summary ?? null) : null;
+  }
 }
 
 function none(

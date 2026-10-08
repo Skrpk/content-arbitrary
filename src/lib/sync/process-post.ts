@@ -40,6 +40,12 @@ export interface ProcessOutcome {
   approval?: { payload: ApprovalPayload; adminChatId: string; adminMessageId: number };
 }
 
+/** What the send already holds of the post's media, for the pre-review hook to reuse. */
+export interface ReviewMedia {
+  /** The first item's bytes, when it is a photo downloaded for the send. */
+  firstPhotoBytes?: Uint8Array;
+}
+
 /** Which Bot API method fits this set of media. */
 export function chooseMethod(media: NormalizedMedia[]): TelegramMethod {
   if (media.length === 0) return 'none';
@@ -79,11 +85,13 @@ export async function processPost(
     textOnly?: boolean;
     /**
      * Run just before the post is sent for review — Shadow Radar's moment to
-     * score it, ahead of any decision. What it returns is shown under the link
-     * on the review message. It must not throw; if it does anyway, the post
-     * still goes to review, without a note.
+     * score it, ahead of any decision. It is handed the first photo's bytes
+     * when they were already downloaded for the send, so nothing fetches them
+     * twice. What it returns is shown under the link on the review message.
+     * It must not throw; if it does anyway, the post still goes to review,
+     * without a note.
      */
-    beforeReview?: () => Promise<string | null | void>;
+    beforeReview?: (media: ReviewMedia) => Promise<string | null | void>;
     /**
      * The post's text in the channel's language, or null to keep it as it is.
      * Asked only for a post about to be sent — alongside beforeReview — and it
@@ -277,7 +285,10 @@ export async function processPost(
     // Scored on the original, translated meanwhile: neither waits for the other.
     const [translated, radarNote] = await Promise.all([
       translateText(options.translate, post.text, logger),
-      runBeforeReview(options.beforeReview, logger),
+      runBeforeReview(options.beforeReview, logger, {
+        firstPhotoBytes:
+          media[0]?.kind === 'photo' && payloads[0]?.mode === 'multipart' ? payloads[0].downloaded.bytes : undefined,
+      }),
     ]);
     if (translated) ({ caption, overflowMessage } = captionFor(translated));
 
@@ -455,7 +466,7 @@ async function processTextPost(
     sleep?: (ms: number) => Promise<void>;
     postId?: number;
     destination: TelegramDestination;
-    beforeReview?: () => Promise<string | null | void>;
+    beforeReview?: (media: ReviewMedia) => Promise<string | null | void>;
     translate?: (text: string) => Promise<string | null>;
     footer?: PostFooter | null;
   },
@@ -485,7 +496,7 @@ async function processTextPost(
     if (env.REQUIRE_APPROVAL) {
       const [translated, radarNote] = await Promise.all([
         translateText(options.translate, post.text, logger),
-        runBeforeReview(options.beforeReview, logger),
+        runBeforeReview(options.beforeReview, logger, {}),
       ]);
       if (translated) base.caption = text = textFor(translated);
 
@@ -607,12 +618,13 @@ async function translateText(
 
 /** Run the pre-review hook; its note for the review message, or null — whatever goes wrong. */
 async function runBeforeReview(
-  hook: (() => Promise<string | null | void>) | undefined,
+  hook: ((media: ReviewMedia) => Promise<string | null | void>) | undefined,
   logger: Logger,
+  media: ReviewMedia,
 ): Promise<string | null> {
   if (!hook) return null;
   try {
-    return (await hook()) ?? null;
+    return (await hook(media)) ?? null;
   } catch (error) {
     logger.error('approval.before_review_failed', { error: describeError(error) });
     return null;

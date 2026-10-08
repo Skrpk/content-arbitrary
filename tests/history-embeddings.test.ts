@@ -13,6 +13,7 @@ import {
   buildUserContent,
   LIVE_RADAR_PROMPT_VERSIONS,
   RADAR_PROMPT_APPROVED,
+  RADAR_PROMPT_MEDIA,
   RADAR_PROMPT_BASELINE,
   RADAR_PROMPT_RETRIEVAL,
 } from '@/lib/radar/prompt';
@@ -250,8 +251,8 @@ describe('the approved-posts prompt', () => {
     ).toContain('Similar approved posts: none to show');
   });
 
-  it('runs live beside the baseline', () => {
-    expect(LIVE_RADAR_PROMPT_VERSIONS).toEqual([RADAR_PROMPT_BASELINE, RADAR_PROMPT_APPROVED]);
+  it('runs live beside the baseline and the media version it is measured against', () => {
+    expect(LIVE_RADAR_PROMPT_VERSIONS).toEqual([RADAR_PROMPT_BASELINE, RADAR_PROMPT_APPROVED, RADAR_PROMPT_MEDIA]);
   });
 });
 
@@ -272,6 +273,9 @@ describe('comparing prompt versions in the report', () => {
     score,
     predictedDecision: score >= 50 ? 'approve' : 'reject',
     imageIncluded: false,
+    hasImage: false,
+    mediaUnderstandingId: null,
+    visionCostUsd: null,
     inputTokens: 1000,
     outputTokens: 100,
     evaluatedAt: new Date('2026-10-01T10:00:00Z'),

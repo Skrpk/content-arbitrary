@@ -43,6 +43,7 @@ export function createAnthropicRadar(options: {
           input.image,
           input.similarPublications,
           input.similarApproved,
+          input.media,
         ).map(
           toAnthropicBlock,
         ),

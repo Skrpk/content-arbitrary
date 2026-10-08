@@ -183,13 +183,28 @@ describeIfDb('loadRadarHistory', () => {
 });
 
 describeIfDb('runLiveRadar', () => {
-  it('scores the text and the text with its image, and records both', async () => {
-    const example = await decidedPost({ decision: 'approve', reviewedAt: at(1) });
+  it('scores the text alone by default, never sending the image', async () => {
     const post = await decidedPost({ decision: 'pending' });
     const { provider, requests } = fakeAnthropic(() => messageResponse(radarOutput({ score: 77 })));
 
     await runLiveRadar(
       createRadarRun({ promptVersions: BASELINE_ONLY, provider }),
+      db,
+      subject(post.id, { image: { kind: 'url', url: 'https://pbs.twimg.com/media/a.jpg' } }),
+      createTestLogger(),
+    );
+
+    expect((await evaluations()).map((row) => [row.variant, row.imageIncluded])).toEqual([['text', false]]);
+    expect(JSON.stringify(requests)).not.toContain('"type":"image"');
+  });
+
+  it('in the raw-image experiment, scores the text and the text with its image, and records both', async () => {
+    const example = await decidedPost({ decision: 'approve', reviewedAt: at(1) });
+    const post = await decidedPost({ decision: 'pending' });
+    const { provider, requests } = fakeAnthropic(() => messageResponse(radarOutput({ score: 77 })));
+
+    await runLiveRadar(
+      createRadarRun({ promptVersions: BASELINE_ONLY, provider, imageVariant: true }),
       db,
       subject(post.id, { image: { kind: 'url', url: 'https://pbs.twimg.com/media/a.jpg' } }),
       createTestLogger(),
@@ -390,8 +405,9 @@ describeIfDb('Radar in the sync', () => {
 
     await sync(order, () => messageResponse(radarOutput({ score: 91 })));
 
-    // Both variants, then the review send.
-    expect(order.slice(0, 2)).toEqual(['radar', 'radar']);
+    // The text variant — the raw image is only for the experiment — then the review send.
+    expect(order[0]).toBe('radar');
+    expect(order.filter((step) => step === 'radar')).toHaveLength(1);
     expect(order).toContain('telegram:sendPhoto');
 
     const [post] = await db.select().from(processedPosts);
@@ -400,10 +416,7 @@ describeIfDb('Radar in the sync', () => {
     expect(post!.reviewMedia).toEqual([{ kind: 'photo', fileId: 'ONE', url: 'https://cdn.example/a.jpg' }]);
 
     const rows = await evaluations();
-    expect(rows.map((row) => [row.variant, row.score])).toEqual([
-      ['text', 91],
-      ['text_image', 91],
-    ]);
+    expect(rows.map((row) => [row.variant, row.score])).toEqual([['text', 91]]);
     expect(rows.every((row) => row.processedPostId === post!.id)).toBe(true);
   });
 
