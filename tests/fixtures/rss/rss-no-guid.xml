@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<rss version="2.0">
+  <channel>
+    <title>Link Only</title>
+    <item>
+      <title>Item with a link only</title>
+      <link>https://linkonly.example/a?id=1&amp;lang=en</link>
+      <description>Description of the item that has a link and no guid.</description>
+    </item>
+    <item>
+      <title>Item with nothing but words</title>
+      <description>No guid, no link, no date — identity falls back to a hash of what it says.</description>
+    </item>
+  </channel>
+</rss>

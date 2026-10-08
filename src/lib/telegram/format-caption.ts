@@ -34,6 +34,11 @@ export interface CaptionOptions {
   username: string;
   postId: string;
   includeSourceLink: boolean;
+  /**
+   * The line that names the source, in place of X's `Source: https://x.com/…`
+   * — for a feed entry, the article's URL on its own.
+   */
+  sourceLine?: string;
   prefix?: string;
   suffix?: string;
   /**
@@ -59,6 +64,10 @@ export function buildSourceLine(username: string, postId: string): string {
   return `Source: https://x.com/${username.replace(/^@/, '')}/status/${postId}`;
 }
 
+function sourceLineOf(options: CaptionOptions): string {
+  return options.sourceLine ?? buildSourceLine(options.username, options.postId);
+}
+
 /**
  * Assemble the plain-text body, in the order the channel should read:
  *
@@ -74,7 +83,7 @@ export function composePlainText(options: CaptionOptions): string {
 
   if (options.prefix && options.prefix.trim() !== '') blocks.push(options.prefix.trim());
   if (options.text.trim() !== '') blocks.push(options.text.trim());
-  if (options.includeSourceLink) blocks.push(buildSourceLine(options.username, options.postId));
+  if (options.includeSourceLink) blocks.push(sourceLineOf(options));
   if (options.suffix && options.suffix.trim() !== '') blocks.push(options.suffix.trim());
 
   return blocks.join('\n\n');
@@ -180,9 +189,7 @@ function fitToLimit(options: CaptionOptions, plain: string, limit: number): stri
    */
   const prefix = options.prefix?.trim() ?? '';
   const suffix = options.suffix?.trim() ?? '';
-  const sourceLine = options.includeSourceLink
-    ? buildSourceLine(options.username, options.postId)
-    : '';
+  const sourceLine = options.includeSourceLink ? sourceLineOf(options) : '';
 
   const separator = '\n\n';
   const framing = [prefix, sourceLine, suffix].filter((part) => part !== '');

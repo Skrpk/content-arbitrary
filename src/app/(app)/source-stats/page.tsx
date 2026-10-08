@@ -3,6 +3,7 @@
 import Script from 'next/script';
 import { useCallback, useRef, useState } from 'react';
 import { TELEGRAM_WEB_APP_SCRIPT, theme } from '@/lib/telegram/webapp-client';
+import { RssBadge } from '../rss-badge';
 
 /**
  * The source stats Mini App.
@@ -19,7 +20,11 @@ type Period = '7d' | '30d' | 'all';
 
 interface SourceView {
   sourceId: number;
+  platform: 'x' | 'rss';
   username: string;
+  /** `@handle`, or a feed's title. */
+  label: string;
+  feedUrl: string | null;
   enabled: boolean;
   posts: number;
   approved: number;
@@ -28,7 +33,8 @@ interface SourceView {
   notSent: number;
   approvalRate: number | null;
   rejectionReasons: { reason: string | null; count: number }[];
-  readCostUsd: number;
+  /** Null for a feed: reading one costs nothing. */
+  readCostUsd: number | null;
   costPerApprovedUsd: number | null;
   lastPostAt: string | null;
 }
@@ -84,6 +90,16 @@ function confirmFirst(message: string): Promise<boolean> {
   return Promise.resolve(window.confirm(message));
 }
 
+/** A feed's site, short enough for one line. */
+function hostOf(url: string | null): string {
+  if (!url) return 'feed';
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return 'feed';
+  }
+}
+
 /** Green when most is approved, red when almost nothing is. */
 function rateColour(rate: number | null): string {
   if (rate === null) return theme.hint;
@@ -97,13 +113,17 @@ function totalsOf(sources: SourceView[]) {
     sources.reduce((total, source) => total + pick(source), 0);
   const approved = sum((source) => source.approved);
   const rejected = sum((source) => source.rejected);
-  const readCostUsd = sum((source) => source.readCostUsd);
+  // Only X costs anything to read, so its cost is spread over its own approvals.
+  const fromX = sources.filter((source) => source.readCostUsd !== null);
+  const readCostUsd = fromX.reduce((total, source) => total + (source.readCostUsd ?? 0), 0);
+  const approvedFromX = fromX.reduce((total, source) => total + source.approved, 0);
   return {
     posts: sum((source) => source.posts),
     approved,
     approvalRate: approved + rejected > 0 ? approved / (approved + rejected) : null,
+    hasX: fromX.length > 0,
     readCostUsd,
-    costPerApprovedUsd: approved > 0 ? readCostUsd / approved : null,
+    costPerApprovedUsd: approvedFromX > 0 ? readCostUsd / approvedFromX : null,
   };
 }
 
@@ -190,7 +210,7 @@ export default function SourceStatsPage() {
         if (!response.ok) throw new Error(result.error ?? `Request failed (${response.status})`);
         return true;
       } catch (error: unknown) {
-        setActionError(`@${source.username}: ${error instanceof Error ? error.message : 'could not save'}`);
+        setActionError(`${source.label}: ${error instanceof Error ? error.message : 'could not save'}`);
         return false;
       } finally {
         setBusy((current) => {
@@ -215,7 +235,7 @@ export default function SourceStatsPage() {
   const remove = useCallback(
     async (source: SourceView) => {
       const confirmed = await confirmFirst(
-        `Remove @${source.username}? It stops being synced and leaves this list; its past posts stay.`,
+        `Remove ${source.label}? It stops being synced and leaves this list; its past posts stay.`,
       );
       if (confirmed && (await act(source, 'DELETE', {}))) patchSource(source.sourceId, null);
     },
@@ -289,7 +309,9 @@ export default function SourceStatsPage() {
             ) : null}
 
             {data.channels.every((channel) => channel.sources.length === 0) ? (
-              <p style={{ color: theme.hint }}>No sources yet. Add one in the chat with /addsource @username.</p>
+              <p style={{ color: theme.hint }}>
+                No sources yet. Add one in the chat with /addsource @username, or a feed with /addrss.
+              </p>
             ) : null}
 
             {data.channels.map((channel) => {
@@ -315,8 +337,11 @@ export default function SourceStatsPage() {
                   </h2>
 
                   <p style={{ margin: '0 0 0.75rem', fontSize: '0.85rem', color: theme.hint }}>
-                    {channel.sources.length} {channel.sources.length === 1 ? 'source' : 'sources'} · {totals.posts} posts · {totals.approved} approved · X reads ≈{' '}
-                    {dollars(totals.readCostUsd)} · {dollars(totals.costPerApprovedUsd)} per approved
+                    {channel.sources.length} {channel.sources.length === 1 ? 'source' : 'sources'} · {totals.posts} posts ·{' '}
+                    {totals.approved} approved
+                    {totals.hasX
+                      ? ` · X reads ≈ ${dollars(totals.readCostUsd)} · ${dollars(totals.costPerApprovedUsd)} per approved from X`
+                      : ''}
                   </p>
 
                   {channel.sources.map((source) => (
@@ -338,7 +363,8 @@ export default function SourceStatsPage() {
                         }}
                       >
                         <span style={{ fontWeight: 600 }}>
-                          @{source.username}
+                          {source.label}
+                          {source.platform === 'rss' ? <RssBadge /> : null}
                           {source.enabled ? null : (
                             <span style={{ color: theme.hint, fontWeight: 400, fontSize: '0.8rem' }}> · paused</span>
                           )}
@@ -386,8 +412,10 @@ export default function SourceStatsPage() {
                       ) : null}
 
                       <div style={{ fontSize: '0.8rem', color: theme.hint, marginTop: '0.25rem' }}>
-                        X reads ≈ {dollars(source.readCostUsd)} · {dollars(source.costPerApprovedUsd)} per approved ·
-                        last post {ago(source.lastPostAt)}
+                        {source.readCostUsd === null
+                          ? `${hostOf(source.feedUrl)} · no read cost`
+                          : `X reads ≈ ${dollars(source.readCostUsd)} · ${dollars(source.costPerApprovedUsd)} per approved`}{' '}
+                        · last post {ago(source.lastPostAt)}
                       </div>
 
                       <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.65rem' }}>
@@ -431,8 +459,9 @@ export default function SourceStatsPage() {
 
             <p style={{ fontSize: '0.75rem', color: theme.hint, margin: 0 }}>
               Approval rate is approved out of decided. X reads are an estimate at ${data.postReadUsd} per post the
-              bot kept; posts X returned that it skipped are not counted, so the real figure is a little higher. A
-              resumed source picks up only what is posted from then on.
+              bot kept; posts X returned that it skipped are not counted, so the real figure is a little higher.
+              Feeds cost nothing to read, and what a feed held when it was added is not counted. A resumed source
+              picks up only what is posted from then on.
             </p>
           </div>
         ) : null}

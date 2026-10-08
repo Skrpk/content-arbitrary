@@ -1,3 +1,4 @@
+import { isRssItemId } from '@/lib/sources/display';
 import { and, count, desc, eq, inArray, isNotNull, lt, ne, sql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import {
@@ -33,6 +34,7 @@ export async function loadRadarHistory(
 
   const columns = {
     id: processedPosts.id,
+    xPostId: processedPosts.xPostId,
     sourceUsername: processedPosts.xAuthorUsername,
     sourceText: processedPosts.sourceText,
     method: processedPosts.telegramMethod,
@@ -79,6 +81,7 @@ export async function loadRadarHistory(
   const toExample = (row: (typeof approved)[number]): RadarExample => ({
     postId: row.id,
     sourceUsername: row.sourceUsername ?? 'unknown',
+    ...(isRssItemId(row.xPostId) ? { sourcePlatform: 'rss' as const } : {}),
     text: row.sourceText ?? '',
     media: describeStoredMedia(row.method, row.mediaCount),
     decision: row.status === 'rejected' ? 'reject' : 'approve',

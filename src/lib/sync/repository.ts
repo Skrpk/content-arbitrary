@@ -711,6 +711,74 @@ export async function markSkipped(
     .where(eq(processedPosts.id, input.id));
 }
 
+/**
+ * Why a feed entry was passed over without review: it was already in the
+ * feed when the source was added or resumed. Stats leave these rows out —
+ * they are a feed's backlog, not what it brought in.
+ */
+export const RSS_BACKLOG_REASON = 'rss backlog present when source was followed';
+
+/**
+ * Record a feed's current entries as its backlog, settled without review, so
+ * neither this run nor any later one offers them. One insert, and a row that
+ * already exists — an entry seen before a pause, say — is left as it is.
+ *
+ * No text is kept: these were never candidates, so there is nothing for
+ * Radar or a search to learn from them.
+ */
+export async function recordFeedBacklog(
+  db: Database,
+  input: {
+    workspaceId: number;
+    sourceId: number;
+    items: { xPostId: string; xPostUrl: string; xAuthorUsername: string | null; xCreatedAt: Date | null }[];
+  },
+): Promise<void> {
+  const now = new Date();
+  for (let start = 0; start < input.items.length; start += 200) {
+    const chunk = input.items.slice(start, start + 200);
+    await db
+      .insert(processedPosts)
+      .values(
+        chunk.map((item) => ({
+          workspaceId: input.workspaceId,
+          sourceId: input.sourceId,
+          ...item,
+          status: 'skipped' as const,
+          errorMessage: RSS_BACKLOG_REASON,
+          processedAt: now,
+        })),
+      )
+      .onConflictDoNothing({ target: [processedPosts.workspaceId, processedPosts.xPostId] });
+  }
+}
+
+/**
+ * Ids already decided or in review — everything a feed must not offer again.
+ * Unlike X, a feed shows the same entries run after run, so posts waiting for
+ * a reviewer or a scheduled time count too, not only terminal ones.
+ */
+export async function findKnownPostIds(
+  db: Database,
+  xPostIds: string[],
+  workspaceId: number,
+): Promise<Set<string>> {
+  if (xPostIds.length === 0) return new Set();
+
+  const rows = await db
+    .select({ xPostId: processedPosts.xPostId })
+    .from(processedPosts)
+    .where(
+      and(
+        eq(processedPosts.workspaceId, workspaceId),
+        inArray(processedPosts.xPostId, xPostIds),
+        inArray(processedPosts.status, ['published', 'skipped', 'rejected', 'awaiting_approval', 'scheduled']),
+      ),
+    );
+
+  return new Set(rows.map((row) => row.xPostId));
+}
+
 /** Post ids we have already reached a terminal decision on. */
 export async function findTerminalPostIds(
   db: Database,

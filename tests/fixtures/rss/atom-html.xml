@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title type="html">Astro &amp;amp; Cosmos</title>
+  <id>urn:uuid:feed-1</id>
+  <updated>2026-10-07T10:00:00Z</updated>
+  <entry>
+    <title type="html">Webb &amp;amp; the &lt;em&gt;first&lt;/em&gt; galaxies</title>
+    <link href="/posts/webb-first-galaxies"/>
+    <id>urn:uuid:entry-1</id>
+    <updated>2026-10-07T10:00:00Z</updated>
+    <summary type="html">&lt;p&gt;Short.&lt;/p&gt;</summary>
+    <content type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml"><p>The telescope has found galaxies from the first <b>300 million years</b> after the Big Bang.</p></div></content>
+  </entry>
+</feed>

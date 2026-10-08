@@ -1,3 +1,4 @@
+import { isRssItemId } from '@/lib/sources/display';
 import { and, asc, count, eq, inArray, isNotNull, lt, ne, sql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import {
@@ -226,6 +227,8 @@ export interface ApprovedMatch {
   similarity: number;
   text: string | null;
   sourceUsername: string | null;
+  /** 'rss' when `sourceUsername` is a feed's title rather than an X handle. */
+  sourcePlatform?: 'rss';
   /** When the editor approved it. */
   approvedAt: Date;
 }
@@ -268,6 +271,7 @@ export async function findSimilarApprovedPosts(
       similarity: sql<number>`1 - (${distance})`.mapWith(Number),
       text: processedPosts.sourceText,
       sourceUsername: processedPosts.xAuthorUsername,
+      xPostId: processedPosts.xPostId,
       approvedAt: processedPosts.reviewedAt,
     })
     .from(radarCandidateEmbeddings)
@@ -277,7 +281,11 @@ export async function findSimilarApprovedPosts(
     .limit(input.limit);
 
   // reviewed_at is non-null by the filter.
-  return rows.map((row) => ({ ...row, approvedAt: row.approvedAt! }));
+  return rows.map(({ xPostId, ...row }) => ({
+    ...row,
+    ...(isRssItemId(xPostId) ? { sourcePlatform: 'rss' as const } : {}),
+    approvedAt: row.approvedAt!,
+  }));
 }
 
 function approvedBefore(input: ApprovedScope) {

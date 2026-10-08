@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>JPL News</title>
+  <link href="https://www.jpl.nasa.gov/news" rel="alternate"/>
+  <link href="https://www.jpl.nasa.gov/feeds/news.atom" rel="self"/>
+  <id>tag:jpl.nasa.gov,2026:news</id>
+  <updated>2026-10-07T10:00:00Z</updated>
+  <entry>
+    <title>Perseverance finds layered rocks</title>
+    <link href="https://www.jpl.nasa.gov/news/perseverance-layers" rel="alternate"/>
+    <id>tag:jpl.nasa.gov,2026:news/1002</id>
+    <published>2026-10-07T10:00:00Z</published>
+    <updated>2026-10-07T11:00:00Z</updated>
+    <author><name>JPL</name></author>
+    <summary>The rover has imaged finely layered rocks at the edge of Jezero crater.</summary>
+  </entry>
+  <entry>
+    <title type="text">Europa Clipper checks in</title>
+    <link href="https://www.jpl.nasa.gov/news/europa-clipper-checkin"/>
+    <id>tag:jpl.nasa.gov,2026:news/1001</id>
+    <updated>2026-10-06T15:00:00Z</updated>
+    <summary>All instruments on the spacecraft are healthy after a routine check.</summary>
+  </entry>
+</feed>

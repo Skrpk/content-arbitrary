@@ -1,17 +1,21 @@
 # content-arbitrary
 
-Mirrors new **photos and videos** from one X (Twitter) account into a **Telegram channel**.
-Runs as a scheduled job on Vercel: every 15 minutes it checks the account, finds posts with media
-it has not seen before, and republishes them to your channel.
+Content monitoring and an editorial assistant for **Telegram channels**. It watches your
+sources — **X accounts** and **RSS / Atom feeds** — and brings every new post to you for review:
+scored by [Shadow Radar](#shadow-radar), rewritten in your channel's [language](#translation),
+ready to edit, schedule or reject. What you approve is published to the channel.
 
-Deploy once, add the bot to your channel, point it at an X account — after that it runs
-unattended.
+Runs as a scheduled job on Vercel: every 15 minutes it checks every source for posts it has not
+seen before.
 
 ```
-X account ──► /api/cron/sync ──► media download ──► Telegram Bot API ──► your channel
-                    │
-                    └── PostgreSQL (what has been published, where the cursor is)
+X accounts ─┐
+            ├─► /api/cron/sync ─► Radar ─► translation ─► review ─► edit / schedule ─► your channel
+RSS feeds ──┘         │
+                      └── PostgreSQL (sources, posts, decisions, cursors)
 ```
+
+Without review switched on, posts go straight to the channel, as the bot first did.
 
 ---
 
@@ -37,6 +41,7 @@ X account ──► /api/cron/sync ──► media download ──► Telegram B
 - [P. Debugging common failures](#p-debugging-common-failures)
 - [Q. Telegram 429 and retry_after](#q-telegram-429-and-retry_after)
 - [R. When X does not return the media you expect](#r-when-x-does-not-return-the-media-you-expect)
+- [RSS and Atom feeds](#rss-and-atom-feeds)
 - [Multiple channels](#multiple-channels)
 - [Shadow Radar](#shadow-radar)
 - [Publication history](#publication-history)
@@ -561,6 +566,7 @@ environment change and no redeploy:
 | --- | --- |
 | `/sourcestats` | Open a page with every source and how it performs — and buttons to pause, resume or remove it |
 | `/addsource @karpathy` | Start watching an account |
+| `/addrss <feed URL>` | Start watching an RSS or Atom feed — see [RSS and Atom feeds](#rss-and-atom-feeds) |
 
 `/addsource` accepts whatever is easiest to paste — `karpathy`, `@karpathy`,
 `x.com/karpathy`, a full profile URL, or even a link to one of the account's posts.
@@ -626,6 +632,63 @@ The import happens once, recorded as `workspaces.legacy_source_imported_at`, so 
 deliberately remove does not reappear on the next run. Keep the two variables until you have
 seen the source appear in `/sourcestats`; after that they are ignored and can be deleted. New
 installations should leave them blank and use `/addsource`.
+
+## RSS and Atom feeds
+
+A source can be an RSS 2.0 or Atom 1.0 feed as well as an X account. Every new entry becomes an
+ordinary candidate: Radar scores it, the translator rewrites it, it comes to review with the same
+buttons, and once approved it is published like any other post.
+
+| Command | What it does |
+| --- | --- |
+| `/addrss https://example.com/feed.xml` | Start watching a feed |
+| `/addrss 2 https://example.com/feed.xml` | The same, for a reviewer of several channels: `2` is the channel's workspace id |
+
+Or **➕ Add RSS feed** on the ⚙️ Settings page, which asks for the URL and, with several channels,
+which one. A reviewer of several channels who leaves the id out of `/addrss` is shown their
+channels' ids — a feed URL is too long for a channel button, and the command keeps no state
+between messages.
+
+The URL must be the feed itself, not the site's home page — there is no feed discovery. It is
+fetched and parsed once before it is stored, so a page that is not a feed is turned away. Try one
+first without storing anything:
+
+```bash
+npm run rss:check -- https://www.esa.int/rssfeed/Our_Activities/Space_Science
+```
+
+**What a candidate is.** The entry's title and summary — or its content, when the summary says
+too little — as plain text, capped at 6000 characters. The article itself is never fetched: no
+scraping, no images, no enclosures. RSS candidates are text posts, whatever the source's **Posts
+without media** switch (Settings shows it only for X). Under the text, the published post carries
+the article's link, and Telegram's preview card of it is the post's picture. The review message
+names the feed — `Source: ESA Space Science` — and links the article; an entry with no link says so.
+
+**From now on, not the backlog.** The first sync after a feed is added — or resumed from a pause —
+records everything already in it as backlog: no review, no Radar, no message. Only entries that
+appear after that come to review. Each entry has a stable identity — its Atom `<id>`, else its RSS
+`<guid>`, else its link, else a hash of its title, date and text — so a feed that reorders itself,
+lists an entry twice or edits a title never offers it again, and neither do overlapping runs.
+
+**Failures.** A feed that times out (12 s), answers 4xx/5xx, is larger than 5 MB or is not
+well-formed XML fails on its own: the error is recorded for that source and the run carries on
+with every other feed and account. A feed that is gone (404/410) is not removed by itself.
+
+**Safety.** The server fetches what a reviewer types, so only `http(s)` URLs without credentials
+are accepted, and neither the host nor any redirect may be — or resolve to — a local, private or
+link-local address (no `localhost`, no `169.254.169.254`). XML entities are not expanded.
+
+**In stats and settings.** Feeds are listed by title with an **RSS** badge and their URL. Reading
+a feed costs nothing, so `/sourcestats` shows no X read cost for one, and leaves its backlog out of
+the counts.
+
+**Under the hood.** `processed_posts` still has X's column names, and a feed entry borrows them:
+`x_post_id` holds `rss:<feed hash>:<entry hash>` (clear of X's numeric ids and of other feeds),
+`x_post_url` the article, `x_author_username` the feed's title, `x_created_at` the entry's date.
+TODO: when the next platform connector lands (Reddit, YouTube…), rename these to
+`external_item_id`, `source_item_url`, `source_author` and `source_published_at`, and move X's
+metrics to platform metadata. Likewise `sources.username` holds a feed's title and should become
+`display_name`.
 
 ## Multiple channels
 
@@ -1387,8 +1450,21 @@ src/
       limits.ts                Documented limits, single source of truth
       format-caption.ts        Caption assembly, HTML escaping, safe truncation
       send-media.ts            sendPhoto / sendVideo / sendMediaGroup / sendMessage
+    rss/
+      url.ts                   Feed URL checks, private-address (SSRF) guard
+      client.ts                Size- and time-bounded fetch, redirects checked hop by hop
+      parser.ts                RSS 2.0 / Atom 1.0 → ParsedFeed, entities never expanded
+      text.ts                  HTML and entities to plain text
+      identity.ts              Stable entry keys, rss:<feed>:<entry> item ids
+      normalize.ts             Feed entry → candidate post
+    sources/
+      display.ts               @handle vs feed title, everywhere a source is named
+      add-rss.ts               Check-then-store for /addrss and Settings
     sync/
-      sync-posts.ts            Orchestration
+      sync-posts.ts            Orchestration, X and RSS sources alike
+      sync-x-source.ts         One X account: cursor, candidates
+      sync-rss-source.ts       One feed: backlog on follow, known-id dedup, candidates
+      process-candidate.ts     Claim → Radar → translate → review/publish → record, shared
       process-post.ts          Per-post publish, all-or-nothing media policy
       repository.ts            Atomic claim and state transitions
       locks.ts                 Advisory lock
@@ -1400,8 +1476,9 @@ src/
       adapters/telegram-json.ts  Telegram Desktop JSON export
       profile/                 History → editorial profile: sources, prompts, map/reduce, store
       embeddings/              Embedded text and fingerprint, OpenAI embeddings, backfill, search
-scripts/                       migrate, run-sync, telegram-check, import-history, history-profile,
-                               history-embed, radar-backfill, radar-report, radar-context
+scripts/                       migrate, run-sync, telegram-check, telegram-commands, rss-check,
+                               import-history, history-profile, history-embed, radar-backfill,
+                               radar-report, radar-context
 tests/                         Unit + integration suites
 ```
 

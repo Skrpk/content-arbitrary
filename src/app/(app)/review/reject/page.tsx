@@ -15,6 +15,8 @@ import { postIdFromLocation, TELEGRAM_WEB_APP_SCRIPT, theme } from '@/lib/telegr
 interface PostContext {
   postId: number;
   sourceUsername: string | null;
+  /** `@handle`, or a feed's title. */
+  sourceLabel: string | null;
   caption: string;
   noteLimit: number;
 }
@@ -136,7 +138,7 @@ export default function RejectPage() {
             <header style={{ marginBottom: '0.75rem' }}>
               <div style={{ fontSize: '0.95rem', fontWeight: 600 }}>Why does it not fit?</div>
               <div style={{ color: theme.hint, fontSize: '0.8rem' }}>
-                {context.sourceUsername ? `@${context.sourceUsername}` : 'Post'}
+                {context.sourceLabel ?? 'Post'}
               </div>
             </header>
 

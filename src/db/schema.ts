@@ -73,11 +73,11 @@ export const DEFAULT_WORKSPACE_ID = 1;
 /**
  * Platforms a source can come from.
  *
- * Only X today. The column is deliberately not named `x_...` anywhere, so that
- * adding YouTube, Reddit or RSS later is one enum value plus a fetcher, not a
- * schema reshape.
+ * X accounts, and RSS / Atom feeds. The column is deliberately not named
+ * `x_...` anywhere, so another platform is one enum value plus a fetcher, not
+ * a schema reshape.
  */
-export const sourcePlatformEnum = pgEnum('source_platform', ['x']);
+export const sourcePlatformEnum = pgEnum('source_platform', ['x', 'rss']);
 
 export type SourcePlatform = (typeof sourcePlatformEnum.enumValues)[number];
 
@@ -86,9 +86,13 @@ export type SourcePlatform = (typeof sourcePlatformEnum.enumValues)[number];
  * environment variables.
  *
  * `external_id` is the canonical identity — an X user id never changes, while a
- * handle can be renamed or taken over by someone else. `username` is therefore
- * cached display data, refreshed when we happen to learn a new one, and is
- * never used to decide whether two rows are the same source.
+ * handle can be renamed or taken over by someone else; for a feed, its
+ * normalised URL. `username` is therefore cached display data, refreshed when
+ * we happen to learn a new one, and is never used to decide whether two rows
+ * are the same source. For a feed it holds the feed's title, shown without an
+ * `@` — see formatSourceLabel.
+ *
+ * TODO: rename `username` to a platform-neutral `display_name`.
  *
  * Scoped to a workspace, so a second tenant is a matter of writing a different
  * `workspace_id` rather than reshaping this table.
@@ -838,6 +842,11 @@ export interface ApprovalPayload {
    * overflow, its send failed, or the post was queued before it was previewed.
    */
   adminOverflowMessageId?: number;
+  /**
+   * The link whose preview card the text message shows — a feed entry's
+   * article. Absent everywhere else, where previews stay off.
+   */
+  linkPreviewUrl?: string;
 }
 
 export type ProcessedPost = typeof processedPosts.$inferSelect;

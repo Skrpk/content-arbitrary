@@ -1,6 +1,8 @@
 import { and, desc, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
-import { processedPosts, sources, type RejectionReason } from '@/db/schema';
+import { processedPosts, sources, type RejectionReason, type SourcePlatform } from '@/db/schema';
+import { formatSourceLabel } from '@/lib/sources/display';
+import { RSS_BACKLOG_REASON } from '@/lib/sync/repository';
 
 /**
  * How each source has served its channel: what it brought in, and what the
@@ -9,7 +11,9 @@ import { processedPosts, sources, type RejectionReason } from '@/db/schema';
  *
  * Counted from `processed_posts`, so only posts the bot kept a row for. Posts
  * X returned that the bot passed over (a quote, a post with no usable media)
- * leave no row but were still read, which makes the read cost a floor.
+ * leave no row but were still read, which makes the read cost a floor. A
+ * feed's backlog — what it held when it was followed — is left out: it was
+ * never a candidate. Reading a feed costs nothing, so a feed shows no cost.
  */
 
 /** X's price per post read, pay-per-use. See README → "The X API is paid, per post read". */
@@ -28,7 +32,12 @@ export function periodStart(period: StatsPeriod, now = new Date()): Date | null 
 export interface SourceStats {
   sourceId: number;
   workspaceId: number;
+  platform: SourcePlatform;
   username: string;
+  /** `@handle`, or a feed's title. */
+  label: string;
+  /** A feed's URL; null for X. */
+  feedUrl: string | null;
   enabled: boolean;
   /** Every post the source brought in this period. */
   posts: number;
@@ -42,9 +51,9 @@ export interface SourceStats {
   /** approved / (approved + rejected); null before anything was decided. */
   approvalRate: number | null;
   rejectionReasons: { reason: RejectionReason | null; count: number }[];
-  /** At least this much spent reading its posts from X. */
-  readCostUsd: number;
-  /** readCostUsd per approved post; null with none approved. */
+  /** At least this much spent reading its posts from X; null for a feed, which costs nothing to read. */
+  readCostUsd: number | null;
+  /** readCostUsd per approved post; null with none approved, or for a feed. */
   costPerApprovedUsd: number | null;
   lastPostAt: Date | null;
 }
@@ -59,9 +68,11 @@ export async function loadSourceStats(
 ): Promise<SourceStats[]> {
   if (input.workspaceIds.length === 0) return [];
 
+  const notBacklog = sql`not (${processedPosts.status} = 'skipped' and ${processedPosts.errorMessage} is not distinct from ${RSS_BACKLOG_REASON})`;
   const inPeriod = and(
     eq(processedPosts.sourceId, sources.id),
     input.since ? gte(processedPosts.createdAt, input.since) : undefined,
+    notBacklog,
   );
   const withStatus = (statuses: string[]) =>
     sql<number>`(count(*) filter (where ${processedPosts.status} in (${sql.join(
@@ -73,6 +84,8 @@ export async function loadSourceStats(
     .select({
       sourceId: sources.id,
       workspaceId: sources.workspaceId,
+      platform: sources.platform,
+      externalId: sources.externalId,
       username: sources.username,
       enabled: sources.enabled,
       posts: sql<number>`count(${processedPosts.id})::int`,
@@ -105,18 +118,20 @@ export async function loadSourceStats(
     .groupBy(processedPosts.sourceId, processedPosts.rejectionReason)
     .orderBy(desc(sql`count(*)`));
 
-  return rows.map((row) => {
+  return rows.map(({ externalId, ...row }) => {
     const decided = row.approved + row.rejected;
-    const readCostUsd = row.posts * X_POST_READ_USD;
+    const readCostUsd = row.platform === 'rss' ? null : row.posts * X_POST_READ_USD;
     return {
       ...row,
+      label: formatSourceLabel(row.platform, row.username),
+      feedUrl: row.platform === 'rss' ? externalId : null,
       notSent: row.posts - row.approved - row.rejected - row.waiting,
       approvalRate: decided > 0 ? row.approved / decided : null,
       rejectionReasons: reasons
         .filter((entry) => entry.sourceId === row.sourceId)
         .map(({ reason, count }) => ({ reason, count })),
       readCostUsd,
-      costPerApprovedUsd: row.approved > 0 ? readCostUsd / row.approved : null,
+      costPerApprovedUsd: readCostUsd !== null && row.approved > 0 ? readCostUsd / row.approved : null,
     };
   });
 }

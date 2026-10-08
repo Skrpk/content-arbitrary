@@ -179,21 +179,23 @@ export function buildScheduledKeyboard(
 }
 
 /**
- * The text of the message carrying a post's review buttons. `channel` names
- * the destination for a reviewer of several channels; omitted otherwise.
- * `radarNote` is Radar's score for the post, as plain text, under a blank line.
+ * The text of the message carrying a post's review buttons. `sourceLabel` is
+ * the source as formatSourceLabel names it. `channel` names the destination
+ * for a reviewer of several channels; omitted otherwise. `radarNote` is
+ * Radar's score for the post, as plain text, under a blank line.
  */
 export function formatReviewControlText(
-  sourceUsername: string | null,
-  xPostUrl: string,
+  sourceLabel: string | null,
+  postUrl: string,
   channel?: string | null,
   radarNote?: string | null,
 ): string {
   return formatMessageText(
     [
       ...(channel ? [`📢 ${channel}`] : []),
-      ...(sourceUsername ? [`Source: @${sourceUsername.replace(/^@/, '')}`] : []),
-      xPostUrl,
+      ...(sourceLabel ? [`Source: ${sourceLabel}`] : []),
+      // A feed entry may link nowhere; say so rather than leave a gap.
+      postUrl || '(no link to the original)',
       ...(radarNote ? ['', radarNote] : []),
     ].join('\n'),
   );
@@ -234,14 +236,14 @@ export function isKnownTimeZone(timeZone: string): boolean {
 export function formatScheduledNotice(input: {
   scheduledFor: Date;
   timezone: string | null;
-  sourceUsername: string | null;
+  sourceLabel: string | null;
   xPostUrl: string;
   channel?: string | null;
   radarNote?: string | null;
 }): string {
   return [
     `🕒 Scheduled for ${escapeHtml(formatScheduleTime(input.scheduledFor, input.timezone))}`,
-    formatReviewControlText(input.sourceUsername, input.xPostUrl, input.channel, input.radarNote),
+    formatReviewControlText(input.sourceLabel, input.xPostUrl, input.channel, input.radarNote),
   ].join('\n');
 }
 
@@ -338,8 +340,8 @@ function collectMediaItems(
 export interface ReviewRequest {
   postId: number;
   xPostUrl: string;
-  /** Handle the post came from, shown in the preview. */
-  sourceUsername: string;
+  /** The source as people know it — `@handle`, or a feed's title — shown in the preview. */
+  sourceLabel: string;
   /** `sendMessage` for a text-only post: `caption` is its text, `payloads` empty. */
   method: Exclude<TelegramMethod, 'none'>;
   caption: string;
@@ -353,6 +355,8 @@ export interface ReviewRequest {
   channelLabel?: string | null;
   /** Radar's score for the post, shown under the link; omitted when there is none. */
   radarNote?: string | null;
+  /** For a text post: the link to show a preview card of — a feed entry's article. */
+  linkPreviewUrl?: string;
 }
 
 export interface ReviewResult {
@@ -393,7 +397,9 @@ export async function sendForApproval(
 
   if (request.method === 'sendMessage') {
     previewMessages = [
-      await sendText({ ...context, replyMarkup: undefined }, request.caption),
+      await sendText({ ...context, replyMarkup: undefined }, request.caption, {
+        linkPreviewUrl: request.linkPreviewUrl,
+      }),
     ];
   } else if (request.method === 'sendMediaGroup') {
     previewMessages = await sendMediaGroup(
@@ -440,7 +446,7 @@ export async function sendForApproval(
 
   const control = await sendText(
     { ...context, replyMarkup: keyboard },
-    formatReviewControlText(request.sourceUsername, request.xPostUrl, request.channelLabel, request.radarNote),
+    formatReviewControlText(request.sourceLabel, request.xPostUrl, request.channelLabel, request.radarNote),
     { replyToMessageId: previewMessages[0]?.message_id },
   );
   const buttonMessageId = control.message_id;
@@ -464,6 +470,7 @@ export async function sendForApproval(
       items,
       adminMediaMessageId: previewMessages[0]?.message_id,
       adminOverflowMessageId: overflowMessageId,
+      ...(request.linkPreviewUrl ? { linkPreviewUrl: request.linkPreviewUrl } : {}),
     },
   };
 }
@@ -502,7 +509,7 @@ export async function publishApprovedPayload(
   const messages: PublishResult['messages'] = [];
 
   if (payload.method === 'sendMessage') {
-    const sent = await sendText(context, payload.caption);
+    const sent = await sendText(context, payload.caption, { linkPreviewUrl: payload.linkPreviewUrl });
     messages.push({ messageId: sent.message_id, mediaIndex: null, kind: 'text' });
   } else if (payload.method === 'sendMediaGroup') {
     const sent = await sendMediaGroup(context, payloads, payload.caption);

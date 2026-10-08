@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Космос &amp; наука 🚀</title>
+    <item>
+      <title>Марс &#8212; новий знімок &#x1F52D;</title>
+      <link>https://kosmos.example/mars</link>
+      <guid>kosmos-1</guid>
+      <description>&lt;p&gt;Ровер&amp;nbsp;Perseverance надіслав &amp;laquo;кольоровий&amp;raquo; знімок&amp;hellip;&lt;/p&gt;   &lt;p&gt;Друга   частина.&lt;/p&gt;</description>
+      <pubDate>Wed, 07 Oct 2026 09:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

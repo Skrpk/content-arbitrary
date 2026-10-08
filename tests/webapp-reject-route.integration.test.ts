@@ -155,6 +155,7 @@ describeIfDb('GET /api/telegram/webapp/reject', () => {
     expect(await response.json()).toEqual({
       postId: post.id,
       sourceUsername: 'someone',
+      sourceLabel: '@someone',
       caption: 'Bear & cub',
       noteLimit: REJECTION_NOTE_MAX_LENGTH,
     });

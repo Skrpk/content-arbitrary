@@ -1,4 +1,5 @@
 import { loadRadarNote } from '@/lib/radar/review-note';
+import { sourceLabelOfPost } from '@/lib/sources/display';
 import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { getDb, type Database } from '@/lib/db';
@@ -315,7 +316,7 @@ export async function POST(request: Request): Promise<Response> {
           chatId,
           messageId,
           formatReviewControlText(
-            result.row.xAuthorUsername,
+            sourceLabelOfPost(result.row.xPostId, result.row.xAuthorUsername),
             result.row.xPostUrl,
             channelLabelFor(workspace, reviewerWorkspaces.length),
             await loadRadarNote(db, result.row.id).catch(() => null),

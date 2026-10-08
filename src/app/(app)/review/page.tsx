@@ -17,6 +17,8 @@ import { postIdFromLocation, TELEGRAM_WEB_APP_SCRIPT, theme } from '@/lib/telegr
 interface PostDetails {
   postId: number;
   sourceUsername: string | null;
+  /** `@handle`, or a feed's title. */
+  sourceLabel: string | null;
   xPostUrl: string;
   mediaCount: number;
   caption: string;
@@ -156,7 +158,7 @@ export default function ReviewPage() {
           <>
             <header style={{ marginBottom: '0.75rem' }}>
               <div style={{ fontSize: '0.95rem', fontWeight: 600 }}>
-                {details.sourceUsername ? `@${details.sourceUsername}` : 'Post'}
+                {details.sourceLabel ?? 'Post'}
               </div>
               <div style={{ color: theme.hint, fontSize: '0.8rem' }}>
                 {details.mediaCount === 0

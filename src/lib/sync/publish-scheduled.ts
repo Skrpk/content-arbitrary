@@ -1,4 +1,5 @@
 import { loadRadarNote } from '@/lib/radar/review-note';
+import { sourceLabelOfPost } from '@/lib/sources/display';
 import type { Database } from '@/lib/db';
 import type { Env } from '@/lib/env';
 import { describeError } from '@/lib/errors';
@@ -108,7 +109,7 @@ export async function publishDueScheduledPosts(input: {
               `⚠️ Scheduled publishing failed ${attempts} times: ${escapeHtml(error.slice(0, 300))}`,
               'Back in review — approve or schedule it again.',
               formatReviewControlText(
-                row.xAuthorUsername,
+                sourceLabelOfPost(row.xPostId, row.xAuthorUsername),
                 row.xPostUrl,
                 channel ? channelLabelFor(channel, reviewerWorkspaces.length) : null,
                 await loadRadarNote(db, row.id).catch(() => null),

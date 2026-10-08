@@ -69,12 +69,16 @@ export interface RadarSimilarApproved {
   approvedAt: Date;
   similarity: number;
   sourceUsername: string | null;
+  /** 'rss' when `sourceUsername` is a feed's title rather than an X handle. */
+  sourcePlatform?: 'rss';
   text: string | null;
 }
 
 /** The post to score, reduced to what the prompt shows. */
 export interface RadarItem {
   sourceUsername: string;
+  /** 'rss' when `sourceUsername` is a feed's title rather than an X handle. */
+  sourcePlatform?: 'rss';
   text: string;
   /** e.g. "photo", "video", "album of 3", "text only". */
   media: string;
@@ -84,6 +88,8 @@ export interface RadarItem {
 export interface RadarExample {
   postId: number;
   sourceUsername: string;
+  /** 'rss' when `sourceUsername` is a feed's title rather than an X handle. */
+  sourcePlatform?: 'rss';
   text: string;
   media: string;
   decision: 'approve' | 'reject';
@@ -235,7 +241,7 @@ export function buildUserContent(
     type: 'text',
     text:
       'The new post to assess:\n' +
-      `<post source="@${attribute(item.sourceUsername)}" media="${attribute(item.media)}">\n` +
+      `<post source="${sourceRef(item.sourceUsername, item.sourcePlatform)}" media="${attribute(item.media)}">\n` +
       `${neutralise(clip(item.text, ITEM_TEXT_MAX)) || '(no text)'}\n</post>`,
   });
 
@@ -268,7 +274,7 @@ function formatApproved(approved: RadarSimilarApproved[]): string {
     const text = neutralise(clip(post.text ?? '', SIMILAR_TEXT_MAX)) || '(no text)';
     return (
       `<approved approved="${date}" similarity="${post.similarity.toFixed(2)}" ` +
-      `source="@${attribute(post.sourceUsername ?? 'unknown')}">\n${text}\n</approved>`
+      `source="${sourceRef(post.sourceUsername ?? 'unknown', post.sourcePlatform)}">\n${text}\n</approved>`
     );
   });
   return (
@@ -281,7 +287,7 @@ function formatExample(example: RadarExample): string {
   const attributes = [
     `decision="${example.decision}"`,
     example.rejectionReason ? `reason="${example.rejectionReason}"` : null,
-    `source="@${attribute(example.sourceUsername)}"`,
+    `source="${sourceRef(example.sourceUsername, example.sourcePlatform)}"`,
     `media="${attribute(example.media)}"`,
   ].filter(Boolean);
 
@@ -310,4 +316,9 @@ function neutralise(text: string): string {
 
 function attribute(value: string): string {
   return value.replace(/["<>]/g, '');
+}
+
+/** A source as the prompt names it: `@handle` on X, as it always has; a feed by its title. */
+function sourceRef(name: string, platform?: 'rss'): string {
+  return platform === 'rss' ? attribute(name) : `@${attribute(name)}`;
 }

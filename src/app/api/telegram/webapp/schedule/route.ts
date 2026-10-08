@@ -1,4 +1,5 @@
 import { loadRadarNote } from '@/lib/radar/review-note';
+import { sourceLabelOfPost } from '@/lib/sources/display';
 import { z } from 'zod';
 import { describeError } from '@/lib/errors';
 import { TelegramClient } from '@/lib/telegram/client';
@@ -68,6 +69,7 @@ export async function GET(request: Request): Promise<Response> {
   return json({
     postId: post.id,
     sourceUsername: post.xAuthorUsername,
+    sourceLabel: sourceLabelOfPost(post.xPostId, post.xAuthorUsername),
     caption: captionToPlainText(post.caption ?? post.approvalPayload.caption),
     scheduledFor: post.status === 'scheduled' ? post.scheduledFor?.toISOString() ?? null : null,
     timezone: post.scheduledTimezone,
@@ -141,7 +143,7 @@ export async function POST(request: Request): Promise<Response> {
         formatScheduledNotice({
           scheduledFor,
           timezone,
-          sourceUsername: row.xAuthorUsername,
+          sourceLabel: sourceLabelOfPost(row.xPostId, row.xAuthorUsername),
           xPostUrl: row.xPostUrl,
           channel: channelLabelFor(workspace, auth.workspaces.length),
           radarNote: await loadRadarNote(auth.db, row.id).catch(() => null),

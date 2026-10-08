@@ -211,7 +211,7 @@ export async function sendMediaGroup(
 export async function sendText(
   context: SendContext,
   text: string,
-  options?: { replyToMessageId?: number },
+  options?: { replyToMessageId?: number; linkPreviewUrl?: string },
 ): Promise<TelegramMessage> {
   return context.client.call(
     'sendMessage',
@@ -220,7 +220,11 @@ export async function sendText(
       text,
       parse_mode: TELEGRAM_PARSE_MODE,
       // The media already shows the preview; a second link card would be noise.
-      link_preview_options: { is_disabled: true },
+      // A feed entry has no media, so its article's card is the picture — the
+      // one link that gets it, not whichever link Telegram would pick.
+      link_preview_options: options?.linkPreviewUrl
+        ? { url: options.linkPreviewUrl }
+        : { is_disabled: true },
       disable_notification: context.disableNotification,
       ...(context.replyMarkup ? { reply_markup: context.replyMarkup } : {}),
       ...(options?.replyToMessageId

@@ -141,6 +141,13 @@
       "when": 1791374775403,
       "tag": "0019_source_following_since",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1791453336440,
+      "tag": "0020_source_platform_rss",
+      "breakpoints": true
     }
   ]
 }

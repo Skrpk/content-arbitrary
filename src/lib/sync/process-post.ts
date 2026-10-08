@@ -21,6 +21,7 @@ import { selectTelegramVideoVariant } from '@/lib/x/select-video-variant';
 import { maxUploadBytesFor } from '@/lib/telegram/limits';
 import type { NormalizedMedia, NormalizedPost, TelegramMethod } from '@/types';
 import { reviewLinks, sendForApproval } from '@/lib/sync/approval';
+import { formatSourceLabel } from '@/lib/sources/display';
 import type { ApprovalPayload } from '@/db/schema';
 import type { PostFooter } from '@/lib/telegram/post-footer';
 import { defaultSleep } from '@/lib/sync/retry';
@@ -116,7 +117,7 @@ export async function processPost(
       text,
       username: post.authorUsername,
       postId: post.id,
-      includeSourceLink: sourceLineInPost(env),
+      ...sourceFraming(post, env),
       prefix: env.CAPTION_PREFIX,
       suffix: env.CAPTION_SUFFIX,
       footer: options.footer,
@@ -292,7 +293,7 @@ export async function processPost(
         {
           postId: options.postId!,
           xPostUrl: post.url,
-          sourceUsername: post.authorUsername,
+          sourceLabel: formatSourceLabel(post.platform ?? 'x', post.authorUsername),
           method: method as 'sendPhoto' | 'sendVideo' | 'sendMediaGroup',
           caption,
           overflowMessage,
@@ -466,7 +467,7 @@ async function processTextPost(
       text: body,
       username: post.authorUsername,
       postId: post.id,
-      includeSourceLink: sourceLineInPost(env),
+      ...sourceFraming(post, env),
       prefix: env.CAPTION_PREFIX,
       suffix: env.CAPTION_SUFFIX,
       footer: options.footer,
@@ -497,13 +498,14 @@ async function processTextPost(
         {
           postId: options.postId!,
           xPostUrl: post.url,
-          sourceUsername: post.authorUsername,
+          sourceLabel: formatSourceLabel(post.platform ?? 'x', post.authorUsername),
           method,
           caption: text,
           payloads: [],
           ...reviewLinks(env.APP_BASE_URL, options.postId!),
           channelLabel: options.destination.channelLabel,
           radarNote,
+          linkPreviewUrl: linkPreviewOf(post),
         },
         { logger, sleep: options.sleep },
       );
@@ -526,6 +528,7 @@ async function processTextPost(
         disableNotification: options.destination.disableNotification,
       },
       text,
+      { linkPreviewUrl: linkPreviewOf(post) },
     );
 
     logger.info('telegram.published', { xPostId: post.id, method, telegramMessageIds: [sent.message_id] });
@@ -551,6 +554,22 @@ async function processTextPost(
       permanent,
     };
   }
+}
+
+/**
+ * How a post names its source in its own text. A feed entry ends with its
+ * article's link — a summary without it would leave readers nowhere to go —
+ * and the preview card Telegram draws for it is the post's picture. An X post
+ * follows sourceLineInPost.
+ */
+function sourceFraming(post: NormalizedPost, env: Env): { includeSourceLink: boolean; sourceLine?: string } {
+  if (post.platform === 'rss') return post.url ? { includeSourceLink: true, sourceLine: post.url } : { includeSourceLink: false };
+  return { includeSourceLink: sourceLineInPost(env) };
+}
+
+/** The link a feed entry's text message previews; none for X, whose previews stay off. */
+function linkPreviewOf(post: NormalizedPost): string | undefined {
+  return post.platform === 'rss' && post.url ? post.url : undefined;
 }
 
 /**

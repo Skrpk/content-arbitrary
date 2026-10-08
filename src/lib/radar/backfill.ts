@@ -1,3 +1,4 @@
+import { isRssItemId } from '@/lib/sources/display';
 import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import {
@@ -156,6 +157,7 @@ export async function submitRadarBackfill(input: {
     .select({
       id: processedPosts.id,
       createdAt: processedPosts.createdAt,
+      xPostId: processedPosts.xPostId,
       sourceUsername: processedPosts.xAuthorUsername,
       sourceText: processedPosts.sourceText,
       method: processedPosts.telegramMethod,
@@ -276,6 +278,7 @@ export async function submitRadarBackfill(input: {
         approvalRate: history.approvalRate,
         item: {
           sourceUsername: post.sourceUsername ?? 'unknown',
+          ...(isRssItemId(post.xPostId) ? { sourcePlatform: 'rss' as const } : {}),
           text: post.sourceText ?? '',
           media: describeStoredMedia(post.method, post.mediaCount),
         },

@@ -17,6 +17,8 @@ import { postIdFromLocation, TELEGRAM_WEB_APP_SCRIPT, theme } from '@/lib/telegr
 interface PostContext {
   postId: number;
   sourceUsername: string | null;
+  /** `@handle`, or a feed's title. */
+  sourceLabel: string | null;
   caption: string;
   scheduledFor: string | null;
   timezone: string | null;
@@ -201,7 +203,7 @@ export default function SchedulePage() {
                 {rescheduling ? 'Change the time' : 'Schedule publishing'}
               </div>
               <div style={{ color: theme.hint, fontSize: '0.8rem' }}>
-                {context.sourceUsername ? `@${context.sourceUsername}` : 'Post'}
+                {context.sourceLabel ?? 'Post'}
                 {context.scheduledFor
                   ? ` · now ${formatLocal(new Date(context.scheduledFor))}`
                   : ''}

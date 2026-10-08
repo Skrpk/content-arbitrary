@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>ESA Space Science</title>
+    <link>https://www.esa.int/Science_Exploration/Space_Science</link>
+    <atom:link href="https://www.esa.int/rssfeed/Our_Activities/Space_Science" rel="self" type="application/rss+xml"/>
+    <description>Space science news from ESA</description>
+    <item>
+      <title>Juice swings past Venus</title>
+      <link>https://www.esa.int/juice-venus</link>
+      <guid isPermaLink="false">esa-2026-0003</guid>
+      <description>ESA's Jupiter probe used Venus's gravity to bend its path towards the outer Solar System.</description>
+      <pubDate>Wed, 07 Oct 2026 09:00:00 GMT</pubDate>
+      <dc:creator>ESA</dc:creator>
+    </item>
+    <item>
+      <title>Euclid maps a billion galaxies</title>
+      <link>https://www.esa.int/euclid-billion</link>
+      <guid isPermaLink="false">esa-2026-0002</guid>
+      <description>The dark universe mission has charted its first billion galaxies.</description>
+      <pubDate>Tue, 06 Oct 2026 12:30:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Solar Orbiter sees the Sun's pole</title>
+      <link>https://www.esa.int/solar-orbiter-pole</link>
+      <guid isPermaLink="false">esa-2026-0001</guid>
+      <description>For the first time, a spacecraft has looked straight down at one of the Sun's poles.</description>
+      <pubDate>Mon, 05 Oct 2026 08:15:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

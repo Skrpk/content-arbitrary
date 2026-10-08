@@ -64,6 +64,19 @@ export class TelegramApiError extends AppError {
   }
 }
 
+/** Failure reading an RSS / Atom feed: fetching it, or making sense of what came back. */
+export class FeedError extends AppError {
+  readonly status?: number;
+
+  constructor(
+    message: string,
+    options: { transient: boolean; code: string; status?: number; retryAfterMs?: number; cause?: unknown },
+  ) {
+    super(message, options);
+    this.status = options.status;
+  }
+}
+
 /** The post can never be published as-is — record and move on. */
 export class MediaUnsupportedError extends AppError {
   constructor(message: string, code = 'media_unsupported') {

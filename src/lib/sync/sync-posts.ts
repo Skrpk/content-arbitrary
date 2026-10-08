@@ -9,9 +9,11 @@ import { XClient } from '@/lib/x/client';
 import {
   addSource,
   countSources,
-  listEnabledSources,
+  listSyncableSources,
   syncStateKey,
 } from '@/lib/sources/repository';
+import { formatSourceLabel } from '@/lib/sources/display';
+import type { FetchFeedOptions } from '@/lib/rss/client';
 import { acquireSyncLock } from '@/lib/sync/locks';
 import { attributePostsToSource, getSyncState } from '@/lib/sync/repository';
 import { defaultSleep } from '@/lib/sync/retry';
@@ -27,6 +29,7 @@ import {
 } from '@/lib/sync/rotation';
 import { createRadarRun, type RadarRun } from '@/lib/radar/shadow';
 import { syncXSource } from '@/lib/sync/sync-x-source';
+import { syncRssSource } from '@/lib/sync/sync-rss-source';
 import {
   channelLabelFor,
   destinationFor,
@@ -81,6 +84,8 @@ export interface SyncOptions {
   radarRun?: RadarRun;
   /** Overrides the model that rewrites posts in a tenant's language; injected by tests. */
   translationProvider?: RadarProvider | null;
+  /** How RSS / Atom feeds are fetched; injected by tests. */
+  feedFetch?: FetchFeedOptions;
   /** Overrides when the run stops taking new posts (epoch ms); injected by tests. */
   deadline?: number;
   now?: () => number;
@@ -159,7 +164,7 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
       await Promise.all(
         activeTenants.map(
           async (tenant) =>
-            [tenant.id, (await listEnabledSources(db, 'x', tenant.id)).map(syncStateKey)] as const,
+            [tenant.id, (await listSyncableSources(db, tenant.id)).map(syncStateKey)] as const,
         ),
       ),
     );
@@ -236,7 +241,7 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
           await bootstrapLegacySource({ db, env, xClient, logger, workspace: tenant });
         }
 
-        const enabled = longestWaitingFirst(await listEnabledSources(db, 'x', tenant.id), (source) =>
+        const enabled = longestWaitingFirst(await listSyncableSources(db, tenant.id), (source) =>
           lastSyncTimes.get(lastSyncKey(tenant.id, syncStateKey(source))),
         );
 
@@ -260,13 +265,10 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
             break;
           }
 
-          // syncXSource never throws; a failure is reported in its summary so
-          // the remaining sources and tenants still get their turn.
-          const sourceSummary = await syncXSource(source, {
+          const shared = {
             db,
             env,
             logger,
-            xClient,
             telegramClient,
             sleep,
             fetchImpl: options.fetchImpl,
@@ -279,7 +281,14 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
             footer: parsePostFooter(tenant.postFooter),
             deadline,
             now,
-          });
+          };
+
+          // Neither ever throws; a failure is reported in its summary so the
+          // remaining sources — of either platform — and tenants get their turn.
+          const sourceSummary =
+            source.platform === 'rss'
+              ? await syncRssSource(source, { ...shared, feedFetch: options.feedFetch })
+              : await syncXSource(source, { ...shared, xClient });
           if (sourceSummary.stoppedForTime) summary.timeBudgetReached = true;
 
           summary.sources.push(sourceSummary);
@@ -302,7 +311,9 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
       // Reported, not thrown: the run did useful work for the other sources.
       summary.error =
         `${failedSources.length} of ${summary.sources.length} source(s) failed: ` +
-        failedSources.map((source) => `@${source.username} (${source.error})`).join('; ');
+        failedSources
+          .map((source) => `${formatSourceLabel(source.platform === 'rss' ? 'rss' : 'x', source.username)} (${source.error})`)
+          .join('; ');
     }
 
     summary.durationMs = now() - startedAt;

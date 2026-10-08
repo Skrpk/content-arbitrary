@@ -327,7 +327,7 @@ describe('formatScheduleTime', () => {
       formatScheduledNotice({
         scheduledFor: at,
         timezone: 'Europe/Kyiv',
-        sourceUsername: 'someone',
+        sourceLabel: '@someone',
         xPostUrl: 'https://x.com/someone/status/1',
       }),
     ).toBe('🕒 Scheduled for Mon 5 Oct, 18:00\nSource: @someone\nhttps://x.com/someone/status/1');
@@ -395,7 +395,7 @@ describe('sendForApproval', () => {
       {
         postId: 42,
         xPostUrl: 'https://x.com/a/status/1',
-        sourceUsername: 'karpathy',
+        sourceLabel: '@karpathy',
         method: 'sendPhoto',
         caption: 'hello',
         payloads: [urlPayload(photo)],
@@ -429,7 +429,7 @@ describe('sendForApproval', () => {
       {
         postId: 42,
         xPostUrl: 'https://x.com/a/status/1',
-        sourceUsername: 'karpathy',
+        sourceLabel: '@karpathy',
         method: 'sendPhoto',
         caption: 'Short version…',
         overflowMessage: 'The whole long text &amp; more.',
@@ -477,7 +477,7 @@ describe('sendForApproval', () => {
       {
         postId: 42,
         xPostUrl: 'https://x.com/a/status/1',
-        sourceUsername: 'karpathy',
+        sourceLabel: '@karpathy',
         method: 'sendPhoto',
         caption: 'Short…',
         overflowMessage: 'Long',
@@ -502,7 +502,7 @@ describe('sendForApproval', () => {
       {
         postId: 1,
         xPostUrl: 'https://x.com/a/status/1',
-        sourceUsername: 'karpathy',
+        sourceLabel: '@karpathy',
         method: 'sendVideo',
         caption: '',
         payloads: [urlPayload(video)],
@@ -522,7 +522,7 @@ describe('sendForApproval', () => {
       {
         postId: 42,
         xPostUrl: 'https://x.com/a/status/1',
-        sourceUsername: 'karpathy',
+        sourceLabel: '@karpathy',
         method: 'sendMediaGroup',
         caption: 'album',
         payloads: [urlPayload(photo), urlPayload({ ...photo, mediaKey: '3_2' })],
@@ -548,7 +548,7 @@ describe('sendForApproval', () => {
       {
         postId: 1,
         xPostUrl: 'https://x.com/a/status/1',
-        sourceUsername: 'karpathy',
+        sourceLabel: '@karpathy',
         method: 'sendPhoto',
         caption: '',
         payloads: [urlPayload(photo)],
@@ -567,7 +567,7 @@ describe('sendForApproval', () => {
       {
         postId: 1,
         xPostUrl: 'https://x.com/a/status/1',
-        sourceUsername: 'karpathy',
+        sourceLabel: '@karpathy',
         method: 'sendPhoto',
         caption: 'short caption',
         overflowMessage: 'the full text',

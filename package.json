@@ -23,6 +23,7 @@
     "webhook:set": "tsx scripts/setup-webhook.ts set",
     "webhook:info": "tsx scripts/setup-webhook.ts info",
     "webhook:delete": "tsx scripts/setup-webhook.ts delete",
+    "rss:check": "tsx scripts/rss-check.ts",
     "radar:backfill": "tsx scripts/radar-backfill.ts",
     "radar:report": "tsx scripts/radar-report.ts",
     "radar:context": "tsx scripts/radar-context.ts",
@@ -33,6 +34,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
     "drizzle-orm": "^0.45.2",
+    "fast-xml-parser": "5.11.2",
     "next": "^16.3.5",
     "openai": "^7.28.0",
     "postgres": "^3.4.9",

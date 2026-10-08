@@ -1,32 +1,12 @@
-import type { ApprovalMediaItem, ReviewMediaItem, Source } from '@/db/schema';
-import type { Database } from '@/lib/db';
-import type { Env } from '@/lib/env';
+import type { Source } from '@/db/schema';
 import { describeError } from '@/lib/errors';
 import type { Logger } from '@/lib/logger';
-import type { TelegramClient } from '@/lib/telegram/client';
-import { TELEGRAM_MIN_DELAY_BETWEEN_SENDS_MS } from '@/lib/telegram/limits';
 import { syncStateKey, updateSourceUsername } from '@/lib/sources/repository';
-import { processPost } from '@/lib/sync/process-post';
-import {
-  claimPost,
-  findTerminalPostIds,
-  getSyncState,
-  markAwaitingApproval,
-  markFailed,
-  markPending,
-  markPublished,
-  markSkipped,
-  upsertSyncState,
-} from '@/lib/sync/repository';
+import { processCandidate, type CandidateContext } from '@/lib/sync/process-candidate';
+import { findTerminalPostIds, getSyncState, upsertSyncState } from '@/lib/sync/repository';
 import type { XClient } from '@/lib/x/client';
 import { compareSnowflake, getNewPosts } from '@/lib/x/get-new-posts';
-import type { TelegramDestination } from '@/lib/workspace';
-import type { NormalizedPost, SourceSyncSummary } from '@/types';
-import { describeMedia, type RadarImage } from '@/lib/radar/prompt';
-import { loadRadarNote } from '@/lib/radar/review-note';
-import { runLiveRadar, type RadarRun } from '@/lib/radar/shadow';
-import { translateForReview, type Translator } from '@/lib/translation/translate';
-import type { PostFooter } from '@/lib/telegram/post-footer';
+import type { SourceSyncSummary } from '@/types';
 
 /**
  * One synchronisation pass over a single X account.
@@ -37,22 +17,9 @@ import type { PostFooter } from '@/lib/telegram/post-footer';
  * orchestrator can carry on with the next one.
  */
 
-export interface SourceSyncContext {
-  db: Database;
-  env: Env;
+export interface SourceSyncContext extends CandidateContext {
   logger: Logger;
   xClient: XClient;
-  telegramClient: TelegramClient;
-  sleep: (ms: number) => Promise<void>;
-  fetchImpl?: typeof fetch;
-  /** The tenant's channel and reviewer, resolved once per workspace. */
-  destination: TelegramDestination;
-  /** Set when Shadow Radar scores this tenant's posts before review. */
-  radar?: { run: RadarRun; profile: string };
-  /** Set when the tenant publishes in a language its posts are rewritten in. */
-  translator?: Translator;
-  /** The tenant's footer, added under every post. */
-  footer?: PostFooter | null;
   /** When to stop taking new posts (epoch ms); unset, there is no limit. */
   deadline?: number;
   now?: () => number;
@@ -62,7 +29,7 @@ export async function syncXSource(
   source: Source,
   context: SourceSyncContext,
 ): Promise<SourceSyncSummary> {
-  const { db, env, xClient, telegramClient, sleep } = context;
+  const { db, env, xClient } = context;
   const stateKey = syncStateKey(source);
   const logger = context.logger.child({ source: stateKey, username: source.username });
 
@@ -187,140 +154,12 @@ export async function syncXSource(
         break;
       }
 
-      const postLogger = logger.child({ xPostId: post.id });
-
-      const claim = await claimPost(db, {
-        xPostId: post.id,
-        xPostUrl: post.url,
-        xAuthorUsername: post.authorUsername,
-        xCreatedAt: post.createdAt,
-        maxRetryAttempts: env.MAX_RETRY_ATTEMPTS,
-        sourceId: source.id,
-        workspaceId: source.workspaceId,
-        sourceText: post.text,
-        metrics: post.metrics,
+      const result = await processCandidate(post, source, context, summary, {
+        logger: logger.child({ xPostId: post.id }),
+        textOnly: source.includeTextOnly,
+        spaceOut: index > 0,
       });
-
-      if (!claim.claimed || !claim.row) {
-        // Lost the race, or the row is in a state we must not touch.
-        postLogger.info('sync.post_skipped', { reason: claim.reason ?? 'not claimable' });
-        summary.newPosts -= 1;
-        summary.skipped += 1;
-        continue;
-      }
-
-      // Space out sends so a burst of new posts does not trip flood control.
-      if (index > 0 && !env.DRY_RUN) await sleep(TELEGRAM_MIN_DELAY_BETWEEN_SENDS_MS);
-
-      try {
-        const outcome = await processPost(post, {
-          client: telegramClient,
-          logger: postLogger,
-          env,
-          sleep,
-          fetchImpl: context.fetchImpl,
-          postId: claim.row.id,
-          destination: context.destination,
-          textOnly: source.includeTextOnly,
-          footer: context.footer,
-          translate: context.translator
-            ? (text) => translateForReview(context.translator!, text, postLogger)
-            : undefined,
-          beforeReview: context.radar
-            ? async () => {
-                await runLiveRadar(
-                  context.radar!.run,
-                  db,
-                  {
-                    workspaceId: source.workspaceId,
-                    processedPostId: claim.row!.id,
-                    profile: context.radar!.profile,
-                    item: {
-                      sourceUsername: post.authorUsername,
-                      text: post.text,
-                      media: describeMedia(post.media),
-                    },
-                    image: firstImage(post),
-                  },
-                  postLogger,
-                );
-                // The score just recorded, for the reviewer to see beside the buttons.
-                return loadRadarNote(db, claim.row!.id);
-              }
-            : undefined,
-        });
-
-        if (outcome.status === 'published') {
-          await markPublished(db, {
-            id: claim.row.id,
-            telegramChatId: context.destination.chatId,
-            primaryMessageId: outcome.primaryMessageId,
-            telegramMethod: outcome.method,
-            mediaCount: outcome.mediaCount,
-            messages: outcome.messages,
-            caption: outcome.caption,
-          });
-          settle(post.id);
-          summary.published += 1;
-          continue;
-        }
-
-        /**
-         * Sent to the reviewer. The post is settled as far as this run is
-         * concerned — the cursor may move past it — but it is not published
-         * until the Approve button reaches the webhook.
-         */
-        if (outcome.status === 'awaiting-approval' && outcome.approval) {
-          await markAwaitingApproval(db, {
-            id: claim.row.id,
-            payload: outcome.approval.payload,
-            adminChatId: outcome.approval.adminChatId,
-            adminMessageId: outcome.approval.adminMessageId,
-            reviewMedia: reviewMediaOf(post, outcome.approval.payload.items),
-          });
-          settle(post.id);
-          summary.awaitingApproval += 1;
-          continue;
-        }
-
-        if (outcome.status === 'dry-run') {
-          // Leave the row `pending` so the first real run publishes it.
-          await markPending(db, {
-            id: claim.row.id,
-            telegramMethod: outcome.method,
-            mediaCount: outcome.mediaCount,
-          });
-          summary.published += 1;
-          continue;
-        }
-
-        if (outcome.status === 'skipped') {
-          await markSkipped(db, { id: claim.row.id, reason: outcome.error ?? 'skipped' });
-          settle(post.id);
-          summary.newPosts -= 1;
-          summary.skipped += 1;
-          continue;
-        }
-
-        await markFailed(db, {
-          id: claim.row.id,
-          errorMessage: outcome.error ?? 'unknown error',
-          permanent: Boolean(outcome.permanent),
-          maxRetryAttempts: env.MAX_RETRY_ATTEMPTS,
-        });
-        summary.failed += 1;
-      } catch (error) {
-        // A single post must never abort the batch: record it and continue so
-        // that later posts still get published.
-        postLogger.error('sync.post_error', { error: describeError(error) });
-        await markFailed(db, {
-          id: claim.row.id,
-          errorMessage: describeError(error),
-          permanent: false,
-          maxRetryAttempts: env.MAX_RETRY_ATTEMPTS,
-        }).catch(() => {});
-        summary.failed += 1;
-      }
+      if (result.settled) settle(post.id);
     }
 
     /**
@@ -370,34 +209,4 @@ export async function syncXSource(
 
     return summary;
   }
-}
-
-/**
- * What the reviewer was shown: Telegram's file for each item, with X's URLs
- * alongside. The review send keeps the post's media in order and all or
- * nothing, so the two line up; if they ever did not, X's URLs are left out
- * rather than paired with the wrong file.
- */
-function reviewMediaOf(post: NormalizedPost, items: ApprovalMediaItem[]): ReviewMediaItem[] {
-  const aligned =
-    items.length === post.media.length &&
-    items.every((item, index) => item.kind === post.media[index]!.kind);
-
-  return items.map((item, index) => {
-    const media = aligned ? post.media[index] : undefined;
-    return {
-      kind: item.kind,
-      fileId: item.fileId,
-      ...(media?.kind === 'photo' ? { url: media.url } : {}),
-      ...(media?.previewUrl ? { previewUrl: media.previewUrl } : {}),
-    };
-  });
-}
-
-/** The picture Radar is shown: the first photo, or the first video's still. */
-function firstImage(post: NormalizedPost): RadarImage | undefined {
-  const first = post.media[0];
-  if (!first) return undefined;
-  const url = first.kind === 'photo' ? first.url : first.previewUrl;
-  return url ? { kind: 'url', url } : undefined;
 }

@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import type { Source } from '@/db/schema';
 import { describeError } from '@/lib/errors';
 import { deleteSource, listSources, updateSourceSettings } from '@/lib/sources/repository';
 import { authorizeReviewer, json } from '@/lib/telegram/webapp-request';
+import { sourceView } from '@/lib/sources/view';
 
 /**
  * The source Mini Apps' API: list the reviewer's sources, channel by
@@ -31,14 +31,6 @@ const updateSchema = z
 
 const deleteSchema = z.object({ sourceId: z.number().int().positive() }).strict();
 
-/** Only what the page shows; the X id and timestamps stay server-side. */
-const view = (source: Source) => ({
-  id: source.id,
-  username: source.username,
-  enabled: source.enabled,
-  includeTextOnly: source.includeTextOnly,
-});
-
 export async function GET(request: Request): Promise<Response> {
   let auth: Awaited<ReturnType<typeof authorizeReviewer>>;
   try {
@@ -52,7 +44,7 @@ export async function GET(request: Request): Promise<Response> {
     auth.workspaces.map(async (workspace) => ({
       id: workspace.id,
       name: workspace.name,
-      sources: (await listSources(auth.db, workspace.id)).map(view),
+      sources: (await listSources(auth.db, workspace.id)).map(sourceView),
     })),
   );
   return json({ channels });
@@ -85,7 +77,7 @@ export async function POST(request: Request): Promise<Response> {
   if (!updated) return json({ error: 'No such source.' }, 404);
 
   auth.logger.info('webapp.source_settings_changed', { sourceId, ...settings });
-  return json({ source: view(updated) });
+  return json({ source: sourceView(updated) });
 }
 
 /** Remove a source for good. Its posts and its cursor stay behind. */

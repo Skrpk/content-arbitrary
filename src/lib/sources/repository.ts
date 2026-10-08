@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray, sql as rawSql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
+import { feedHash } from '@/lib/rss/identity';
 import {
   DEFAULT_WORKSPACE_ID,
   sources,
@@ -41,6 +42,15 @@ export async function listEnabledSources(
         eq(sources.enabled, true),
       ),
     )
+    .orderBy(asc(sources.createdAt), asc(sources.id));
+}
+
+/** Every enabled source of a workspace, of any platform — what a sync run visits. */
+export async function listSyncableSources(db: Database, workspaceId: number): Promise<Source[]> {
+  return db
+    .select()
+    .from(sources)
+    .where(and(eq(sources.workspaceId, workspaceId), eq(sources.enabled, true)))
     .orderBy(asc(sources.createdAt), asc(sources.id));
 }
 
@@ -219,7 +229,11 @@ export async function deleteSource(
   return rows[0] ?? null;
 }
 
-/** Stable `sync_state` key for a source. Unchanged from the single-source era. */
+/**
+ * Stable `sync_state` key for a source. An X account's is unchanged from the
+ * single-source era; a feed's is a hash of its URL, which may be long.
+ */
 export function syncStateKey(source: Pick<Source, 'platform' | 'externalId'>): string {
+  if (source.platform === 'rss') return `rss:${feedHash(source.externalId)}`;
   return `${source.platform}:${source.externalId}`;
 }

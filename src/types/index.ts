@@ -31,9 +31,16 @@ export interface NormalizedMedia {
   mp4Variants?: Mp4Variant[];
 }
 
-/** An X post reduced to only what the publisher needs. */
+/**
+ * A post reduced to only what the publisher needs — from X, or a feed entry
+ * (src/lib/rss/normalize.ts) in the same shape.
+ */
 export interface NormalizedPost {
+  /** Where it came from; absent means X, as every post did before feeds. */
+  platform?: 'x' | 'rss';
+  /** X's post id, or a feed item's namespaced id (`rss:…`). */
   id: string;
+  /** The post on X, or the article a feed entry links to — empty when it links nowhere. */
   url: string;
   authorUsername: string;
   createdAt: Date | null;

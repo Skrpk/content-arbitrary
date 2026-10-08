@@ -4,6 +4,9 @@ import type { Logger } from '@/lib/logger';
 import { escapeHtml } from '@/lib/telegram/format-caption';
 import { normalizeXUsername } from '@/lib/sources/normalize';
 import { addSource, updateSourceUsername } from '@/lib/sources/repository';
+import { addRssSource } from '@/lib/sources/add-rss';
+import type { FetchFeedOptions } from '@/lib/rss/client';
+import { sourceLabelOfPost } from '@/lib/sources/display';
 import type { XClient } from '@/lib/x/client';
 import { formatScheduleTime } from '@/lib/sync/approval';
 import { listScheduledPosts } from '@/lib/sync/repository';
@@ -89,6 +92,8 @@ export interface CommandContext {
    * then cover them all, and a command about one source asks which channel.
    */
   workspaces?: WorkspaceRef[];
+  /** How /addrss fetches the feed it checks; injected by tests. */
+  feedFetch?: FetchFeedOptions;
 }
 
 /**
@@ -152,6 +157,7 @@ function channelsOf(context: CommandContext): WorkspaceRef[] {
 export const BOT_COMMANDS: { command: string; description: string }[] = [
   { command: 'sourcestats', description: 'How each source performs: posts, approvals, cost' },
   { command: 'addsource', description: 'Start watching an account: /addsource @username' },
+  { command: 'addrss', description: 'Start watching an RSS or Atom feed: /addrss <feed URL>' },
   { command: 'scheduled', description: 'Posts waiting to be published at a set time' },
   { command: 'help', description: 'What the bot can do' },
 ];
@@ -161,6 +167,7 @@ const HELP_TEXT = [
   '',
   '/sourcestats — every source and how it performs: posts, approvals, cost',
   '/addsource @username — start watching an account',
+  '/addrss &lt;feed URL&gt; — start watching an RSS or Atom feed (with several channels: /addrss &lt;channel id&gt; &lt;feed URL&gt;)',
   '',
   'Pause, resume or remove a source with the buttons under it in /sourcestats; options such as mirroring ' +
     'posts without media are under its ⚙️ Settings button.',
@@ -244,6 +251,70 @@ export async function handleAddSource(
 }
 
 /**
+ * /addrss <feed URL>, or /addrss <channel id> <feed URL> for a reviewer of
+ * several channels.
+ *
+ * Deliberately plainer than /addsource's channel buttons: a feed URL does not
+ * fit in a button's 64 bytes of callback data, and remembering it between
+ * messages would need state. The Settings page has a form that asks for both.
+ */
+export async function handleAddRss(context: CommandContext, args: string): Promise<CommandReply> {
+  const channels = channelsOf(context);
+  const parts = args.split(/\s+/).filter(Boolean);
+  const usage = channels.length > 1 ? '/addrss <channel id> <feed URL>' : '/addrss <feed URL>';
+
+  let workspaceId = context.workspaceId;
+  let url = parts[0] ?? '';
+  if (parts.length === 2 && /^\d+$/.test(parts[0]!)) {
+    workspaceId = Number(parts[0]);
+    url = parts[1]!;
+    if (!channels.some((channel) => channel.id === workspaceId)) {
+      return { text: '⚠️ That channel is not one of yours.' };
+    }
+  } else if (parts.length !== 1) {
+    return { text: `Usage: <code>${escapeHtml(usage)}</code>` };
+  } else if (channels.length > 1) {
+    return {
+      text: [
+        'You review several channels — say which one the feed is for:',
+        '',
+        ...channels.map((channel) => `${channel.id} — ${escapeHtml(channel.name)}`),
+        '',
+        `<code>/addrss ${channels[0]!.id} ${escapeHtml(url)}</code>`,
+        '',
+        'Or use ➕ Add RSS feed in ⚙️ Settings.',
+      ].join('\n'),
+      offerSettings: true,
+    };
+  }
+
+  const result = await addRssSource(context.db, {
+    url,
+    workspaceId,
+    feedFetch: context.feedFetch,
+    logger: context.logger,
+  });
+  if (!result.ok) return { text: `⚠️ ${escapeHtml(result.reason)}` };
+
+  const where = channels.length > 1 ? `📢 ${escapeHtml(channels.find((c) => c.id === workspaceId)!.name)}\n\n` : '';
+  if (!result.created) {
+    const note = result.source.enabled ? '' : '\n\nIt is currently paused — resume it in /sourcestats.';
+    return {
+      text: `${where}ℹ️ <b>${escapeHtml(result.source.username)}</b> is already in your sources.${note}`,
+      offerSettings: true,
+    };
+  }
+
+  return {
+    text:
+      `${where}✅ <b>RSS source added</b>\n\n${escapeHtml(result.title)}\n${escapeHtml(result.source.externalId)}\n\n` +
+      `${result.entries} ${result.entries === 1 ? 'entry' : 'entries'} currently in the feed. ` +
+      'They will not be sent — only entries that appear from now on come to review.',
+    offerSettings: true,
+  };
+}
+
+/**
  * The scheduled posts of every channel the sender reviews, soonest first, each
  * at the time it was picked in — and, across several channels, which one.
  */
@@ -269,7 +340,8 @@ export async function handleScheduled(context: CommandContext): Promise<string> 
     const at = post.scheduledFor
       ? escapeHtml(formatScheduleTime(post.scheduledFor, post.scheduledTimezone))
       : 'no time set';
-    const who = post.xAuthorUsername ? ` · @${escapeHtml(post.xAuthorUsername)}` : '';
+    const label = sourceLabelOfPost(post.xPostId, post.xAuthorUsername);
+    const who = label ? ` · ${escapeHtml(label)}` : '';
     const where = channels.length > 1 ? ` · 📢 ${escapeHtml(channel.name)}` : '';
     return `🕒 ${at}${who}${where}\n${escapeHtml(post.xPostUrl)}`;
   });
@@ -371,6 +443,8 @@ export async function dispatchCommand(
         offerStats: true,
         offerSettings: true,
       };
+    case 'addrss':
+      return handleAddRss(context, parsed.args);
     case 'addsource':
       return channels.length > 1
         ? sourceCommandAcrossChannels(context, command, parsed.args, channels)

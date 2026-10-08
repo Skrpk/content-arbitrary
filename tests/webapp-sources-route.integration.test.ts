@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
@@ -13,6 +13,14 @@ import {
   workspaces,
 } from '@/db/schema';
 import { DELETE, GET, POST } from '@/app/api/telegram/webapp/sources/route';
+import { POST as ADD_RSS } from '@/app/api/telegram/webapp/sources/rss/route';
+
+// The feed a test adds, without the network: only fetching is replaced.
+const feedXml = vi.hoisted(() => ({ value: '' }));
+vi.mock('@/lib/rss/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/rss/client')>()),
+  fetchFeed: async (url: string) => ({ xml: feedXml.value, finalUrl: url }),
+}));
 import { ensureTestWorkspace, withEnv } from './helpers';
 
 /**
@@ -145,7 +153,17 @@ describeIfDb('GET /api/telegram/webapp/sources', () => {
         {
           id: DEFAULT_WORKSPACE_ID,
           name: 'default',
-          sources: [{ id: mine.id, username: 'alpha', enabled: true, includeTextOnly: false }],
+          sources: [
+            {
+              id: mine.id,
+              platform: 'x',
+              username: 'alpha',
+              label: '@alpha',
+              feedUrl: null,
+              enabled: true,
+              includeTextOnly: false,
+            },
+          ],
         },
       ],
     });
@@ -163,7 +181,15 @@ describeIfDb('POST /api/telegram/webapp/sources', () => {
     const on = await change({ sourceId: source.id, includeTextOnly: true });
     expect(on.status).toBe(200);
     expect(await on.json()).toEqual({
-      source: { id: source.id, username: 'alpha', enabled: true, includeTextOnly: true },
+      source: {
+        id: source.id,
+        platform: 'x',
+        username: 'alpha',
+        label: '@alpha',
+        feedUrl: null,
+        enabled: true,
+        includeTextOnly: true,
+      },
     });
     expect((await reload(source.id)).includeTextOnly).toBe(true);
 
@@ -256,5 +282,55 @@ describeIfDb('DELETE /api/telegram/webapp/sources', () => {
 
     expect((await remove(body)).status).toBe(400);
     expect(await exists(source.id)).toBe(true);
+  });
+});
+
+describeIfDb('POST /api/telegram/webapp/sources/rss', () => {
+  const FEED = 'https://www.esa.int/rssfeed/Our_Activities/Space_Science';
+  const add = (body: unknown, authorization = auth()) =>
+    withEnv(routeEnv, () =>
+      ADD_RSS(
+        new Request('https://example.vercel.app/api/telegram/webapp/sources/rss', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization },
+          body: JSON.stringify(body),
+        }),
+      ),
+    );
+
+  beforeEach(() => {
+    feedXml.value =
+      '<?xml version="1.0"?><rss version="2.0"><channel><title>ESA Space Science</title>' +
+      '<item><title>A</title><guid>a</guid></item><item><title>B</title><guid>b</guid></item></channel></rss>';
+  });
+
+  it('adds a feed to the channel picked, and lists it as a feed', async () => {
+    const response = await add({ url: FEED, workspaceId: DEFAULT_WORKSPACE_ID });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      created: true,
+      entries: 2,
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      source: { platform: 'rss', label: 'ESA Space Science', feedUrl: FEED, enabled: true },
+    });
+
+    const listed = (await (await list()).json()) as { channels: { sources: { platform: string; label: string }[] }[] };
+    expect(listed.channels[0]!.sources).toEqual([
+      expect.objectContaining({ platform: 'rss', label: 'ESA Space Science', feedUrl: FEED }),
+    ]);
+  });
+
+  it('refuses another tenant’s channel, a page that is not a feed, and a stranger', async () => {
+    expect((await add({ url: FEED, workspaceId: OTHER_WORKSPACE })).status).toBe(404);
+
+    feedXml.value = '<html><body>not a feed</body></html>';
+    const notFeed = await add({ url: FEED, workspaceId: DEFAULT_WORKSPACE_ID });
+    expect(notFeed.status).toBe(422);
+    expect(((await notFeed.json()) as { error: string }).error).toContain('does not appear to be a valid RSS');
+
+    expect((await add({ url: FEED, workspaceId: DEFAULT_WORKSPACE_ID }, auth(STRANGER_ID))).status).toBe(401);
+    expect((await add({ url: 'http://169.254.169.254/', workspaceId: DEFAULT_WORKSPACE_ID })).status).toBe(422);
+    expect(await db.select().from(sources)).toEqual([]);
   });
 });
