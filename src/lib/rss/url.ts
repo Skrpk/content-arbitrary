@@ -68,7 +68,7 @@ export function isPrivateAddress(address: string): boolean {
 }
 
 function isPrivateV4(address: string): boolean {
-  const [a, b] = address.split('.').map(Number) as [number, number, number, number];
+  const [a, b, c] = address.split('.').map(Number) as [number, number, number, number];
   return (
     a === 0 || // "this" network
     a === 10 ||
@@ -77,7 +77,9 @@ function isPrivateV4(address: string): boolean {
     (a === 169 && b === 254) || // link-local, cloud metadata
     (a === 172 && b >= 16 && b <= 31) ||
     (a === 192 && b === 168) ||
-    (a === 192 && b === 0) || // IETF protocol assignments
+    (a === 192 && b === 0 && (c === 0 || c === 2)) || // IETF protocol assignments, TEST-NET-1
+    (a === 198 && b === 51 && c === 100) || // TEST-NET-2
+    (a === 203 && b === 0 && c === 113) || // TEST-NET-3
     (a === 198 && (b === 18 || b === 19)) || // benchmarking
     a >= 224 // multicast and reserved
   );

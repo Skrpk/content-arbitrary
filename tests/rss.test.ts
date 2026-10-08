@@ -266,7 +266,11 @@ describe('which feed URLs may be fetched', () => {
     for (const address of ['10.0.0.1', '172.31.255.255', '100.64.0.1', '::ffff:127.0.0.1', 'fd00::1', 'fe80::1']) {
       expect(isPrivateAddress(address)).toBe(true);
     }
-    for (const address of ['8.8.8.8', '172.32.0.1', '2606:4700::1111']) {
+    for (const address of ['192.0.0.1', '192.0.2.10', '198.51.100.7', '203.0.113.9']) {
+      expect(isPrivateAddress(address)).toBe(true);
+    }
+    // Public, whatever their neighbours: www.nasa.gov is served from 192.0.66.108.
+    for (const address of ['8.8.8.8', '172.32.0.1', '192.0.66.108', '192.0.1.1', '2606:4700::1111']) {
       expect(isPrivateAddress(address)).toBe(false);
     }
   });
