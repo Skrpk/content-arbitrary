@@ -1,56 +1,55 @@
 import { getDb } from '@/lib/db';
 import { getEnv } from '@/lib/env';
 import { createLogger } from '@/lib/logger';
-import { initDataFromAuthorizationHeader, validateInitData } from '@/lib/telegram/webapp-auth';
+import { viewerFromRequest } from '@/lib/accounts/viewer';
 import type { Workspace } from '@/db/schema';
 import type { Database } from '@/lib/db';
-import { findWorkspacesByAdminChatId, workspaceForPost } from '@/lib/workspace';
+import { workspaceForPost } from '@/lib/workspace';
 
 /**
- * What every Mini App endpoint checks before touching a post, in one place so
- * the endpoints cannot drift apart on it.
+ * What every Mini App and website endpoint checks before touching a post, in
+ * one place so the endpoints cannot drift apart on it.
  */
 
 export const json = (body: unknown, status = 200) =>
   Response.json(body, { status, headers: { 'cache-control': 'no-store' } });
 
 /**
- * Resolve the request to a reviewer and the tenants they review for, or to a
- * 401.
+ * Resolve the request to a reviewer and the workspaces they review for, or to
+ * a 401.
  *
- * The request must carry `initData` signed by Telegram with a key derived from
- * our bot token, recent enough not to be a replay, naming a Telegram user who
- * is some workspace's reviewer. Which post or source they may then touch is
- * the caller's check, against the workspaces returned here.
+ * Either proof will do — a Mini App's `initData`, signed by Telegram with a
+ * key derived from our bot token and recent enough not to be a replay, or the
+ * website's session cookie on a request from the website itself — naming a
+ * user who is a member of some workspace. Which post or source they may then
+ * touch is the caller's check, against the workspaces returned here.
  */
 export async function authorizeReviewer(request: Request) {
   const logger = createLogger({ app: 'content-arbitrary', surface: 'webapp' });
   const env = getEnv();
+  const db = getDb();
 
-  const initData = initDataFromAuthorizationHeader(request.headers.get('authorization'));
-  const verdict = validateInitData(initData, env.TELEGRAM_BOT_TOKEN);
-
-  if (!verdict.ok) {
+  const result = await viewerFromRequest(request, { db, env });
+  if (!result.ok) {
     // The reason is logged but never returned: a caller learning *why* their
     // forgery failed is a step towards one that works.
-    logger.warn('webapp.init_data_rejected', { reason: verdict.reason });
-    return { ok: false as const, response: json({ error: 'unauthorized' }, 401) };
+    logger.warn('webapp.unauthorized', { reason: result.reason });
+    // A change from another site is refused as such: whoever is signed in
+    // stays signed in, and the page is not sent to sign in again.
+    return result.reason === 'cross-origin'
+      ? { ok: false as const, response: json({ error: 'forbidden' }, 403) }
+      : { ok: false as const, response: json({ error: 'unauthorized' }, 401) };
   }
 
-  const db = getDb();
-  const workspaces = await findWorkspacesByAdminChatId(db, verdict.user.id);
-
-  if (workspaces.length === 0) {
-    logger.warn('webapp.not_a_reviewer', { telegramUserId: verdict.user.id });
-    return { ok: false as const, response: json({ error: 'unauthorized' }, 401) };
-  }
-
+  const { viewer } = result;
   return {
     ok: true as const,
     db,
     env,
-    workspaces,
-    logger: logger.child({ telegramUserId: verdict.user.id }),
+    user: viewer.user,
+    workspaces: viewer.workspaces,
+    via: viewer.via,
+    logger: logger.child({ userId: viewer.user.id, via: viewer.via }),
   };
 }
 

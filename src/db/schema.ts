@@ -12,6 +12,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   serial,
   text,
   timestamp,
@@ -91,6 +92,122 @@ export const workspaces = pgTable('workspaces', {
 ]);
 
 export type Workspace = typeof workspaces.$inferSelect;
+
+/**
+ * A person who signs in — to the website or a Mini App — whatever they sign
+ * in with. Deliberately nothing of Telegram here: how they prove who they are
+ * lives in `user_identities`, what they may touch in `workspace_members`.
+ */
+export const users = pgTable('users', {
+  id: serial('id').primaryKey(),
+  /** As their sign-in provider last named them; shown, never trusted. */
+  displayName: text('display_name'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type User = typeof users.$inferSelect;
+
+/** Ways of signing in. Another is one value here and one provider config. */
+export const IDENTITY_PROVIDERS = ['telegram'] as const;
+export type IdentityProvider = (typeof IDENTITY_PROVIDERS)[number];
+
+/**
+ * One way a user proves who they are. For Telegram the subject is the
+ * Telegram user id — the same on the website and in a Mini App, and the one
+ * `workspaces.telegram_admin_chat_id` names — so either way in finds the
+ * same user. One user may have several, to sign in with Google later as well.
+ */
+export const userIdentities = pgTable(
+  'user_identities',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    provider: text('provider', { enum: IDENTITY_PROVIDERS }).notNull(),
+    subject: text('subject').notNull(),
+    /** `@handle` or e-mail as last seen; shown, never trusted. */
+    username: text('username'),
+    lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('user_identities_provider_subject_key').on(table.provider, table.subject),
+    index('user_identities_user_idx').on(table.userId),
+    check('user_identities_provider_check', sql`${table.provider} IN ('telegram')`),
+  ],
+);
+
+export const WORKSPACE_ROLES = ['owner', 'reviewer'] as const;
+export type WorkspaceRole = (typeof WORKSPACE_ROLES)[number];
+
+/**
+ * Who may review a workspace — the whole authorisation rule for the website
+ * and the Mini Apps. A workspace's `telegram_admin_chat_id` still says where
+ * its notifications and review messages go, and its reviewer is made a
+ * member the first time they sign in, so setting it keeps granting access as
+ * it always did.
+ */
+export const workspaceMembers = pgTable(
+  'workspace_members',
+  {
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    role: text('role', { enum: WORKSPACE_ROLES }).notNull().default('reviewer'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.userId] }),
+    index('workspace_members_user_idx').on(table.userId),
+    check('workspace_members_role_check', sql`${table.role} IN ('owner', 'reviewer')`),
+  ],
+);
+
+/**
+ * A signed-in browser. The cookie holds a random token; only its SHA-256 is
+ * stored, so a read of this table signs nobody in. Deleting the row signs the
+ * browser out.
+ */
+export const userSessions = pgTable(
+  'user_sessions',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    /** The browser, as it described itself, for telling sessions apart; never trusted. */
+    userAgent: text('user_agent'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('user_sessions_token_hash_key').on(table.tokenHash),
+    index('user_sessions_user_idx').on(table.userId),
+  ],
+);
+
+/**
+ * A sign-in under way: sent to the provider, not yet back. Keyed by the
+ * SHA-256 of its `state`, holding the PKCE verifier the code exchange needs.
+ * Used once, and only for ten minutes.
+ */
+export const loginAttempts = pgTable('login_attempts', {
+  stateHash: text('state_hash').primaryKey(),
+  provider: text('provider', { enum: IDENTITY_PROVIDERS }).notNull(),
+  codeVerifier: text('code_verifier').notNull(),
+  nonce: text('nonce').notNull(),
+  /** Where to land afterwards: a path on the website, checked when written. */
+  returnTo: text('return_to'),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
 
 /** The single tenant that exists before multi-tenancy. */
 export const DEFAULT_WORKSPACE_ID = 1;

@@ -43,6 +43,7 @@ Without review switched on, posts go straight to the channel, as the bot first d
 - [R. When X does not return the media you expect](#r-when-x-does-not-return-the-media-you-expect)
 - [RSS and Atom feeds](#rss-and-atom-feeds)
 - [Multiple channels](#multiple-channels)
+- [Review website](#review-website)
 - [Shadow Radar](#shadow-radar)
 - [Publication history](#publication-history)
 - [Configuration reference](#configuration-reference)
@@ -714,10 +715,11 @@ VALUES ('second channel', '-1001234567890', '123456789');
 
 - `telegram_chat_id` — the channel, found exactly as in [F](#f-get-your-telegram_chat_id). Add
   the bot to it as an administrator with **Post messages** first.
-- `telegram_admin_chat_id` — the reviewer's numeric Telegram user id. This is also what
-  authorises them: they can run `/addsource` and press Approve for the workspaces that name
-  them, and no others. Note that a channel id is negative and begins `-100`, while a user id is
-  positive.
+- `telegram_admin_chat_id` — the reviewer's numeric Telegram user id: where the workspace's
+  notifications and review messages go, and who is let in. They can run `/addsource` and press
+  Approve for the workspaces that name them, and the first time they open a Mini App or sign in
+  to the [review website](#review-website) they are made a member of each of those workspaces.
+  Note that a channel id is negative and begins `-100`, while a user id is positive.
 - `name` — shown to a reviewer of more than one channel, so give it the channel's name.
 
 #### One reviewer for several channels
@@ -778,6 +780,59 @@ Losing that history also loses the duplicate protection built on it: re-create t
 with the same sources and, because the cursors are gone too, the next run reads the window from
 scratch and re-publishes posts the channel has already seen. Prefer clearing the destination
 unless you genuinely want the tenant forgotten.
+
+## Review website
+
+Everything the review queue Mini App does also works as a website on its own subdomain — say
+`https://app.zmistik.com` — with room to read: each post's pictures beside its text, the text
+and the schedule edited in place, and the keyboard to work through the list (`j` / `k` to move,
+`a` to approve, `r` then `1`–`6` to reject, `e` to edit, `s` to schedule, `o` for the original,
+`Esc` to step back). The Mini Apps stay as they are; both use the same API and the same rules.
+
+### Signing in
+
+**Log in with Telegram**, through Telegram's OpenID Connect provider: the Authorization Code
+flow with PKCE, the code exchanged server side with the client secret, and the ID token's
+signature (from Telegram's published keys), issuer, audience, expiry and nonce checked before
+anything in it is believed. A sign-in is good for one callback and ten minutes, and only in the
+browser that started it. The person is known by the Telegram user id in the token — the same id
+a Mini App's signed data carries and `telegram_admin_chat_id` names — so the website and the
+Mini Apps find the same user.
+
+The browser then holds a random session token in an `__Host-` cookie — httpOnly, HTTPS only,
+this host only, `SameSite=Lax`. Only its SHA-256 is stored (`user_sessions`), so the table
+signs nobody in; a session lasts 30 days, and **Sign out** deletes it. Anything that changes a
+post must also come from the website's own origin, so another site cannot make a signed-in
+browser act.
+
+People, not Telegram accounts, are what the database knows:
+
+| Table | Holds |
+| --- | --- |
+| `users` | A person, whatever they sign in with. |
+| `user_identities` | How they sign in: `telegram` + their Telegram user id. Another provider — Google, or Auth0 in front of anything — is another row, and another OpenID Connect provider in code. |
+| `workspace_members` | Which workspaces they may review — the whole authorisation rule, for the website and the Mini Apps alike. |
+| `user_sessions`, `login_attempts` | Website sessions, and sign-ins under way. |
+
+The migration makes every reviewer named by a workspace a user and a member, so nobody loses
+access. A workspace's reviewer is also made a member on their next sign-in, so setting
+`telegram_admin_chat_id` keeps granting access as it always did. Taking access away is both:
+change `telegram_admin_chat_id`, and delete the `workspace_members` row.
+
+### Setting it up
+
+1. **Vercel → Settings → Domains**: add the subdomain to this project, and create the DNS record
+   Vercel shows for it.
+2. **@BotFather** → open its mini app → your bot → **Login Widget**: add the **Allowed URLs**
+   `https://app.zmistik.com` and `https://app.zmistik.com/api/auth/telegram/callback`, and copy
+   the **Client ID** and **Client Secret** it shows.
+3. **Vercel → Environment Variables**: `WEB_APP_URL=https://app.zmistik.com`,
+   `TELEGRAM_OIDC_CLIENT_ID`, `TELEGRAM_OIDC_CLIENT_SECRET`. Redeploy — `WEB_APP_URL` is also
+   read at build time, to route the subdomain.
+
+`APP_BASE_URL` stays on another host: the Mini Apps live at its paths, and on the website's host
+those same paths are the website's. In development the website answers on
+`http://app.localhost:3000`.
 
 ## Approval before publishing
 
@@ -1428,6 +1483,8 @@ effect would otherwise drown among text posts — with what the images cost to l
 | `TELEGRAM_ADMIN_CHAT_ID` | — | Seeds workspace 1's reviewer (your numeric Telegram user id), once, while its column is empty. Unused after that; safe to remove. |
 | `TELEGRAM_WEBHOOK_SECRET` | — | ≥ 16 chars, `A-Z a-z 0-9 _ -` only. Required when `REQUIRE_APPROVAL` is on. |
 | `APP_BASE_URL` | — | Public HTTPS origin, e.g. `https://your-app.vercel.app`. Enables the Edit button; without it review works unchanged. |
+| `WEB_APP_URL` | — | The [review website](#review-website)'s origin, e.g. `https://app.zmistik.com`, on a host of its own. Read at build time too. |
+| `TELEGRAM_OIDC_CLIENT_ID` / `TELEGRAM_OIDC_CLIENT_SECRET` | — | "Log in with Telegram" for the website, from BotFather's Login Widget. Both, or the website has no sign-in. |
 | `ADMIN_SECRET` | falls back to `CRON_SECRET` | Protects `/api/status`. |
 | `RADAR_PROVIDER` | `openai` | [Shadow Radar](#shadow-radar)'s model: `openai` (GPT-6 Luna) or `anthropic` (Claude Haiku 4.5). |
 | `RADAR_MODEL` | provider's default | Overrides the chosen provider's model id. |
@@ -1589,6 +1646,14 @@ src/
       embeddings/              Embedded text and fingerprint, OpenAI embeddings, backfill, search
     review/
       queue.ts                 The review queue: its page's list, the notification and when it is due
+    accounts/
+      users.ts                 Users, identities, memberships; a reviewer let in on first sign-in
+      sessions.ts              Website sessions: random token in a __Host- cookie, its hash stored
+      oidc.ts                  OpenID Connect sign-in, any provider: PKCE, code exchange, ID token checks
+      telegram.ts              Telegram as an OIDC provider; its token's Telegram user id
+      viewer.ts                Who is asking — Mini App initData or website session — for every API
+  components/
+    review-queue.tsx           The review queue, shared by the Mini App and the website
     media/
       understanding.ts         ImageUnderstanding, its prompt, schema and config
       provider.ts              The vision call: one low-detail image, no reasoning

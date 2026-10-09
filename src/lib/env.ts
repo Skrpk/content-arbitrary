@@ -178,6 +178,31 @@ const schema = z
       .transform((value) => (value === undefined ? undefined : value.replace(/\/+$/, ''))),
 
     /**
+     * Where the review website lives — its own subdomain, e.g.
+     * https://app.zmistik.com — served by this same deployment: requests for
+     * that host are routed to the website's pages (see next.config.ts), which
+     * sign people in and review posts outside Telegram. Unset, there is no
+     * website; the Mini Apps work either way.
+     */
+    WEB_APP_URL: z
+      .string()
+      .trim()
+      .optional()
+      .or(z.literal('').transform(() => undefined))
+      .refine(
+        (value) => value === undefined || /^https:\/\/[^\s/]+$/i.test(value.replace(/\/+$/, '')),
+        'WEB_APP_URL must be an https:// origin, e.g. https://app.example.com',
+      )
+      .transform((value) => (value === undefined ? undefined : value.replace(/\/+$/, ''))),
+    /**
+     * "Log in with Telegram" on the website: the Client ID and Client Secret
+     * BotFather shows under the bot's Login Widget, once the website's
+     * callback URL is registered there. Both, or the website has no sign-in.
+     */
+    TELEGRAM_OIDC_CLIENT_ID: z.string().trim().min(1).optional().or(z.literal('').transform(() => undefined)),
+    TELEGRAM_OIDC_CLIENT_SECRET: z.string().trim().min(1).optional().or(z.literal('').transform(() => undefined)),
+
+    /**
      * Which model Shadow Radar asks: OpenAI's GPT-6 Luna (the default) or
      * Anthropic's Claude Haiku 4.5. Radar scores each post sent for review —
      * never shown, never acted on — for tenants that have an editorial
@@ -358,5 +383,7 @@ export function redactedEnvSummary(env: Env = getEnv()) {
     hasAnthropicApiKey: Boolean(env.ANTHROPIC_API_KEY),
     // Not a secret, and whether editing is available depends on it.
     appBaseUrl: env.APP_BASE_URL ?? null,
+    webAppUrl: env.WEB_APP_URL ?? null,
+    hasTelegramLogin: Boolean(env.TELEGRAM_OIDC_CLIENT_ID && env.TELEGRAM_OIDC_CLIENT_SECRET),
   } as const;
 }
