@@ -1,6 +1,6 @@
 import { and, count, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { processedPosts, workspaces, type Workspace } from '@/db/schema';
+import { processedPosts, workspaces, type ReviewLinkTarget, type Workspace } from '@/db/schema';
 import type { Database } from '@/lib/db';
 import type { Env } from '@/lib/env';
 import { describeError } from '@/lib/errors';
@@ -8,6 +8,8 @@ import type { Logger } from '@/lib/logger';
 import { findReviewScores, type ReviewScore } from '@/lib/radar/review-note';
 import { isRssItemId, sourceLabelOfPost } from '@/lib/sources/display';
 import type { TelegramClient } from '@/lib/telegram/client';
+import type { InlineKeyboardButton } from '@/lib/telegram/send-media';
+import { reviewLinkFor } from '@/lib/accounts/users';
 import { escapeHtml, TELEGRAM_PARSE_MODE } from '@/lib/telegram/format-caption';
 import { captionToPlainText, parsePostFooter, stripFooter } from '@/lib/telegram/post-footer';
 import { usesReviewQueue } from '@/lib/workspace';
@@ -41,6 +43,26 @@ export const REVIEW_DIGEST_SLACK_MS = 3 * 60 * 1000;
 export function buildReviewQueueUrl(baseUrl: string, workspaceId?: number): string {
   const base = `${baseUrl.replace(/\/+$/, '')}/queue`;
   return workspaceId === undefined ? base : `${base}?workspace=${workspaceId}`;
+}
+
+/**
+ * The bot's "Open review queue" button: the website, in the browser, for
+ * someone who chose it and when there is one; otherwise the Mini App, inside
+ * Telegram. The two pages are at the same path on their own hosts. Null when
+ * there is neither.
+ */
+export function reviewQueueButton(input: {
+  appBaseUrl: string | undefined;
+  webAppUrl: string | undefined;
+  target: ReviewLinkTarget;
+  workspaceId?: number;
+}): InlineKeyboardButton | null {
+  const text = '📋 Open review queue';
+  if (input.target === 'website' && input.webAppUrl) {
+    return { text, url: buildReviewQueueUrl(input.webAppUrl, input.workspaceId) };
+  }
+  if (input.appBaseUrl) return { text, web_app: { url: buildReviewQueueUrl(input.appBaseUrl, input.workspaceId) } };
+  return null;
 }
 
 /**
@@ -197,7 +219,7 @@ export type ReviewDigestOutcome =
  */
 export async function sendReviewDigest(input: {
   db: Database;
-  env: Pick<Env, 'REQUIRE_APPROVAL' | 'APP_BASE_URL'>;
+  env: Pick<Env, 'REQUIRE_APPROVAL' | 'APP_BASE_URL' | 'WEB_APP_URL'>;
   client: TelegramClient;
   workspace: Workspace;
   /** The reviewer's name for the channel, when they review several. */
@@ -222,6 +244,12 @@ export async function sendReviewDigest(input: {
     );
     if (fresh === 0) return { sent: false, reason: 'nothing-new' };
 
+    const button = reviewQueueButton({
+      appBaseUrl: input.env.APP_BASE_URL,
+      webAppUrl: input.env.WEB_APP_URL,
+      target: await reviewLinkFor(db, adminChatId),
+      workspaceId: workspace.id,
+    })!;
     const message = await client.call(
       'sendMessage',
       {
@@ -229,11 +257,7 @@ export async function sendReviewDigest(input: {
         text: formatReviewDigest({ fresh, waiting, channel: input.channelLabel }),
         parse_mode: TELEGRAM_PARSE_MODE,
         link_preview_options: { is_disabled: true },
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '📋 Open review queue', web_app: { url: buildReviewQueueUrl(input.env.APP_BASE_URL, workspace.id) } }],
-          ],
-        },
+        reply_markup: { inline_keyboard: [[button]] },
       },
       z.object({ message_id: z.number() }),
     );

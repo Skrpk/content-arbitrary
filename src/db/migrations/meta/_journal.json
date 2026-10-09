@@ -169,6 +169,13 @@
       "when": 1791555517975,
       "tag": "0023_users_and_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791557902388,
+      "tag": "0024_user_review_link",
+      "breakpoints": true
     }
   ]
 }

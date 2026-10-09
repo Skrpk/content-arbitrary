@@ -1,0 +1,2 @@
+ALTER TABLE "users" ADD COLUMN "review_link" text DEFAULT 'mini_app' NOT NULL;--> statement-breakpoint
+ALTER TABLE "users" ADD CONSTRAINT "users_review_link_check" CHECK ("users"."review_link" IN ('mini_app', 'website'));

@@ -19,7 +19,9 @@ import {
   settleReviewMessage,
 } from '@/lib/sync/approval';
 import { publishDecidedPost } from '@/lib/sync/publish';
-import { buildReviewQueueUrl } from '@/lib/review/queue';
+import { reviewQueueButton } from '@/lib/review/queue';
+import { reviewLinkFor } from '@/lib/accounts/users';
+import type { InlineKeyboardButton, InlineKeyboardMarkup } from '@/lib/telegram/send-media';
 import {
   buildSettingsUrl,
   buildSourceStatsUrl,
@@ -164,6 +166,7 @@ export async function POST(request: Request): Promise<Response> {
       client,
       logger,
       appBaseUrl: env.APP_BASE_URL,
+      webAppUrl: env.WEB_APP_URL,
     });
     return ok();
   }
@@ -430,6 +433,8 @@ async function handleCommandMessage(
     logger: Logger;
     /** Where the Mini Apps live; no Mini App buttons without it. */
     appBaseUrl?: string;
+    /** Where the review website lives, for someone who reviews there. */
+    webAppUrl?: string;
   },
 ): Promise<void> {
   const { db, client, logger } = context;
@@ -462,7 +467,14 @@ async function handleCommandMessage(
     );
     if (!reply) return;
 
-    const markup = replyMarkupFor(reply, context.appBaseUrl);
+    const queueButton = reply.offerQueue
+      ? reviewQueueButton({
+          appBaseUrl: context.appBaseUrl,
+          webAppUrl: context.webAppUrl,
+          target: await reviewLinkFor(db, message.from?.id ?? null),
+        })
+      : null;
+    const markup = replyMarkupFor(reply, context.appBaseUrl, queueButton);
     await client.call(
       'sendMessage',
       {
@@ -491,16 +503,25 @@ async function handleCommandMessage(
   }
 }
 
-/** A command reply's own buttons, or the Mini App buttons it offers: queue, stats, then settings. */
-function replyMarkupFor(reply: CommandReply, appBaseUrl: string | undefined) {
+/**
+ * A command reply's own buttons, or the buttons it offers: the review queue —
+ * wherever its reader reviews — then the stats and settings Mini Apps.
+ */
+function replyMarkupFor(
+  reply: CommandReply,
+  appBaseUrl: string | undefined,
+  queueButton: InlineKeyboardButton | null = null,
+): InlineKeyboardMarkup | undefined {
   if (reply.replyMarkup) return reply.replyMarkup;
-  if (!appBaseUrl) return undefined;
 
-  const rows = [
-    ...(reply.offerQueue ? [[{ text: '📋 Open review queue', web_app: { url: buildReviewQueueUrl(appBaseUrl) } }]] : []),
+  const rows: InlineKeyboardButton[][] = [
+    ...(reply.offerQueue && queueButton ? [[queueButton]] : []),
+  ];
+  if (!appBaseUrl) return rows.length > 0 ? { inline_keyboard: rows } : undefined;
+  rows.push(
     ...(reply.offerStats ? [[{ text: '📊 Open stats', web_app: { url: buildSourceStatsUrl(appBaseUrl) } }]] : []),
     ...(reply.offerSettings ? [[{ text: '⚙️ Settings', web_app: { url: buildSettingsUrl(appBaseUrl) } }]] : []),
-  ];
+  );
   return rows.length > 0 ? { inline_keyboard: rows } : undefined;
 }
 

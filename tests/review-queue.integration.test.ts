@@ -11,14 +11,17 @@ import {
   sources,
   syncState,
   telegramMessages,
+  users,
   workspaces,
   type ApprovalPayload,
 } from '@/db/schema';
 import { GET as loadQueueRoute, POST as decideRoute } from '@/app/api/telegram/webapp/queue/route';
 import { POST as channelsRoute } from '@/app/api/telegram/webapp/channels/route';
+import * as accountRoute from '@/app/api/account/route';
 import { syncPosts } from '@/lib/sync/sync-posts';
 import { publishDueScheduledPosts } from '@/lib/sync/publish-scheduled';
 import { schedulePost } from '@/lib/sync/repository';
+import { setReviewLink, userForTelegram } from '@/lib/accounts/users';
 import { dispatchCommand } from '@/lib/telegram/commands';
 import { TelegramClient } from '@/lib/telegram/client';
 import { XClient } from '@/lib/x/client';
@@ -284,6 +287,7 @@ beforeEach(async () => {
   await db.delete(processedPosts);
   await db.delete(syncState);
   await db.delete(sources);
+  await db.delete(users);
   await ensureTestWorkspace(db);
   await db
     .update(workspaces)
@@ -351,6 +355,19 @@ describeIfDb('a sync run with the review queue on', () => {
     expect(stack.calls[0]!.body.text).toContain('1 post</b> new for review · 2 waiting in all');
     expect(stack.calls[1]!.body).toMatchObject({ chat_id: ADMIN_CHAT, message_id: 100 });
     expect((await workspaceRow()).reviewDigestMessageId).toBe(101);
+  });
+
+  it('links to the website for a reviewer who chose to review there', async () => {
+    const reviewer = await userForTelegram(db, { id: REVIEWER_ID });
+    await setReviewLink(db, reviewer!.id, 'website');
+    const stack = makeStack();
+    await runSync(stack, timelinePayload('1750000000000000042', ['3_1']), undefined, {
+      WEB_APP_URL: 'https://app.example.com',
+    });
+
+    expect(stack.calls[0]!.body.reply_markup).toEqual({
+      inline_keyboard: [[{ text: '📋 Open review queue', url: 'https://app.example.com/queue?workspace=1' }]],
+    });
   });
 
   it('sends nothing when the interval has passed but nothing new came in', async () => {
@@ -576,5 +593,24 @@ describeIfDb('/review', () => {
     );
 
     expect(reply).toEqual({ text: '📥 <b>2 posts</b> waiting for review', offerQueue: true });
+  });
+});
+
+describeIfDb('the account API', () => {
+  const call = (init?: RequestInit) =>
+    withEnv({ ...queueEnv, WEB_APP_URL: 'https://app.example.com' }, () =>
+      accountRoute[init ? 'POST' : 'GET'](
+        new Request('https://example.vercel.app/api/account', {
+          ...init,
+          headers: { authorization: auth(), 'content-type': 'application/json' },
+        }),
+      ),
+    );
+
+  it('says where the review buttons go, and changes it', async () => {
+    expect(await (await call()).json()).toMatchObject({ reviewLink: 'mini_app', websiteUrl: 'https://app.example.com' });
+    expect((await call({ method: 'POST', body: JSON.stringify({ reviewLink: 'website' }) })).status).toBe(200);
+    expect(await (await call()).json()).toMatchObject({ reviewLink: 'website' });
+    expect((await call({ method: 'POST', body: JSON.stringify({ reviewLink: 'email' }) })).status).toBe(400);
   });
 });

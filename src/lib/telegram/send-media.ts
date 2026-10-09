@@ -31,7 +31,9 @@ export interface SendContext {
  */
 export type InlineKeyboardButton =
   | { text: string; callback_data: string }
-  | { text: string; web_app: { url: string } };
+  | { text: string; web_app: { url: string } }
+  /** A link, opened in the browser rather than inside Telegram. */
+  | { text: string; url: string };
 
 export interface InlineKeyboardMarkup {
   inline_keyboard: InlineKeyboardButton[][];

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildReviewQueueUrl, formatReviewDigest, reviewDigestIsDue } from '@/lib/review/queue';
+import { buildReviewQueueUrl, formatReviewDigest, reviewDigestIsDue, reviewQueueButton } from '@/lib/review/queue';
 import { usesReviewQueue } from '@/lib/workspace';
 
 const at = (iso: string) => new Date(iso);
@@ -43,5 +43,27 @@ describe('whether a channel uses the review queue', () => {
     expect(usesReviewQueue({ reviewDigestMinutes: null }, env)).toBe(false);
     expect(usesReviewQueue({ reviewDigestMinutes: 60 }, { ...env, APP_BASE_URL: undefined })).toBe(false);
     expect(usesReviewQueue({ reviewDigestMinutes: 60 }, { ...env, REQUIRE_APPROVAL: false })).toBe(false);
+  });
+});
+
+describe('the "Open review queue" button', () => {
+  const urls = { appBaseUrl: 'https://mini.example.com', webAppUrl: 'https://app.example.com' };
+
+  it('opens the website in the browser for someone who reviews there', () => {
+    expect(reviewQueueButton({ ...urls, target: 'website', workspaceId: 2 })).toEqual({
+      text: '📋 Open review queue',
+      url: 'https://app.example.com/queue?workspace=2',
+    });
+  });
+
+  it('opens the Mini App otherwise — and when there is no website to open', () => {
+    expect(reviewQueueButton({ ...urls, target: 'mini_app', workspaceId: 2 })).toEqual({
+      text: '📋 Open review queue',
+      web_app: { url: 'https://mini.example.com/queue?workspace=2' },
+    });
+    expect(reviewQueueButton({ ...urls, webAppUrl: undefined, target: 'website' })).toMatchObject({
+      web_app: { url: 'https://mini.example.com/queue' },
+    });
+    expect(reviewQueueButton({ appBaseUrl: undefined, webAppUrl: undefined, target: 'mini_app' })).toBeNull();
   });
 });

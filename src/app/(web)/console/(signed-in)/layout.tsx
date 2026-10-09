@@ -1,17 +1,16 @@
 import { redirect } from 'next/navigation';
+import type { ReactNode } from 'react';
 import { currentWebViewer } from '@/lib/accounts/current';
-import { WebQueue } from './web-queue';
+import { NavLinks } from './nav-links';
 
 /**
- * The review queue on the website: the same queue as the Mini App's, with
- * room to read it — picture beside text — and keys to work through it.
+ * Every page behind the sign-in: checked here once, so a page cannot be
+ * reached without a session by forgetting to check, and framed with the
+ * same header — the sections, who is signed in, and Sign out.
  */
-export default async function QueuePage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
+export default async function SignedInLayout({ children }: { children: ReactNode }) {
   const viewer = await currentWebViewer();
-  if (!viewer) redirect('/login?returnTo=/queue');
-
-  const wanted = Number((await searchParams).workspace);
-  const name = viewer.user.displayName ?? 'Signed in';
+  if (!viewer) redirect('/login');
 
   return (
     <>
@@ -21,15 +20,20 @@ export default async function QueuePage({ searchParams }: { searchParams: Promis
           top: 0,
           zIndex: 1,
           display: 'flex',
+          flexWrap: 'wrap',
           alignItems: 'center',
-          gap: '0.75rem',
+          gap: '0.5rem 1rem',
           padding: '0.6rem 1rem',
           background: 'var(--tg-theme-bg-color)',
           borderBottom: '1px solid var(--tg-theme-secondary-bg-color)',
         }}
       >
-        <strong style={{ flex: 1 }}>Story Radar · Review queue</strong>
-        <span style={{ color: 'var(--tg-theme-hint-color)', fontSize: '0.85rem' }}>{name}</span>
+        <strong>Story Radar</strong>
+        <NavLinks />
+        <span style={{ flex: 1 }} />
+        <span style={{ color: 'var(--tg-theme-hint-color)', fontSize: '0.85rem' }}>
+          {viewer.user.displayName ?? 'Signed in'}
+        </span>
         <form method="post" action="/api/auth/logout" style={{ margin: 0 }}>
           <button
             type="submit"
@@ -47,9 +51,7 @@ export default async function QueuePage({ searchParams }: { searchParams: Promis
           </button>
         </form>
       </header>
-      <main style={{ maxWidth: '60rem', margin: '0 auto', padding: '1rem', boxSizing: 'border-box' }}>
-        <WebQueue initialWorkspaceId={Number.isSafeInteger(wanted) && wanted > 0 ? wanted : null} />
-      </main>
+      <main style={{ maxWidth: '60rem', margin: '0 auto', padding: '1rem', boxSizing: 'border-box' }}>{children}</main>
     </>
   );
 }

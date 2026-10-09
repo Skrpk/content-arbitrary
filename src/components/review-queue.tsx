@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { RssBadge } from '@/app/(app)/rss-badge';
+import { readJson, type PanelTools } from '@/components/panel-tools';
 import { fromQueue, theme } from '@/lib/telegram/webapp-client';
 
 /**
@@ -49,14 +50,10 @@ interface QueueResponse {
   noteLimit: number;
 }
 
-export interface ReviewQueueProps {
+export interface ReviewQueueProps extends PanelTools {
   surface: 'mini-app' | 'website';
-  /** fetch, carrying whatever proves who is asking. */
-  request: (path: string, init?: RequestInit) => Promise<Response>;
   /** The workspace to open on, when it is one of theirs. */
   initialWorkspaceId: number | null;
-  confirm: (message: string) => Promise<boolean>;
-  openLink: (url: string) => void;
 }
 
 /** Where one card is: undecided, picking a reason, editing, on its way, or settled. */
@@ -119,12 +116,6 @@ function scoreColour(score: number): string {
   if (score >= 70) return '#2e9e4f';
   if (score >= 45) return '#d08a00';
   return '#8a8f94';
-}
-
-async function readJson<T>(response: Response): Promise<T> {
-  const body = (await response.json().catch(() => ({}))) as T & { error?: string };
-  if (!response.ok) throw new Error(body.error ?? `Request failed (${response.status})`);
-  return body;
 }
 
 export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, openLink }: ReviewQueueProps) {

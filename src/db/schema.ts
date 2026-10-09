@@ -98,13 +98,25 @@ export type Workspace = typeof workspaces.$inferSelect;
  * in with. Deliberately nothing of Telegram here: how they prove who they are
  * lives in `user_identities`, what they may touch in `workspace_members`.
  */
-export const users = pgTable('users', {
-  id: serial('id').primaryKey(),
-  /** As their sign-in provider last named them; shown, never trusted. */
-  displayName: text('display_name'),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const REVIEW_LINK_TARGETS = ['mini_app', 'website'] as const;
+export type ReviewLinkTarget = (typeof REVIEW_LINK_TARGETS)[number];
+
+export const users = pgTable(
+  'users',
+  {
+    id: serial('id').primaryKey(),
+    /** As their sign-in provider last named them; shown, never trusted. */
+    displayName: text('display_name'),
+    /**
+     * Where the bot's "Open review queue" buttons take them: the Mini App,
+     * inside Telegram, or the review website in their browser.
+     */
+    reviewLink: text('review_link', { enum: REVIEW_LINK_TARGETS }).notNull().default('mini_app'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [check('users_review_link_check', sql`${table.reviewLink} IN ('mini_app', 'website')`)],
+);
 
 export type User = typeof users.$inferSelect;
 

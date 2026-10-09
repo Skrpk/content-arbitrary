@@ -4,6 +4,7 @@ import {
   users,
   workspaceMembers,
   workspaces,
+  type ReviewLinkTarget,
   type User,
   type Workspace,
 } from '@/db/schema';
@@ -80,6 +81,25 @@ export async function workspacesForUser(db: Database, userId: number): Promise<W
     .where(and(eq(workspaceMembers.userId, userId), isNotNull(workspaces.telegramChatId)))
     .orderBy(asc(workspaces.id));
   return rows.map((row) => row.workspace);
+}
+
+/**
+ * Where the bot's review buttons should take the person with this Telegram
+ * id: their own choice once they are a user, the Mini App before.
+ */
+export async function reviewLinkFor(db: Database, telegramId: number | string | null): Promise<ReviewLinkTarget> {
+  if (telegramId === null || telegramId === '') return 'mini_app';
+  const rows = await db
+    .select({ reviewLink: users.reviewLink })
+    .from(userIdentities)
+    .innerJoin(users, eq(users.id, userIdentities.userId))
+    .where(and(eq(userIdentities.provider, 'telegram'), eq(userIdentities.subject, String(telegramId))))
+    .limit(1);
+  return rows[0]?.reviewLink ?? 'mini_app';
+}
+
+export async function setReviewLink(db: Database, userId: number, target: ReviewLinkTarget): Promise<void> {
+  await db.update(users).set({ reviewLink: target, updatedAt: new Date() }).where(eq(users.id, userId));
 }
 
 export async function findUserById(db: Database, id: number): Promise<User | null> {

@@ -783,11 +783,17 @@ unless you genuinely want the tenant forgotten.
 
 ## Review website
 
-Everything the review queue Mini App does also works as a website on its own subdomain — say
-`https://app.zmistik.com` — with room to read: each post's pictures beside its text, the text
-and the schedule edited in place, and the keyboard to work through the list (`j` / `k` to move,
-`a` to approve, `r` then `1`–`6` to reject, `e` to edit, `s` to schedule, `o` for the original,
-`Esc` to step back). The Mini Apps stay as they are; both use the same API and the same rules.
+The review queue, the source stats and the settings also work as a website on its own
+subdomain — say `https://app.zmistik.com` — under one header with the three sections and Sign
+out. The queue gets room to read: each post's pictures beside its text, the text and the
+schedule edited in place, and the keyboard to work through the list (`j` / `k` to move, `a` to
+approve, `r` then `1`–`6` to reject, `e` to edit, `s` to schedule, `o` for the original, `Esc`
+to step back). The Mini Apps stay as they are: each page is one component (`src/components/`)
+in two frames, so both use the same API, the same rules and the same screens.
+
+Where the bot's **📋 Open review queue** buttons — the queue notification and `/review` — take
+you is yours to choose under Settings: the Mini App, inside Telegram (the default), or the
+website, in the browser (`users.review_link`).
 
 ### Signing in
 
@@ -1654,6 +1660,9 @@ src/
       viewer.ts                Who is asking — Mini App initData or website session — for every API
   components/
     review-queue.tsx           The review queue, shared by the Mini App and the website
+    settings-panel.tsx         Settings, likewise
+    source-stats-panel.tsx     Source stats, likewise
+    mini-app-frame.tsx         The Mini App frame: Telegram's script, initData-signed requests
     media/
       understanding.ts         ImageUnderstanding, its prompt, schema and config
       provider.ts              The vision call: one low-detail image, no reasoning
