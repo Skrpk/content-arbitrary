@@ -34,6 +34,7 @@ import { eq } from 'drizzle-orm';
 import { workspaces } from '../src/db/schema';
 import { getDb, getSql } from '../src/lib/db';
 import { getEnv } from '../src/lib/env';
+import { describeError } from '../src/lib/errors';
 import { createLogger } from '../src/lib/logger';
 import { ingestRadarBatch, submitRadarBackfill, waitForBatch } from '../src/lib/radar/backfill';
 import { createEmbeddingProvider } from '../src/lib/history/embeddings/provider';
@@ -158,6 +159,8 @@ main()
   .then(() => getSql().end())
   .catch(async (error) => {
     console.error('Radar backfill failed:', error instanceof Error ? error.message : error);
+    // Drizzle wraps the driver's error: the reason a query failed is its cause.
+    if (error instanceof Error && error.cause) console.error('Cause:', describeError(error.cause));
     await getSql().end().catch(() => {});
     process.exit(1);
   });
