@@ -16,9 +16,7 @@ import {
   type MediaPayload,
   type SendContext,
 } from '@/lib/telegram/send-media';
-import { downloadMedia, formatBytes, type DownloadedMedia } from '@/lib/x/download-media';
-import { selectTelegramVideoVariant } from '@/lib/x/select-video-variant';
-import { maxUploadBytesFor } from '@/lib/telegram/limits';
+import { acquireMedia, chosenMediaOf } from '@/lib/sync/acquire-media';
 import type { NormalizedMedia, NormalizedPost, TelegramMethod } from '@/types';
 import { reviewLinks, sendForApproval } from '@/lib/sync/approval';
 import { formatSourceLabel } from '@/lib/sources/display';
@@ -36,8 +34,14 @@ export interface ProcessOutcome {
   primaryMessageId: number | null;
   error?: string;
   permanent?: boolean;
-  /** Set when the post went to the reviewer instead of the channel. */
-  approval?: { payload: ApprovalPayload; adminChatId: string; adminMessageId: number };
+  /**
+   * Set when the post went to the reviewer instead of the channel: to their
+   * chat, with the message holding its buttons, or — `queued` — into the
+   * review queue, with no message at all.
+   */
+  approval?:
+    | { queued?: false; payload: ApprovalPayload; adminChatId: string; adminMessageId: number }
+    | { queued: true; payload: ApprovalPayload };
 }
 
 /** What the send already holds of the post's media, for the pre-review hook to reuse. */
@@ -100,6 +104,12 @@ export async function processPost(
     translate?: (text: string) => Promise<string | null>;
     /** The workspace's footer, added under every post. */
     footer?: PostFooter | null;
+    /**
+     * Under review, collect the post in the review queue instead of sending it
+     * to the reviewer's chat: it is checked, scored and translated just the
+     * same, but nothing is sent until it is decided on the queue page.
+     */
+    queueForReview?: boolean;
   },
 ): Promise<ProcessOutcome> {
   const env = options.env ?? getEnv();
@@ -181,72 +191,10 @@ export async function processPost(
   }
 
   // --- Phase 1: acquire every asset before publishing anything. -------------
-  const payloads: MediaPayload[] = [];
+  let payloads: MediaPayload[];
 
   try {
-    for (const item of media) {
-      /**
-       * X encodes each video at several bitrates. Rather than always taking the
-       * largest and failing when it is over the limit, pick the best rendition
-       * that actually fits — no transcoding required.
-       */
-      let asset = item;
-
-      if (item.kind === 'video' && (item.mp4Variants?.length ?? 0) > 1) {
-        const maxBytes = Math.min(
-          env.MAX_VIDEO_SIZE_MB * 1024 * 1024,
-          maxUploadBytesFor('video', env.MEDIA_UPLOAD_MODE),
-        );
-
-        const selection = await selectTelegramVideoVariant(
-          item,
-          {
-            maxBytes,
-            preferredMaxBytes:
-              env.PREFERRED_VIDEO_SIZE_MB === undefined
-                ? undefined
-                : env.PREFERRED_VIDEO_SIZE_MB * 1024 * 1024,
-          },
-          { fetchImpl: options.fetchImpl, logger },
-        );
-
-        if (!selection.fits) {
-          throw new MediaUnsupportedError(selection.reason, 'media_too_large');
-        }
-
-        if (selection.url !== item.url) {
-          logger.info('video.variant_downgraded', {
-            mediaKey: item.mediaKey,
-            fromBitRate: item.bitRate,
-            toBitRate: selection.bitRate,
-            sizeBytes: selection.sizeBytes,
-            budget: formatBytes(maxBytes),
-            reason: selection.selectionReason,
-          });
-        }
-
-        asset = {
-          ...item,
-          url: selection.url,
-          bitRate: selection.bitRate,
-          contentType: selection.contentType,
-        };
-      }
-
-      if (env.MEDIA_UPLOAD_MODE === 'url') {
-        payloads.push({ mode: 'url', media: asset });
-        continue;
-      }
-
-      const downloaded: DownloadedMedia = await downloadMedia(asset, {
-        logger,
-        uploadMode: env.MEDIA_UPLOAD_MODE,
-        fetchImpl: options.fetchImpl,
-        maxBytes:
-          asset.kind === 'video' ? env.MAX_VIDEO_SIZE_MB * 1024 * 1024 : undefined,
-      });
-      payloads.push({ mode: 'multipart', downloaded });
-    }
+    payloads = await acquireMedia(media, { env, logger, fetchImpl: options.fetchImpl });
   } catch (error) {
     const permanent = error instanceof MediaUnsupportedError;
     logger.error('post.media_failed', {
@@ -291,6 +239,28 @@ export async function processPost(
       }),
     ]);
     if (translated) ({ caption, overflowMessage } = captionFor(translated));
+
+    if (options.queueForReview) {
+      logger.info('approval.queued', { xPostId: post.id, method, mediaCount: payloads.length });
+      return {
+        status: 'awaiting-approval',
+        method,
+        mediaCount: media.length,
+        caption,
+        messages: [],
+        primaryMessageId: null,
+        approval: {
+          queued: true,
+          payload: {
+            method: method as 'sendPhoto' | 'sendVideo' | 'sendMediaGroup',
+            caption,
+            overflowMessage,
+            items: [],
+            sourceMedia: chosenMediaOf(payloads),
+          },
+        },
+      };
+    }
 
     logger.info('approval.review_send_start', {
       xPostId: post.id,
@@ -469,6 +439,7 @@ async function processTextPost(
     beforeReview?: (media: ReviewMedia) => Promise<string | null | void>;
     translate?: (text: string) => Promise<string | null>;
     footer?: PostFooter | null;
+    queueForReview?: boolean;
   },
 ): Promise<ProcessOutcome> {
   const { env, logger } = options;
@@ -499,6 +470,20 @@ async function processTextPost(
         runBeforeReview(options.beforeReview, logger, {}),
       ]);
       if (translated) base.caption = text = textFor(translated);
+
+      if (options.queueForReview) {
+        logger.info('approval.queued', { xPostId: post.id, method, textOnly: true });
+        const linkPreviewUrl = linkPreviewOf(post);
+        return {
+          ...base,
+          status: 'awaiting-approval',
+          messages: [],
+          approval: {
+            queued: true,
+            payload: { method, caption: text, items: [], ...(linkPreviewUrl ? { linkPreviewUrl } : {}) },
+          },
+        };
+      }
 
       const review = await sendForApproval(
         {

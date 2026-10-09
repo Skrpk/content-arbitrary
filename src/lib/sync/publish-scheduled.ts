@@ -1,5 +1,6 @@
 import { loadRadarNote } from '@/lib/radar/review-note';
 import { sourceLabelOfPost } from '@/lib/sources/display';
+import { isPublishablePayload } from '@/db/schema';
 import type { Database } from '@/lib/db';
 import type { Env } from '@/lib/env';
 import { describeError } from '@/lib/errors';
@@ -59,6 +60,8 @@ export async function publishDueScheduledPosts(input: {
   logger: Logger;
   now?: Date;
   sleep?: (ms: number) => Promise<void>;
+  /** Fetches a queued post's media; injected by tests. */
+  fetchImpl?: typeof fetch;
 }): Promise<ScheduledRunSummary> {
   const { db, env, client } = input;
   const now = input.now ?? new Date();
@@ -132,7 +135,7 @@ export async function publishDueScheduledPosts(input: {
     }
 
     const payload = row.approvalPayload;
-    if (!payload || (payload.method !== 'sendMessage' && payload.items.length === 0)) {
+    if (!isPublishablePayload(payload)) {
       await fail('approval payload is missing');
       continue;
     }
@@ -140,7 +143,9 @@ export async function publishDueScheduledPosts(input: {
     try {
       const result = await publishDecidedPost({
         db,
+        env,
         client,
+        fetchImpl: input.fetchImpl,
         row,
         payload,
         destination: resolved.destination,

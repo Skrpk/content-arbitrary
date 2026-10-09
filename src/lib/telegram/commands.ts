@@ -10,6 +10,7 @@ import { sourceLabelOfPost } from '@/lib/sources/display';
 import type { XClient } from '@/lib/x/client';
 import { formatScheduleTime } from '@/lib/sync/approval';
 import { listScheduledPosts } from '@/lib/sync/repository';
+import { countWaitingByWorkspace } from '@/lib/review/queue';
 import type { InlineKeyboardMarkup } from '@/lib/telegram/send-media';
 
 /**
@@ -37,6 +38,8 @@ export interface CommandReply {
   offerSettings?: boolean;
   /** The reply should carry the button that opens the source stats page. */
   offerStats?: boolean;
+  /** The reply should carry the button that opens the review queue. */
+  offerQueue?: boolean;
   /** Buttons that belong to the reply itself, such as a choice of channel. */
   replyMarkup?: InlineKeyboardMarkup;
 }
@@ -155,6 +158,7 @@ function channelsOf(context: CommandContext): WorkspaceRef[] {
  * descriptions of up to 256 characters.
  */
 export const BOT_COMMANDS: { command: string; description: string }[] = [
+  { command: 'review', description: 'Posts waiting for review, best Radar score first' },
   { command: 'sourcestats', description: 'How each source performs: posts, approvals, cost' },
   { command: 'addsource', description: 'Start watching an account: /addsource @username' },
   { command: 'addrss', description: 'Start watching an RSS or Atom feed: /addrss <feed URL>' },
@@ -174,7 +178,10 @@ const HELP_TEXT = [
   '',
   '<b>Publishing</b>',
   '',
+  '/review — the review queue: posts waiting for a decision, best Radar score first',
   '/scheduled — posts waiting to be published at a set time',
+  '',
+  'How often new posts are announced — or each sent to the chat on its own — is under ⚙️ Settings.',
   '',
   '/help — this list',
 ].join('\n');
@@ -318,6 +325,28 @@ export async function handleAddRss(context: CommandContext, args: string): Promi
  * The scheduled posts of every channel the sender reviews, soonest first, each
  * at the time it was picked in — and, across several channels, which one.
  */
+/** How many posts wait in each channel, with the button to the queue. */
+export async function handleReview(context: CommandContext): Promise<CommandReply> {
+  const channels = channelsOf(context);
+  const waiting = await countWaitingByWorkspace(
+    context.db,
+    channels.map((channel) => channel.id),
+  );
+  const total = channels.reduce((sum, channel) => sum + (waiting.get(channel.id) ?? 0), 0);
+
+  if (total === 0) return { text: 'Nothing is waiting for review.', offerQueue: true };
+
+  const posts = (n: number) => `${n} post${n === 1 ? '' : 's'}`;
+  const lines =
+    channels.length > 1
+      ? channels.map((channel) => `📢 ${escapeHtml(channel.name)}: ${posts(waiting.get(channel.id) ?? 0)}`)
+      : [];
+  return {
+    text: [`📥 <b>${posts(total)}</b> waiting for review`, ...lines].join('\n'),
+    offerQueue: true,
+  };
+}
+
 export async function handleScheduled(context: CommandContext): Promise<string> {
   const channels = channelsOf(context);
   const posts = (
@@ -432,6 +461,8 @@ export async function dispatchCommand(
     case 'start':
     case 'help':
       return { text: HELP_TEXT };
+    case 'review':
+      return handleReview(context);
     case 'scheduled':
       return { text: await handleScheduled(context) };
     case 'sourcestats':

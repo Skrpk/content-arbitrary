@@ -484,16 +484,23 @@ export interface PublishResult {
 /**
  * Send an approved post to the channel, re-using the stored `file_id`s.
  *
- * No download, no upload — Telegram already holds the bytes.
+ * No download, no upload — Telegram already holds the bytes. A post from the
+ * review queue was never sent anywhere, so its media come in `options.media`,
+ * fetched again from X.
  */
 export async function publishApprovedPayload(
   context: SendContext,
   payload: ApprovalPayload,
-  options?: { logger?: Logger; sleep?: (ms: number) => Promise<void> },
+  options?: {
+    logger?: Logger;
+    sleep?: (ms: number) => Promise<void>;
+    /** A queued post's media, fetched again; without them, the stored file_ids are sent. */
+    media?: MediaPayload[];
+  },
 ): Promise<PublishResult> {
   const sleep = options?.sleep ?? defaultSleep;
 
-  const payloads: MediaPayload[] = payload.items.map((item) => ({
+  const payloads: MediaPayload[] = options?.media ?? payload.items.map((item) => ({
     mode: 'file_id',
     fileId: item.fileId,
     media: {

@@ -2,7 +2,13 @@
 
 import Script from 'next/script';
 import { useCallback, useMemo, useState } from 'react';
-import { postIdFromLocation, TELEGRAM_WEB_APP_SCRIPT, theme } from '@/lib/telegram/webapp-client';
+import {
+  finishMiniApp,
+  offerBackToQueue,
+  postIdFromLocation,
+  TELEGRAM_WEB_APP_SCRIPT,
+  theme,
+} from '@/lib/telegram/webapp-client';
 
 /**
  * The Schedule Mini App: pick when an approved post goes to the channel.
@@ -96,6 +102,7 @@ export default function SchedulePage() {
 
     app.ready();
     app.expand();
+    offerBackToQueue(app);
 
     if (!app.initData) {
       setPhase('error');
@@ -161,7 +168,7 @@ export default function SchedulePage() {
 
       setPhase('saved');
       setMessage(`Scheduled for ${body.display ?? formatLocal(chosen)}.`);
-      setTimeout(() => app.close(), 1200);
+      setTimeout(() => finishMiniApp(app), 1200);
     } catch (error: unknown) {
       setPhase('ready');
       setMessage(error instanceof Error ? error.message : 'Could not schedule.');

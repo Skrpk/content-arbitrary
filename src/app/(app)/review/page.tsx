@@ -2,7 +2,14 @@
 
 import Script from 'next/script';
 import { useCallback, useState } from 'react';
-import { postIdFromLocation, TELEGRAM_WEB_APP_SCRIPT, theme } from '@/lib/telegram/webapp-client';
+import {
+  finishMiniApp,
+  offerBackToQueue,
+  postIdFromLocation,
+  queueReturnUrl,
+  TELEGRAM_WEB_APP_SCRIPT,
+  theme,
+} from '@/lib/telegram/webapp-client';
 
 /**
  * The Edit Mini App.
@@ -53,6 +60,7 @@ export default function ReviewPage() {
 
     app.ready();
     app.expand();
+    offerBackToQueue(app);
 
     if (!app.initData) {
       setPhase('error');
@@ -114,13 +122,15 @@ export default function ReviewPage() {
 
       setPhase('saved');
       setMessage(
-        body.previewUpdated
-          ? 'Saved. The preview in the chat now shows your text.'
-          : 'Saved. Approve in the chat to publish it.',
+        queueReturnUrl()
+          ? 'Saved.'
+          : body.previewUpdated
+            ? 'Saved. The preview in the chat now shows your text.'
+            : 'Saved. Approve in the chat to publish it.',
       );
 
       // Give the confirmation a moment to be read, then hand control back.
-      setTimeout(() => app.close(), 1200);
+      setTimeout(() => finishMiniApp(app), 1200);
     } catch (error: unknown) {
       setPhase('ready');
       setMessage(error instanceof Error ? error.message : 'Could not save.');
@@ -252,7 +262,8 @@ export default function ReviewPage() {
             ) : null}
 
             <p style={{ color: theme.hint, fontSize: '0.8rem', marginTop: '1rem' }}>
-              Saving only changes the text. Approve or Reject in the chat as usual.
+              Saving only changes the text. Approve or Reject {queueReturnUrl() ? 'in the review queue' : 'in the chat'} as
+              usual.
             </p>
           </>
         ) : null}

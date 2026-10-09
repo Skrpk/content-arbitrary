@@ -367,6 +367,11 @@ export class TelegramClient {
     return this.call('deleteWebhook', { drop_pending_updates: true }, z.boolean());
   }
 
+  /** Removes one of the bot's own messages. Telegram refuses it for one older than 48 hours. */
+  deleteMessage(chatId: string, messageId: number) {
+    return this.call('deleteMessage', { chat_id: chatId, message_id: messageId }, z.boolean());
+  }
+
   /**
    * Fetch the bytes of a file Telegram stores, by file_id. Telegram serves bots
    * files of up to 20 MB this way.

@@ -1,4 +1,5 @@
 import { sql } from 'drizzle-orm';
+import type { NormalizedMedia } from '../types';
 import {
   bigint,
   boolean,
@@ -60,10 +61,33 @@ export const workspaces = pgTable('workspaces', {
    * Null adds nothing. See src/lib/telegram/post-footer.ts.
    */
   postFooter: text('post_footer'),
+  /**
+   * How the reviewer hears of posts to review. A number of minutes collects
+   * them in the review queue — a Mini App page, best Radar score first — and
+   * sends one notification with a button to it at most that often, and only
+   * when something new has come in. Null sends each post to the chat on its
+   * own, with its buttons, the moment it arrives.
+   */
+  reviewDigestMinutes: integer('review_digest_minutes').default(60),
+  /** When the last queue notification went out; null before the first. */
+  reviewDigestSentAt: timestamp('review_digest_sent_at', { withTimezone: true }),
+  /**
+   * When the newest post that notification counted joined the queue: what
+   * came in after it is new. Kept apart from the sending time, so whether a
+   * post is new never hangs on two clocks agreeing.
+   */
+  reviewDigestCoveredUntil: timestamp('review_digest_covered_until', { withTimezone: true }),
+  /** That notification, taken down when the next one replaces it. */
+  reviewDigestMessageId: bigint('review_digest_message_id', { mode: 'number' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   check('workspaces_language_check', sql`${table.language} IS NULL OR ${table.language} ~ '^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$'`),
+  // From one cron interval to ninety days.
+  check(
+    'workspaces_review_digest_minutes_check',
+    sql`${table.reviewDigestMinutes} IS NULL OR ${table.reviewDigestMinutes} BETWEEN 15 AND 129600`,
+  ),
 ]);
 
 export type Workspace = typeof workspaces.$inferSelect;
@@ -273,7 +297,12 @@ export const processedPosts = pgTable(
      * or reviewed before images were understood.
      */
     imageFingerprint: text('image_fingerprint'),
-    /** Message in the admin's private chat carrying the Approve button. */
+    /**
+     * When the post joined the review queue rather than the chat — what the
+     * queue notification counts as new. Null for a post sent to the chat.
+     */
+    reviewQueuedAt: timestamp('review_queued_at', { withTimezone: true }),
+    /** Message in the admin's private chat carrying the Approve button; null for a queued post. */
     adminChatId: text('admin_chat_id'),
     adminMessageId: bigint('admin_message_id', { mode: 'number' }),
     /**
@@ -928,6 +957,22 @@ export interface ApprovalPayload {
    * article. Absent everywhere else, where previews stay off.
    */
   linkPreviewUrl?: string;
+  /**
+   * A queued post's media as X serves it — the rendition already chosen and
+   * checked to fit — fetched again when it is published. A queued post was
+   * never sent to the chat, so Telegram holds no copy and `items` is empty.
+   */
+  sourceMedia?: NormalizedMedia[];
+}
+
+/** How many media the post carries: Telegram's copies, or a queued post's own. */
+export function payloadMediaCount(payload: ApprovalPayload): number {
+  return payload.items.length > 0 ? payload.items.length : (payload.sourceMedia?.length ?? 0);
+}
+
+/** Whether there is something to publish: a text post needs no media, any other does. */
+export function isPublishablePayload(payload: ApprovalPayload | null | undefined): payload is ApprovalPayload {
+  return Boolean(payload) && (payload!.method === 'sendMessage' || payloadMediaCount(payload!) > 0);
 }
 
 export type ProcessedPost = typeof processedPosts.$inferSelect;

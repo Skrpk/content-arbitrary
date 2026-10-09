@@ -1,12 +1,12 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import { radarEvaluations } from '@/db/schema';
 import { RADAR_PROMPT_APPROVED, RADAR_PROMPT_BASELINE, RADAR_PROMPT_RETRIEVAL } from '@/lib/radar/prompt';
 
 /**
- * Radar's score on the message with the review buttons: a hint for the
- * reviewer, never a filter — every post still comes to review, whatever it
- * scored, and nothing is decided for them.
+ * Radar's score on the message with the review buttons, and the order of the
+ * review queue: a hint for the reviewer, never a filter — every post still
+ * comes to review, whatever it scored, and nothing is decided for them.
  *
  * Of the live scores a post has, the one shown is from the prompt version
  * that has matched the editor best so far (radar:report), on the text alone,
@@ -28,13 +28,23 @@ export interface ReviewScore {
 
 /** The live score to show for a post, or null when Radar has none for it. */
 export async function findReviewScore(db: Database, processedPostId: number): Promise<ReviewScore | null> {
+  return (await findReviewScores(db, [processedPostId])).get(processedPostId) ?? null;
+}
+
+/** The live score to show for each of several posts, in one query; a post Radar has none for is absent. */
+export async function findReviewScores(db: Database, processedPostIds: number[]): Promise<Map<number, ReviewScore>> {
+  const scores = new Map<number, ReviewScore>();
+  if (processedPostIds.length === 0) return scores;
+
   const rank = sql`case ${radarEvaluations.promptVersion} ${sql.join(
     SHOWN_VERSIONS.map((version, index) => sql`when ${version} then ${index}`),
     sql` `,
   )} else ${SHOWN_VERSIONS.length} end`;
 
-  const [row] = await db
-    .select({
+  // The best row per post: DISTINCT ON keeps the first of each in this order.
+  const rows = await db
+    .selectDistinctOn([radarEvaluations.processedPostId], {
+      processedPostId: radarEvaluations.processedPostId,
       score: radarEvaluations.score,
       predictedDecision: radarEvaluations.predictedDecision,
       reason: radarEvaluations.reason,
@@ -43,25 +53,28 @@ export async function findReviewScore(db: Database, processedPostId: number): Pr
     .from(radarEvaluations)
     .where(
       and(
-        eq(radarEvaluations.processedPostId, processedPostId),
+        inArray(radarEvaluations.processedPostId, processedPostIds),
         eq(radarEvaluations.mode, 'live'),
         eq(radarEvaluations.status, 'ok'),
       ),
     )
     .orderBy(
+      radarEvaluations.processedPostId,
       rank,
       sql`case ${radarEvaluations.variant} when 'text' then 0 else 1 end`,
       desc(radarEvaluations.createdAt),
-    )
-    .limit(1);
+    );
 
-  if (!row || row.score === null || !row.predictedDecision) return null;
-  return {
-    score: row.score,
-    predictedDecision: row.predictedDecision,
-    reason: row.reason?.trim() || null,
-    possiblyAlreadyCovered: row.historicalAssessment?.possiblyAlreadyCovered === true,
-  };
+  for (const row of rows) {
+    if (row.processedPostId === null || row.score === null || !row.predictedDecision) continue;
+    scores.set(row.processedPostId, {
+      score: row.score,
+      predictedDecision: row.predictedDecision,
+      reason: row.reason?.trim() || null,
+      possiblyAlreadyCovered: row.historicalAssessment?.possiblyAlreadyCovered === true,
+    });
+  }
+  return scores;
 }
 
 /**

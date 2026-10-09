@@ -6,9 +6,10 @@ import { TELEGRAM_WEB_APP_SCRIPT, theme } from '@/lib/telegram/webapp-client';
 import { RssBadge } from '../rss-badge';
 
 /**
- * The source settings Mini App.
+ * The settings Mini App.
  *
- * Opened from the Settings button under /sourcestats or /addsource. Lists the
+ * Opened from the Settings button under /sourcestats or /addsource. Sets how
+ * often each channel's reviewer hears about the review queue, and lists the
  * reviewer's own sources — channel by channel when they review several — with
  * their switches; each switch saves as soon as it is flipped. It also adds an
  * RSS / Atom feed, by URL, to the channel picked. As with the review pages,
@@ -30,7 +31,32 @@ interface SourceView {
 interface ChannelView {
   id: number;
   name: string;
+  /** Minutes between review queue notifications; null sends each post to the chat. */
+  reviewDigestMinutes: number | null;
   sources: SourceView[];
+}
+
+const DAY_MINUTES = 24 * 60;
+
+/** The intervals offered, in minutes; `chat` and `days` are the two that are not one number. */
+const DIGEST_CHOICES: { value: string; label: string }[] = [
+  { value: 'chat', label: 'Each post in the chat, as it arrives' },
+  { value: '15', label: 'Every 15 minutes' },
+  { value: '60', label: 'Every hour' },
+  { value: '180', label: 'Every 3 hours' },
+  { value: '360', label: 'Every 6 hours' },
+  { value: '720', label: 'Every 12 hours' },
+  { value: String(DAY_MINUTES), label: 'Once a day' },
+  { value: 'days', label: 'Every few days…' },
+  { value: String(7 * DAY_MINUTES), label: 'Once a week' },
+];
+
+/** Which choice a stored interval is: a preset, a number of days, or — set some other way — itself. */
+function digestChoiceOf(minutes: number | null): string {
+  if (minutes === null) return 'chat';
+  if (DIGEST_CHOICES.some((choice) => choice.value === String(minutes))) return String(minutes);
+  if (minutes % DAY_MINUTES === 0) return 'days';
+  return String(minutes);
 }
 
 type Setting = 'enabled' | 'includeTextOnly';
@@ -70,6 +96,12 @@ export default function SettingsPage() {
   const [channels, setChannels] = useState<ChannelView[]>([]);
   /** `${sourceId}:${setting}` of switches waiting for the server. */
   const [saving, setSaving] = useState<Set<string>>(new Set());
+
+  /** Channels whose interval is being saved. */
+  const [savingDigest, setSavingDigest] = useState<Set<number>>(new Set());
+  /** The number typed for "every few days", per channel, before it is saved. */
+  const [digestDays, setDigestDays] = useState<Record<number, string>>({});
+  const [digestMessage, setDigestMessage] = useState<string | null>(null);
 
   const [feedUrl, setFeedUrl] = useState('');
   const [feedChannel, setFeedChannel] = useState<number | null>(null);
@@ -154,6 +186,42 @@ export default function SettingsPage() {
     }
   }, []);
 
+  /** Save how often a channel's reviewer hears about the queue: shown at once, put back if refused. */
+  const saveDigest = useCallback(async (channel: ChannelView, minutes: number | null) => {
+    const app = window.Telegram?.WebApp;
+    if (!app) return;
+
+    const previous = channel.reviewDigestMinutes;
+    const apply = (next: number | null) =>
+      setChannels((all) => all.map((item) => (item.id === channel.id ? { ...item, reviewDigestMinutes: next } : item)));
+
+    apply(minutes);
+    setSavingDigest((current) => new Set(current).add(channel.id));
+    setDigestMessage(null);
+
+    try {
+      const response = await fetch('/api/telegram/webapp/channels', {
+        method: 'POST',
+        headers: { Authorization: `tma ${app.initData}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ workspaceId: channel.id, reviewDigestMinutes: minutes }),
+      });
+      const body = (await response.json()) as { error?: string; queueActive?: boolean };
+      if (!response.ok) throw new Error(body.error ?? `Save failed (${response.status})`);
+      if (minutes !== null && body.queueActive === false) {
+        setDigestMessage('Saved — but the review queue needs APP_BASE_URL set, so posts still come to the chat.');
+      }
+    } catch (error: unknown) {
+      apply(previous);
+      setDigestMessage(`${channel.name}: ${error instanceof Error ? error.message : 'could not save'}`);
+    } finally {
+      setSavingDigest((current) => {
+        const next = new Set(current);
+        next.delete(channel.id);
+        return next;
+      });
+    }
+  }, []);
+
   /** Add a feed: checked on the server — fetched and parsed once — before it is stored. */
   const addFeed = useCallback(async () => {
     const app = window.Telegram?.WebApp;
@@ -227,6 +295,101 @@ export default function SettingsPage() {
 
         {phase === 'ready' ? (
           <>
+            <h1 style={{ fontSize: '1.05rem', fontWeight: 600, margin: '0 0 0.75rem' }}>Review</h1>
+
+            <section
+              style={{
+                background: theme.secondaryBg,
+                borderRadius: '0.6rem',
+                padding: '0.75rem 0.9rem',
+                marginBottom: '1.25rem',
+              }}
+            >
+              <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>🔔 New posts for review</div>
+              <div style={{ color: theme.hint, fontSize: '0.8rem', marginBottom: '0.5rem' }}>
+                Collected in the review queue, best Radar score first, with one notification at most this often —
+                and only when something new has come in. Or each post in the chat, with its own buttons.
+              </div>
+              {channels.map((channel) => {
+                const choice = digestChoiceOf(channel.reviewDigestMinutes);
+                const busy = savingDigest.has(channel.id);
+                const storedDays =
+                  channel.reviewDigestMinutes !== null && channel.reviewDigestMinutes % DAY_MINUTES === 0
+                    ? String(channel.reviewDigestMinutes / DAY_MINUTES)
+                    : '2';
+                const days = digestDays[channel.id] ?? storedDays;
+                const daysValue = Number(days);
+                const daysValid = Number.isInteger(daysValue) && daysValue >= 1 && daysValue <= 90;
+                const extra = DIGEST_CHOICES.some((option) => option.value === choice)
+                  ? null
+                  : { value: choice, label: `Every ${channel.reviewDigestMinutes} minutes` };
+
+                return (
+                  <div key={channel.id} style={{ marginTop: '0.5rem', opacity: busy ? 0.6 : 1 }}>
+                    {channels.length > 1 ? (
+                      <div style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>📢 {channel.name}</div>
+                    ) : null}
+                    <select
+                      value={choice}
+                      disabled={busy}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        if (value === 'chat') void saveDigest(channel, null);
+                        else if (value === 'days') void saveDigest(channel, Math.max(2, Number(storedDays)) * DAY_MINUTES);
+                        else void saveDigest(channel, Number(value));
+                      }}
+                      style={inputStyle}
+                    >
+                      {[...DIGEST_CHOICES, ...(extra ? [extra] : [])].map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    {choice === 'days' ? (
+                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem' }}>
+                        <span>Every</span>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min={1}
+                          max={90}
+                          value={days}
+                          disabled={busy}
+                          onChange={(event) =>
+                            setDigestDays((all) => ({ ...all, [channel.id]: event.target.value }))
+                          }
+                          style={{ ...inputStyle, width: '5rem' }}
+                        />
+                        <span style={{ flex: 1 }}>days</span>
+                        <button
+                          type="button"
+                          disabled={busy || !daysValid || daysValue * DAY_MINUTES === channel.reviewDigestMinutes}
+                          onClick={() => {
+                            void saveDigest(channel, daysValue * DAY_MINUTES);
+                          }}
+                          style={{
+                            padding: '0.5rem 0.9rem',
+                            border: 'none',
+                            borderRadius: '0.5rem',
+                            background: theme.button,
+                            color: theme.buttonText,
+                            fontWeight: 600,
+                            opacity: busy || !daysValid || daysValue * DAY_MINUTES === channel.reviewDigestMinutes ? 0.6 : 1,
+                          }}
+                        >
+                          Save
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+              {digestMessage ? (
+                <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: '#e53935' }}>{digestMessage}</p>
+              ) : null}
+            </section>
+
             <h1 style={{ fontSize: '1.05rem', fontWeight: 600, margin: '0 0 0.75rem' }}>Sources</h1>
 
             <section

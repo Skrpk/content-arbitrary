@@ -31,6 +31,11 @@ export interface TelegramDestination {
    * reviewer reviews for more than one channel and needs telling them apart.
    */
   channelLabel?: string | null;
+  /**
+   * Posts for review go into the review queue, announced now and then, rather
+   * than to the chat one by one. See usesReviewQueue.
+   */
+  queueForReview?: boolean;
 }
 
 /**
@@ -200,8 +205,21 @@ export function destinationFor(
       chatId: workspace.telegramChatId,
       adminChatId: workspace.telegramAdminChatId,
       disableNotification: env.TELEGRAM_DISABLE_NOTIFICATION,
+      queueForReview: usesReviewQueue(workspace, env),
     },
   };
+}
+
+/**
+ * Whether a tenant's posts for review are collected in the review queue. It
+ * takes a notification interval, and the Mini App the queue is a page of: with
+ * no APP_BASE_URL there is no page to open, and posts go to the chat as before.
+ */
+export function usesReviewQueue(
+  workspace: Pick<Workspace, 'reviewDigestMinutes'>,
+  env: Pick<Env, 'REQUIRE_APPROVAL' | 'APP_BASE_URL'>,
+): boolean {
+  return env.REQUIRE_APPROVAL && Boolean(env.APP_BASE_URL) && workspace.reviewDigestMinutes !== null;
 }
 
 /**
@@ -219,4 +237,27 @@ export async function markLegacySourceImported(
     .update(workspaces)
     .set({ legacySourceImportedAt: new Date(), updatedAt: new Date() })
     .where(eq(workspaces.id, workspaceId));
+}
+
+/** The shortest and longest queue notification intervals: one cron run, and ninety days. */
+export const REVIEW_DIGEST_MINUTES_MIN = 15;
+export const REVIEW_DIGEST_MINUTES_MAX = 90 * 24 * 60;
+
+/**
+ * Set how often a channel's reviewer hears about its review queue, in minutes,
+ * or null to have each post sent to the chat as it arrives. Scoped to the
+ * workspaces the caller reviews for; returns the updated row, or null for one
+ * that is not theirs.
+ */
+export async function setReviewDigestMinutes(
+  db: Database,
+  input: { workspaceId: number; reviewerWorkspaceIds: number[]; minutes: number | null },
+): Promise<Workspace | null> {
+  if (!input.reviewerWorkspaceIds.includes(input.workspaceId)) return null;
+  const rows = await db
+    .update(workspaces)
+    .set({ reviewDigestMinutes: input.minutes, updatedAt: new Date() })
+    .where(eq(workspaces.id, input.workspaceId))
+    .returning();
+  return rows[0] ?? null;
 }

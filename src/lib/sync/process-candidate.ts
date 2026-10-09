@@ -112,6 +112,7 @@ export async function processCandidate(
       destination: context.destination,
       textOnly: options.textOnly,
       footer: context.footer,
+      queueForReview: context.destination.queueForReview,
       translate: context.translator
         ? (text) => translateForReview(context.translator!, text, postLogger)
         : undefined,
@@ -157,17 +158,18 @@ export async function processCandidate(
     }
 
     /**
-     * Sent to the reviewer. The post is settled as far as this run is
-     * concerned — a cursor may move past it — but it is not published until
-     * the Approve button reaches the webhook.
+     * Sent to the reviewer, or put in their queue. The post is settled as far
+     * as this run is concerned — a cursor may move past it — but it is not
+     * published until the reviewer approves it.
      */
     if (outcome.status === 'awaiting-approval' && outcome.approval) {
+      const { approval } = outcome;
       await markAwaitingApproval(db, {
         id: row.id,
-        payload: outcome.approval.payload,
-        adminChatId: outcome.approval.adminChatId,
-        adminMessageId: outcome.approval.adminMessageId,
-        reviewMedia: reviewMediaOf(post, outcome.approval.payload.items),
+        payload: approval.payload,
+        adminChatId: approval.queued ? null : approval.adminChatId,
+        adminMessageId: approval.queued ? null : approval.adminMessageId,
+        reviewMedia: approval.queued ? queuedReviewMediaOf(post) : reviewMediaOf(post, approval.payload.items),
       });
       summary.awaitingApproval += 1;
       return { kind: 'awaiting-approval', settled: true };
@@ -234,6 +236,15 @@ function reviewMediaOf(post: NormalizedPost, items: ApprovalMediaItem[]): Review
       ...(media?.previewUrl ? { previewUrl: media.previewUrl } : {}),
     };
   });
+}
+
+/** What the queue page shows of a queued post: X's pictures, with no Telegram copy behind them. */
+function queuedReviewMediaOf(post: NormalizedPost): ReviewMediaItem[] {
+  return post.media.map((media) => ({
+    kind: media.kind,
+    ...(media.kind === 'photo' ? { url: media.url } : {}),
+    ...(media.previewUrl ? { previewUrl: media.previewUrl } : {}),
+  }));
 }
 
 /**

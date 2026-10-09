@@ -44,6 +44,7 @@ export async function GET(request: Request): Promise<Response> {
     auth.workspaces.map(async (workspace) => ({
       id: workspace.id,
       name: workspace.name,
+      reviewDigestMinutes: workspace.reviewDigestMinutes,
       sources: (await listSources(auth.db, workspace.id)).map(sourceView),
     })),
   );

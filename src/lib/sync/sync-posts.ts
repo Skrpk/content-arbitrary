@@ -32,6 +32,7 @@ import { createImageUnderstander, type ImageUnderstander } from '@/lib/media/pro
 import { mediaUnderstandingConfig } from '@/lib/media/understanding';
 import { syncXSource } from '@/lib/sync/sync-x-source';
 import { syncRssSource } from '@/lib/sync/sync-rss-source';
+import { sendReviewDigest } from '@/lib/review/queue';
 import {
   channelLabelFor,
   destinationFor,
@@ -312,6 +313,19 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
           summary.awaitingApproval += sourceSummary.awaitingApproval;
           summary.failed += sourceSummary.failed;
           summary.skipped += sourceSummary.skipped;
+        }
+
+        // After the sources, so the notification counts what this run queued.
+        if (!env.DRY_RUN) {
+          await sendReviewDigest({
+            db,
+            env,
+            client: telegramClient,
+            workspace: tenant,
+            channelLabel: resolved.destination.channelLabel,
+            now: new Date(now()),
+            logger,
+          });
         }
       } finally {
         await lock.release().catch(() => {});

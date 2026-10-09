@@ -19,6 +19,7 @@ import {
   settleReviewMessage,
 } from '@/lib/sync/approval';
 import { publishDecidedPost } from '@/lib/sync/publish';
+import { buildReviewQueueUrl } from '@/lib/review/queue';
 import {
   buildSettingsUrl,
   buildSourceStatsUrl,
@@ -47,7 +48,7 @@ import {
   returnToSchedule,
   unschedulePost,
 } from '@/lib/sync/repository';
-import type { PostStatus } from '@/db/schema';
+import { isPublishablePayload, payloadMediaCount, type PostStatus } from '@/db/schema';
 
 /**
  * POST /api/telegram/webhook — receives the review buttons' presses.
@@ -363,7 +364,7 @@ export async function POST(request: Request): Promise<Response> {
 
   const payload = claim.row.approvalPayload;
   // A text-only post has no media by design; any other post without it does.
-  if (!payload || (payload.method !== 'sendMessage' && payload.items.length === 0)) {
+  if (!isPublishablePayload(payload)) {
     const reason = 'approval payload is missing; re-run the sync for this post';
     postLogger.error('webhook.missing_payload', { xPostId: claim.row.xPostId });
     await putBack(reason);
@@ -375,11 +376,12 @@ export async function POST(request: Request): Promise<Response> {
     postLogger.info('webhook.publishing', {
       xPostId: claim.row.xPostId,
       method: payload.method,
-      mediaCount: payload.items.length,
+      mediaCount: payloadMediaCount(payload),
     });
 
     const result = await publishDecidedPost({
       db,
+      env,
       client,
       row: claim.row,
       payload,
@@ -489,12 +491,13 @@ async function handleCommandMessage(
   }
 }
 
-/** A command reply's own buttons, or the Mini App buttons it offers: stats first, then settings. */
+/** A command reply's own buttons, or the Mini App buttons it offers: queue, stats, then settings. */
 function replyMarkupFor(reply: CommandReply, appBaseUrl: string | undefined) {
   if (reply.replyMarkup) return reply.replyMarkup;
   if (!appBaseUrl) return undefined;
 
   const rows = [
+    ...(reply.offerQueue ? [[{ text: '📋 Open review queue', web_app: { url: buildReviewQueueUrl(appBaseUrl) } }]] : []),
     ...(reply.offerStats ? [[{ text: '📊 Open stats', web_app: { url: buildSourceStatsUrl(appBaseUrl) } }]] : []),
     ...(reply.offerSettings ? [[{ text: '⚙️ Settings', web_app: { url: buildSettingsUrl(appBaseUrl) } }]] : []),
   ];

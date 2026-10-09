@@ -97,6 +97,10 @@ export async function ensureTestWorkspace(db: Database): Promise<void> {
         editorialProfile: null,
         language: null,
         postFooter: null,
+        reviewDigestMinutes: 60,
+        reviewDigestSentAt: null,
+        reviewDigestCoveredUntil: null,
+        reviewDigestMessageId: null,
       },
     });
 }

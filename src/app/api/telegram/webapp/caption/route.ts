@@ -13,7 +13,7 @@ import {
 import { TELEGRAM_CAPTION_LIMIT, TELEGRAM_MESSAGE_TEXT_LIMIT } from '@/lib/telegram/limits';
 import { authorizeReviewer, json, reviewerWorkspaceForPost } from '@/lib/telegram/webapp-request';
 import { findPostAwaitingReview, updateApprovalCaption } from '@/lib/sync/repository';
-import type { ApprovalPayload } from '@/db/schema';
+import { payloadMediaCount, type ApprovalPayload } from '@/db/schema';
 
 /**
  * The Mini App's API: read the caption a post will be published with, and
@@ -86,7 +86,7 @@ export async function GET(request: Request): Promise<Response> {
     sourceUsername: post.xAuthorUsername,
     sourceLabel: sourceLabelOfPost(post.xPostId, post.xAuthorUsername),
     xPostUrl: post.xPostUrl,
-    mediaCount: post.approvalPayload.items.length,
+    mediaCount: payloadMediaCount(post.approvalPayload),
     caption: body === null ? captionToPlainText(stored) : unescapeHtml(body),
     footer: body === null ? null : footer!.text,
     limit: lengthLimitFor(post.approvalPayload) - (body === null ? 0 : footerLength(footer)),

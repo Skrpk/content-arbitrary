@@ -2,7 +2,13 @@
 
 import Script from 'next/script';
 import { useCallback, useState } from 'react';
-import { postIdFromLocation, TELEGRAM_WEB_APP_SCRIPT, theme } from '@/lib/telegram/webapp-client';
+import {
+  finishMiniApp,
+  offerBackToQueue,
+  postIdFromLocation,
+  TELEGRAM_WEB_APP_SCRIPT,
+  theme,
+} from '@/lib/telegram/webapp-client';
 
 /**
  * The "Other" Mini App: reject a post and say why in your own words.
@@ -41,6 +47,7 @@ export default function RejectPage() {
 
     app.ready();
     app.expand();
+    offerBackToQueue(app);
 
     if (!app.initData) {
       setPhase('error');
@@ -99,7 +106,7 @@ export default function RejectPage() {
 
       setPhase('saved');
       setMessage('Rejected. It will not be published.');
-      setTimeout(() => app.close(), 1200);
+      setTimeout(() => finishMiniApp(app), 1200);
     } catch (error: unknown) {
       setPhase('ready');
       setMessage(error instanceof Error ? error.message : 'Could not reject.');

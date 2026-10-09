@@ -564,6 +564,7 @@ environment change and no redeploy:
 
 | Command | What it does |
 | --- | --- |
+| `/review` | Open the review queue: posts waiting for a decision, best Radar score first — see [The review queue](#the-review-queue) |
 | `/sourcestats` | Open a page with every source and how it performs — and buttons to pause, resume or remove it |
 | `/addsource @karpathy` | Start watching an account |
 | `/addrss <feed URL>` | Start watching an RSS or Atom feed — see [RSS and Atom feeds](#rss-and-atom-feeds) |
@@ -780,9 +781,10 @@ unless you genuinely want the tenant forgotten.
 
 ## Approval before publishing
 
-With `REQUIRE_APPROVAL=true` nothing reaches the channel unattended. Each new post is
-delivered to your private chat with the bot, carrying **✅ Approve** and **🚫 Reject** buttons;
-the channel only sees it once you press Approve.
+With `REQUIRE_APPROVAL=true` nothing reaches the channel unattended. New posts wait in the
+[review queue](#the-review-queue) — or, if you choose, each is delivered to your private chat
+with the bot, carrying **✅ Approve** and **🚫 Reject** buttons; the channel only sees a post
+once you approve it.
 
 ```
 X ──► cron ──► your private chat  ──[Approve]──►  channel
@@ -813,6 +815,44 @@ What is recorded for every post, for later analysis:
 | `rejection_reason` / `rejection_note` | Why it was rejected, and your own words for Other. |
 | `review_media` | The media you were shown — Telegram's file id per item, with X's photo URL or video still. Kept after the decision (unlike `approval_payload`), so Radar's backfill can show a model the same picture. |
 | `x_like_count`, `x_repost_count`, `x_reply_count`, `x_quote_count`, `x_bookmark_count`, `x_impression_count` / `x_metrics_at` | The post's public engagement as X reported it when the post was first fetched, and when that was. A snapshot, never refreshed: compare posts by their age at that moment (`x_metrics_at - x_created_at`), since a sync sees most posts within the hour. Comes with the same read, so it costs nothing extra. |
+
+### The review queue
+
+With `APP_BASE_URL` set, posts are not sent to the chat one by one. Each is checked, scored by
+Radar and translated exactly as before, then kept in the **review queue** — a Mini App page with
+every post awaiting a decision, **best Radar score first**. Instead of the posts, the chat gets
+a notification: *"📥 7 posts new for review · 23 waiting in all"*, with a **📋 Open review
+queue** button.
+
+```
+X ──► cron ──► review queue ──(at most once an hour)──► "📥 7 new" ──► queue page ──[Approve]──► channel
+```
+
+- **How often** is per channel, under ⚙️ Settings: every 15 minutes, every hour (the default),
+  every 3, 6 or 12 hours, once a day, every few days, once a week — or **each post in the
+  chat**, as it arrives, which is the per-post flow described below. A notification goes out
+  only when a post has joined the queue since the last one, so a quiet stretch sends nothing,
+  and each one replaces the one before (Telegram lets a bot delete its own message for 48
+  hours; an older one simply stays).
+- **The page** shows each post's picture (X's own photo, or a video's still), its text as it
+  will be published, Radar's score and one-line why. Radar only orders the list: every post is
+  on it, whatever it scored, and the decision is yours.
+- **✅ Approve** publishes there and then. **🚫 Reject** asks why, with the same reasons as the
+  chat, and **••• Other** takes your own words. **✏️ Edit text** and **🕒 Schedule** open their
+  pages and come back to the queue.
+- **`/review`** says how many posts are waiting and opens the page at any time, without waiting
+  for the notification.
+
+A queued post was never sent to Telegram, so there is no `file_id` to re-send: approving it
+fetches its media from X again — all of them before anything is sent, exactly as the first time
+— and publishes. A post whose media X no longer serves fails to publish and stays in the queue
+with the error. The chosen video rendition, its alternatives and X's URLs are kept in
+`approval_payload.sourceMedia` for this. The interval is `workspaces.review_digest_minutes` (null
+for the chat); `processed_posts.review_queued_at` says when a post joined the queue.
+
+Posts that were sent to the chat before the switch keep their buttons there, and also appear in
+the queue; deciding one in either place settles it in both. Without `APP_BASE_URL` there is no
+page to open, so every channel gets its posts in the chat.
 
 ### How it works
 
@@ -953,7 +993,7 @@ when it actually went out.
 
 | Status | Meaning |
 | --- | --- |
-| `awaiting_approval` | Sent to you, waiting for a button press. Not in the channel. |
+| `awaiting_approval` | In the review queue or sent to your chat, waiting for a decision. Not in the channel. |
 | `rejected` | You declined it. Never published, never retried, never re-synced. |
 | `scheduled` | Approved for a later time; published by the scheduler when it comes. |
 
@@ -1536,6 +1576,7 @@ src/
       sync-rss-source.ts       One feed: backlog on follow, known-id dedup, candidates
       process-candidate.ts     Claim → Radar → translate → review/publish → record, shared
       process-post.ts          Per-post publish, all-or-nothing media policy
+      acquire-media.ts         Fetch and check every asset before a send, for both paths
       repository.ts            Atomic claim and state transitions
       locks.ts                 Advisory lock
       retry.ts                 Backoff with jitter
@@ -1546,6 +1587,8 @@ src/
       adapters/telegram-json.ts  Telegram Desktop JSON export
       profile/                 History → editorial profile: sources, prompts, map/reduce, store
       embeddings/              Embedded text and fingerprint, OpenAI embeddings, backfill, search
+    review/
+      queue.ts                 The review queue: its page's list, the notification and when it is due
     media/
       understanding.ts         ImageUnderstanding, its prompt, schema and config
       provider.ts              The vision call: one low-detail image, no reasoning

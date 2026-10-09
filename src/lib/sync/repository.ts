@@ -3,6 +3,7 @@ import type { Database } from '@/lib/db';
 import type { PostMetrics } from '@/types';
 import {
   DEFAULT_WORKSPACE_ID,
+  payloadMediaCount,
   processedPosts,
   syncState,
   telegramMessages,
@@ -259,12 +260,14 @@ export async function markAwaitingApproval(
   input: {
     id: number;
     payload: ApprovalPayload;
-    adminChatId: string;
-    adminMessageId: number;
+    /** The message with the buttons; both null for a post put in the review queue. */
+    adminChatId: string | null;
+    adminMessageId: number | null;
     /** What the reviewer is shown, kept for analysis after the decision. */
     reviewMedia?: ReviewMediaItem[];
   },
 ): Promise<void> {
+  const queued = input.adminMessageId === null;
   await db
     .update(processedPosts)
     .set({
@@ -275,8 +278,9 @@ export async function markAwaitingApproval(
       caption: rawSql`coalesce(${processedPosts.caption}, ${input.payload.caption})`,
       adminChatId: input.adminChatId,
       adminMessageId: input.adminMessageId,
+      reviewQueuedAt: queued ? new Date() : null,
       telegramMethod: input.payload.method,
-      mediaCount: input.payload.items.length,
+      mediaCount: payloadMediaCount(input.payload),
       errorMessage: null,
       lockedAt: null,
       updatedAt: new Date(),
