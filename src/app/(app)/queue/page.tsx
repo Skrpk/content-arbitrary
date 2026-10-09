@@ -1,7 +1,7 @@
 'use client';
 
 import Script from 'next/script';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { fromQueue, TELEGRAM_WEB_APP_SCRIPT, theme } from '@/lib/telegram/webapp-client';
 import { RssBadge } from '../rss-badge';
 
@@ -272,7 +272,6 @@ export default function QueuePage() {
               const body = fullShown ? (item.fullText ?? item.text) : item.text;
               const long = body.length > PREVIEW_CHARS || Boolean(item.fullText);
               const shownText = fullShown || !long ? body : `${body.slice(0, PREVIEW_CHARS).trimEnd()}…`;
-              const firstImage = item.media.find((media) => media.imageUrl);
               const busy = state.kind === 'sending';
 
               if (state.kind === 'done') {
@@ -335,36 +334,7 @@ export default function QueuePage() {
                     </span>
                   </div>
 
-                  {firstImage?.imageUrl ? (
-                    <div style={{ position: 'relative', marginBottom: '0.5rem' }}>
-                      {/* X's own picture of the post; nothing of ours to optimise. */}
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={firstImage.imageUrl}
-                        alt=""
-                        loading="lazy"
-                        referrerPolicy="no-referrer"
-                        style={{
-                          display: 'block',
-                          width: '100%',
-                          maxHeight: '18rem',
-                          objectFit: 'cover',
-                          borderRadius: '0.45rem',
-                          background: theme.bg,
-                        }}
-                      />
-                      {firstImage.kind === 'video' ? (
-                        <span style={overlayBadge({ left: '0.5rem' })}>▶ video</span>
-                      ) : null}
-                      {item.media.length > 1 ? (
-                        <span style={overlayBadge({ right: '0.5rem' })}>1 / {item.media.length}</span>
-                      ) : null}
-                    </div>
-                  ) : item.media.length > 0 ? (
-                    <div style={{ color: theme.hint, fontSize: '0.8rem', marginBottom: '0.5rem' }}>
-                      {item.media.length} media item{item.media.length === 1 ? '' : 's'} (no preview)
-                    </div>
-                  ) : null}
+                  <MediaGallery media={item.media} />
 
                   {shownText ? (
                     <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: '0.92rem', lineHeight: 1.4 }}>
@@ -528,6 +498,122 @@ export default function QueuePage() {
       </main>
     </>
   );
+}
+
+/**
+ * Every picture of a post, side by side: swiped on a phone, stepped through
+ * with the arrows elsewhere. A photo is shown whole rather than cropped, as it
+ * will be in the channel; a video by its still.
+ */
+function MediaGallery({ media }: { media: QueueItem['media'] }) {
+  const strip = useRef<HTMLDivElement>(null);
+  const [index, setIndex] = useState(0);
+
+  if (media.length === 0) return null;
+  if (!media.some((item) => item.imageUrl)) {
+    return (
+      <div style={{ color: theme.hint, fontSize: '0.8rem', marginBottom: '0.5rem' }}>
+        {media.length} media item{media.length === 1 ? '' : 's'} (no preview)
+      </div>
+    );
+  }
+
+  const go = (next: number) => {
+    const element = strip.current;
+    if (!element) return;
+    element.scrollTo({ left: next * element.clientWidth, behavior: 'smooth' });
+  };
+  const current = media[index];
+
+  return (
+    <div style={{ position: 'relative', marginBottom: '0.5rem' }}>
+      <div
+        ref={strip}
+        onScroll={(event) => {
+          const element = event.currentTarget;
+          setIndex(Math.min(media.length - 1, Math.max(0, Math.round(element.scrollLeft / element.clientWidth))));
+        }}
+        style={{
+          display: 'flex',
+          overflowX: 'auto',
+          scrollSnapType: 'x mandatory',
+          scrollbarWidth: 'none',
+          borderRadius: '0.45rem',
+          background: '#111111',
+        }}
+      >
+        {media.map((item, position) => (
+          <div
+            key={position}
+            style={{
+              flex: '0 0 100%',
+              height: '18rem',
+              scrollSnapAlign: 'center',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {item.imageUrl ? (
+              // X's own picture of the post; nothing of ours to optimise.
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={item.imageUrl}
+                alt=""
+                loading="lazy"
+                referrerPolicy="no-referrer"
+                style={{ display: 'block', width: '100%', height: '100%', objectFit: 'contain' }}
+              />
+            ) : (
+              <span style={{ color: '#bbbbbb', fontSize: '0.85rem' }}>
+                {item.kind === 'video' ? '▶ video, no preview' : 'no preview'}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {current?.kind === 'video' && current.imageUrl ? (
+        <span style={overlayBadge({ left: '0.5rem' })}>▶ video</span>
+      ) : null}
+      {media.length > 1 ? (
+        <>
+          <span style={overlayBadge({ right: '0.5rem' })}>
+            {index + 1} / {media.length}
+          </span>
+          {index > 0 ? (
+            <button type="button" aria-label="Previous" onClick={() => go(index - 1)} style={arrowButton('left')}>
+              ‹
+            </button>
+          ) : null}
+          {index < media.length - 1 ? (
+            <button type="button" aria-label="Next" onClick={() => go(index + 1)} style={arrowButton('right')}>
+              ›
+            </button>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/** A round arrow on one side of the gallery. */
+function arrowButton(side: 'left' | 'right') {
+  return {
+    position: 'absolute',
+    top: '50%',
+    [side]: '0.4rem',
+    transform: 'translateY(-50%)',
+    width: '2rem',
+    height: '2rem',
+    border: 'none',
+    borderRadius: '50%',
+    background: 'rgba(0, 0, 0, 0.55)',
+    color: '#ffffff',
+    fontSize: '1.3rem',
+    lineHeight: 1,
+    padding: 0,
+  } as const;
 }
 
 /** A small label laid over the corner of a picture. */
