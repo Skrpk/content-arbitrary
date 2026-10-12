@@ -20,7 +20,14 @@ import {
   type ProfileSourceItem,
 } from '@/lib/history/profile/source';
 import { RadarError } from '@/lib/radar/output';
-import { buildSystemPrompt, buildUserContent } from '@/lib/radar/prompt';
+import {
+  buildSystemPrompt,
+  buildUserContent,
+  RADAR_PROMPT_APPROVED,
+  RADAR_PROMPT_NO_PROFILE,
+  usesApprovedRetrieval,
+  usesHistoryRetrieval,
+} from '@/lib/radar/prompt';
 import { formatRadarReport, type ReportRow } from '@/lib/radar/report';
 import { profileFixture } from './history-fakes';
 import { fakeAnthropic, fakeOpenAi, messageResponse, responsesResponse } from './radar-fakes';
@@ -169,6 +176,17 @@ describe('Radar prompt with a publication profile', () => {
     expect(prompt).toContain('a subject missing from it is no evidence the editor would reject it');
     // Ids mean nothing to the model; the profile goes in without them.
     expect(prompt).not.toContain('representative');
+  });
+
+  it('is left out of the version that measures it, and only there — v3 otherwise', () => {
+    const v3 = buildSystemPrompt('Space.', 0.25, profileFixture(), RADAR_PROMPT_APPROVED);
+    const without = buildSystemPrompt('Space.', 0.25, profileFixture(), RADAR_PROMPT_NO_PROFILE);
+    expect(v3).toContain('<publication_history>');
+    expect(without).not.toContain('publication_history');
+    expect(without).not.toContain('The publication history is background');
+    // Everything else as in v3: the same rules, the same searches.
+    expect(without).toBe(buildSystemPrompt('Space.', 0.25, null, RADAR_PROMPT_APPROVED));
+    expect(usesHistoryRetrieval(RADAR_PROMPT_NO_PROFILE) && usesApprovedRetrieval(RADAR_PROMPT_NO_PROFILE)).toBe(true);
   });
 
   it('is the plain policy-and-decisions prompt without one', () => {

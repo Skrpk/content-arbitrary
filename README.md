@@ -1350,6 +1350,17 @@ would have found. Days are arrival days in UTC; tied scores at the cut count at 
 share. With a few weeks of decisions the counts are small, which the `13/41` is there to show:
 a difference of two or three approvals is noise.
 
+**What the history profile is worth.** Scores with and without the publication-history profile
+are never of the same posts: a backfilled post gets the profile only if it was made before the
+post arrived. So `radar-v3-without-history-profile` is `radar-v3` with the profile left out and
+nothing else changed, for backfills only; it skips the posts that had no profile to begin with,
+where it would only repeat `radar-v3`. Score both on the same posts and compare:
+
+```bash
+npm run radar:backfill -- --workspace 2 --prompt radar-v3-retrieval-approved,radar-v3-without-history-profile --text-only
+npm run radar:report -- --workspace 2 --compare radar-v3-retrieval-approved,radar-v3-without-history-profile
+```
+
 A prompt change gets a new version in [`src/lib/radar/prompt.ts`](src/lib/radar/prompt.ts):
 results of different prompts are reported separately and never mixed — and so are scores made
 with different history profiles, or none. `radar-v0` is the prompt before publication history;

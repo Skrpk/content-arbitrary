@@ -17,11 +17,13 @@ import {
   RADAR_PROMPT_APPROVED,
   RADAR_PROMPT_MEDIA,
   RADAR_PROMPT_NEAREST,
+  RADAR_PROMPT_NO_PROFILE,
   RADAR_PROMPT_REJECTED,
   RADAR_PROMPT_RETRIEVAL,
   RADAR_PROMPT_VERSIONS,
   usesApprovedRetrieval,
   usesNearestDecisions,
+  usesPublicationProfile,
   usesRejectedRetrieval,
   usesHistoryRetrieval,
   usesMediaUnderstanding,
@@ -90,6 +92,12 @@ export interface SubmitSummary {
    * recording a retrieval score made without retrieval.
    */
   retrievalFailed: number;
+  /**
+   * Posts left out of the version without the history profile because no
+   * profile was there for them to begin with: scoring them would only repeat
+   * v3, which ran without one too.
+   */
+  noProfileToLeaveOut: number;
   batchIds: string[];
 }
 
@@ -110,6 +118,7 @@ const PROMPT_TAGS: Record<RadarPromptVersion, string> = {
   [RADAR_PROMPT_MEDIA]: 'v4m',
   [RADAR_PROMPT_REJECTED]: 'v5r',
   [RADAR_PROMPT_NEAREST]: 'v6n',
+  [RADAR_PROMPT_NO_PROFILE]: 'v3np',
 };
 
 /**
@@ -203,6 +212,7 @@ export async function submitRadarBackfill(input: {
     posts: 0,
     requests: 0,
     retrievalFailed: 0,
+    noProfileToLeaveOut: 0,
     batchIds: [],
   };
   const versions = input.promptVersions ?? RADAR_PROMPT_VERSIONS;
@@ -269,6 +279,10 @@ export async function submitRadarBackfill(input: {
       arrivedAt: post.createdAt,
       logger: input.logger,
     });
+    if (!publication && requests.some(({ version }) => !usesPublicationProfile(version))) {
+      summary.noProfileToLeaveOut += 1;
+      requests = requests.filter(({ version }) => usesPublicationProfile(version));
+    }
     if (requests.length === 0) {
       summary.alreadyScored += 1;
       continue;
@@ -310,7 +324,8 @@ export async function submitRadarBackfill(input: {
 
     summary.posts += 1;
     for (const { version, variant } of requests) {
-      const customId = radarCustomId(post.id, variant, publication?.id, version);
+      // A version without the profile records none, so the report never pools it with v3's.
+      const customId = radarCustomId(post.id, variant, usesPublicationProfile(version) ? publication?.id : null, version);
       const request = input.provider.batchEntry(customId, {
         profile: input.profile,
         approvalRate: history.approvalRate,
@@ -322,7 +337,7 @@ export async function submitRadarBackfill(input: {
         },
         examples: usesMediaUnderstanding(version) ? mediaHistory.examples : history.examples,
         image: variant === 'text_image' ? image : undefined,
-        publicationProfile: publication?.profile ?? null,
+        publicationProfile: usesPublicationProfile(version) ? (publication?.profile ?? null) : null,
         promptVersion: version,
         similarPublications: usesHistoryRetrieval(version) ? (retrieval?.matches ?? []) : null,
         similarApproved: usesApprovedRetrieval(version) ? (retrieval?.approved?.matches ?? []) : null,

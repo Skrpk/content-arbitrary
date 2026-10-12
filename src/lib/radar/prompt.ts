@@ -29,6 +29,12 @@ export const RADAR_PROMPT_APPROVED = 'radar-v3-retrieval-approved';
 export const RADAR_PROMPT_MEDIA = 'radar-v4-media-understanding';
 export const RADAR_PROMPT_REJECTED = 'radar-v5-similar-rejected';
 export const RADAR_PROMPT_NEAREST = 'radar-v6-nearest-decisions';
+/**
+ * v3 with the channel's publication-history profile left out, and nothing
+ * else changed: scored beside v3 on the same posts, it says what the profile
+ * itself is worth. Backfill only.
+ */
+export const RADAR_PROMPT_NO_PROFILE = 'radar-v3-without-history-profile';
 export const RADAR_PROMPT_VERSIONS = [
   RADAR_PROMPT_BASELINE,
   RADAR_PROMPT_RETRIEVAL,
@@ -36,6 +42,7 @@ export const RADAR_PROMPT_VERSIONS = [
   RADAR_PROMPT_MEDIA,
   RADAR_PROMPT_REJECTED,
   RADAR_PROMPT_NEAREST,
+  RADAR_PROMPT_NO_PROFILE,
 ] as const;
 export type RadarPromptVersion = (typeof RADAR_PROMPT_VERSIONS)[number];
 
@@ -62,8 +69,17 @@ export function usesApprovedRetrieval(version: RadarPromptVersion): boolean {
     version === RADAR_PROMPT_APPROVED ||
     version === RADAR_PROMPT_MEDIA ||
     version === RADAR_PROMPT_REJECTED ||
-    version === RADAR_PROMPT_NEAREST
+    version === RADAR_PROMPT_NEAREST ||
+    version === RADAR_PROMPT_NO_PROFILE
   );
+}
+
+/**
+ * Whether it carries the channel's publication-history profile, when there is
+ * one: every version but the one that measures the profile by leaving it out.
+ */
+export function usesPublicationProfile(version: RadarPromptVersion): boolean {
+  return version !== RADAR_PROMPT_NO_PROFILE;
 }
 
 /** Whether it also carries the most similar posts the editor turned down. */
@@ -242,16 +258,18 @@ export function buildSystemPrompt(
       ? 'Most posts the editor sees are rejected.'
       : `Historically the editor publishes about ${Math.round(approvalRate * 100)}% of the posts they see.`;
 
-  const history = publicationProfile
+  // Dropped here, whatever the caller passed, so a version without it cannot carry it.
+  const shownProfile = usesPublicationProfile(promptVersion) ? publicationProfile : null;
+  const history = shownProfile
     ? `
 
 The channel's established identity, distilled from posts it has published in the past:
 <publication_history>
-${neutralise(renderPublicationProfile(publicationProfile))}
+${neutralise(renderPublicationProfile(shownProfile))}
 </publication_history>`
     : '';
 
-  const historyRule = publicationProfile
+  const historyRule = shownProfile
     ? `
 - The publication history is background: what the channel has been. A post that fits its established topics, angles and style deserves more confidence. It records only what was published, so a subject missing from it is no evidence the editor would reject it, and novelty alone is no reason for a low score.`
     : '';

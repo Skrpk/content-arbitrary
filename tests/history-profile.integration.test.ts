@@ -19,7 +19,7 @@ import { RadarError } from '@/lib/radar/output';
 import { ingestRadarBatch, submitRadarBackfill, waitForBatch } from '@/lib/radar/backfill';
 import { createRadarRun, runLiveRadar } from '@/lib/radar/shadow';
 import { loadTranslationStyle } from '@/lib/translation/translate';
-import { RADAR_PROMPT_BASELINE } from '@/lib/radar/prompt';
+import { RADAR_PROMPT_APPROVED, RADAR_PROMPT_BASELINE, RADAR_PROMPT_NO_PROFILE, type RadarPromptVersion } from '@/lib/radar/prompt';
 import { createTestLogger, ensureTestWorkspace } from './helpers';
 import { fakeProfiler, profileFixture } from './history-fakes';
 import { fakeAnthropic, fakeBatchProvider, messageResponse, radarOutput } from './radar-fakes';
@@ -325,7 +325,7 @@ describeIfDb('live Radar with a publication profile', () => {
 });
 
 describeIfDb('backfill and the publication profile', () => {
-  async function backfill() {
+  async function backfill(promptVersions: readonly RadarPromptVersion[] = BASELINE_ONLY) {
     // Decisions behind the candidate, so it is scored at all.
     await decidedPost({ decision: 'approve', createdAt: new Date('2026-09-01T00:00:00Z') });
     await decidedPost({ decision: 'reject', createdAt: new Date('2026-09-02T00:00:00Z') });
@@ -338,7 +338,7 @@ describeIfDb('backfill and the publication profile', () => {
 
     const fake = fakeBatchProvider('openai', () => ({ output: radarOutput() }));
     const submitted = await submitRadarBackfill({
-      promptVersions: BASELINE_ONLY,
+      promptVersions,
       db,
       provider: fake.provider,
       workspaceId: DEFAULT_WORKSPACE_ID,
@@ -351,9 +351,9 @@ describeIfDb('backfill and the publication profile', () => {
       await ingestRadarBatch({ db, provider: fake.provider, batchId, workspaceId: DEFAULT_WORKSPACE_ID, logger: createTestLogger() });
     }
 
-    const request = fake.submitted.flat().find((entry) => entry.json.includes('The candidate'))!;
-    const [row] = (await db.select().from(radarEvaluations)).filter((r) => r.processedPostId === candidate.id);
-    return { request, row: row! };
+    const requests = fake.submitted.flat().filter((entry) => entry.json.includes('The candidate'));
+    const rows = (await db.select().from(radarEvaluations)).filter((r) => r.processedPostId === candidate.id);
+    return { request: requests[0]!, row: rows[0]!, requests, rows, submitted };
   }
 
   it('leaves out a profile made from posts published after the candidate arrived', async () => {
@@ -374,6 +374,32 @@ describeIfDb('backfill and the publication profile', () => {
     expect(request.json).toContain('publication_history');
     expect(request.customId).toBe(`p${row.processedPostId}-text-h${profile.id}`);
     expect(row).toMatchObject({ status: 'ok', publicationHistoryProfileId: profile.id });
+  });
+
+  it('scores v3 with and without the profile on the same post, recording the second as without', async () => {
+    const profile = await storeProfile(new Date('2026-09-20T00:00:00Z'));
+
+    const { requests, rows } = await backfill([RADAR_PROMPT_APPROVED, RADAR_PROMPT_NO_PROFILE]);
+
+    const withProfile = requests.find((entry) => entry.customId.endsWith('-v3a'))!;
+    const without = requests.find((entry) => entry.customId.endsWith('-v3np'))!;
+    expect(withProfile.customId).toBe(`p${rows[0]!.processedPostId}-text-h${profile.id}-v3a`);
+    expect(without.customId).toBe(`p${rows[0]!.processedPostId}-text-v3np`);
+    expect(withProfile.json).toContain('publication_history');
+    expect(without.json).not.toContain('publication_history');
+    expect(Object.fromEntries(rows.map((row) => [row.promptVersion, row.publicationHistoryProfileId]))).toEqual({
+      [RADAR_PROMPT_APPROVED]: profile.id,
+      [RADAR_PROMPT_NO_PROFILE]: null,
+    });
+  });
+
+  it('does not score without the profile a post that had none to leave out', async () => {
+    await storeProfile(new Date('2026-10-05T00:00:00Z'));
+
+    const { requests, submitted } = await backfill([RADAR_PROMPT_APPROVED, RADAR_PROMPT_NO_PROFILE]);
+
+    expect(requests.map((entry) => entry.customId)).toEqual([expect.stringMatching(/-text-v3a$/)]);
+    expect(submitted.noProfileToLeaveOut).toBe(1);
   });
 });
 

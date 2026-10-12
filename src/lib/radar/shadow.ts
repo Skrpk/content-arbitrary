@@ -10,6 +10,7 @@ import {
   usesHistoryRetrieval,
   usesMediaUnderstanding,
   usesNearestDecisions,
+  usesPublicationProfile,
   usesRejectedRetrieval,
   type RadarImage,
   type RadarItem,
@@ -230,6 +231,7 @@ export async function scoreAndRecord(
       const withApproved = usesApprovedRetrieval(version);
       const withRejected = usesRejectedRetrieval(version);
       const withNearest = usesNearestDecisions(version);
+      const withProfile = usesPublicationProfile(version);
       const historyRetrieval = shown
         ? toRetrievalRecord(shown, { approved: withApproved, rejected: withRejected, nearest: withNearest })
         : null;
@@ -242,7 +244,7 @@ export async function scoreAndRecord(
             item: subject.item,
             examples: history.examples,
             image,
-            publicationProfile: publication?.profile ?? null,
+            publicationProfile: withProfile ? (publication?.profile ?? null) : null,
             promptVersion: version,
             similarPublications: shown?.matches ?? null,
             similarApproved: withApproved ? (shown?.approved?.matches ?? []) : null,
@@ -259,7 +261,7 @@ export async function scoreAndRecord(
           imageIncluded: Boolean(image),
           mediaUnderstandingId,
           examplePostIds,
-          publicationHistoryProfileId,
+          publicationHistoryProfileId: withProfile ? publicationHistoryProfileId : null,
           historyRetrieval,
           historicalAssessment: shown ? prediction.historicalAssessment : null,
           score: prediction.score,
@@ -290,7 +292,7 @@ export async function scoreAndRecord(
           imageIncluded: Boolean(image),
           mediaUnderstandingId,
           examplePostIds,
-          publicationHistoryProfileId,
+          publicationHistoryProfileId: withProfile ? publicationHistoryProfileId : null,
           historyRetrieval,
           inputTokens: usage?.inputTokens,
           outputTokens: usage?.outputTokens,
