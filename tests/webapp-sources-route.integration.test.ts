@@ -154,6 +154,8 @@ describeIfDb('GET /api/telegram/webapp/sources', () => {
           id: DEFAULT_WORKSPACE_ID,
           name: 'default',
           reviewDigestMinutes: 60,
+          reviewDigestHour: null,
+          reviewDigestTimezone: null,
           sources: [
             {
               id: mine.id,

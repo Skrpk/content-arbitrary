@@ -70,6 +70,14 @@ export const workspaces = pgTable('workspaces', {
    * own, with its buttons, the moment it arrives.
    */
   reviewDigestMinutes: integer('review_digest_minutes').default(60),
+  /**
+   * For an interval of a day or more: the hour of the day, 0–23, the
+   * notification goes out at, in `review_digest_timezone`. Null sends it
+   * whenever the interval has passed.
+   */
+  reviewDigestHour: integer('review_digest_hour'),
+  /** The IANA zone that hour is in — the reviewer's, as their browser said when they picked it. */
+  reviewDigestTimezone: text('review_digest_timezone'),
   /** When the last queue notification went out; null before the first. */
   reviewDigestSentAt: timestamp('review_digest_sent_at', { withTimezone: true }),
   /**
@@ -88,6 +96,11 @@ export const workspaces = pgTable('workspaces', {
   check(
     'workspaces_review_digest_minutes_check',
     sql`${table.reviewDigestMinutes} IS NULL OR ${table.reviewDigestMinutes} BETWEEN 15 AND 129600`,
+  ),
+  // An hour means nothing without the zone it is in.
+  check(
+    'workspaces_review_digest_hour_check',
+    sql`${table.reviewDigestHour} IS NULL OR (${table.reviewDigestHour} BETWEEN 0 AND 23 AND ${table.reviewDigestTimezone} IS NOT NULL)`,
   ),
 ]);
 

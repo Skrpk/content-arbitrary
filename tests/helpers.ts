@@ -98,6 +98,8 @@ export async function ensureTestWorkspace(db: Database): Promise<void> {
         language: null,
         postFooter: null,
         reviewDigestMinutes: 60,
+        reviewDigestHour: null,
+        reviewDigestTimezone: null,
         reviewDigestSentAt: null,
         reviewDigestCoveredUntil: null,
         reviewDigestMessageId: null,

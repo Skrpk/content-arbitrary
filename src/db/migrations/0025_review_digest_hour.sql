@@ -1,0 +1,3 @@
+ALTER TABLE "workspaces" ADD COLUMN "review_digest_hour" integer;--> statement-breakpoint
+ALTER TABLE "workspaces" ADD COLUMN "review_digest_timezone" text;--> statement-breakpoint
+ALTER TABLE "workspaces" ADD CONSTRAINT "workspaces_review_digest_hour_check" CHECK ("workspaces"."review_digest_hour" IS NULL OR ("workspaces"."review_digest_hour" BETWEEN 0 AND 23 AND "workspaces"."review_digest_timezone" IS NOT NULL));

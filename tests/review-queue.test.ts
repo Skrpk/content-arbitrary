@@ -1,14 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { buildReviewQueueUrl, formatReviewDigest, reviewDigestIsDue, reviewQueueButton } from '@/lib/review/queue';
+import {
+  buildReviewQueueUrl,
+  formatReviewDigest,
+  nextDigestAt,
+  reviewDigestIsDue,
+  reviewQueueButton,
+} from '@/lib/review/queue';
 import { usesReviewQueue } from '@/lib/workspace';
 
 const at = (iso: string) => new Date(iso);
 
 describe('when a queue notification is due', () => {
-  const hourly = { reviewDigestMinutes: 60, reviewDigestSentAt: at('2026-10-09T10:00:07Z') };
+  const anyHour = { reviewDigestHour: null, reviewDigestTimezone: null };
+  const hourly = { ...anyHour, reviewDigestMinutes: 60, reviewDigestSentAt: at('2026-10-09T10:00:07Z') };
 
   it('is due at once before the first one', () => {
-    expect(reviewDigestIsDue({ reviewDigestMinutes: 60, reviewDigestSentAt: null }, at('2026-10-09T10:00:00Z'))).toBe(true);
+    expect(reviewDigestIsDue({ ...anyHour, reviewDigestMinutes: 60, reviewDigestSentAt: null }, at('2026-10-09T10:00:00Z'))).toBe(true);
   });
 
   it('waits out the interval, give or take a cron run starting a few seconds early', () => {
@@ -17,7 +24,45 @@ describe('when a queue notification is due', () => {
   });
 
   it('is never due for a channel whose posts go to the chat', () => {
-    expect(reviewDigestIsDue({ reviewDigestMinutes: null, reviewDigestSentAt: null }, at('2026-10-09T10:00:00Z'))).toBe(false);
+    expect(reviewDigestIsDue({ ...anyHour, reviewDigestMinutes: null, reviewDigestSentAt: null }, at('2026-10-09T10:00:00Z'))).toBe(false);
+  });
+});
+
+describe('a daily notification at a chosen hour', () => {
+  const kyiv = { reviewDigestHour: 20, reviewDigestTimezone: 'Europe/Kyiv' };
+  const daily = { ...kyiv, reviewDigestMinutes: 24 * 60 };
+
+  it('waits for the hour, even before the first one', () => {
+    // 20:00 in Kyiv is 17:00 UTC in October (EEST, UTC+3).
+    expect(reviewDigestIsDue({ ...daily, reviewDigestSentAt: null }, at('2026-10-09T16:30:00Z'))).toBe(false);
+    expect(reviewDigestIsDue({ ...daily, reviewDigestSentAt: null }, at('2026-10-09T17:00:05Z'))).toBe(true);
+  });
+
+  it('comes the next evening, not a day after a late one', () => {
+    const sent = at('2026-10-09T17:14:00Z'); // 20:14, a cron run late
+    expect(nextDigestAt(sent, 24 * 60, 20, 'Europe/Kyiv')).toEqual(at('2026-10-10T17:00:00Z'));
+    expect(reviewDigestIsDue({ ...daily, reviewDigestSentAt: sent }, at('2026-10-10T16:45:00Z'))).toBe(false);
+    expect(reviewDigestIsDue({ ...daily, reviewDigestSentAt: sent }, at('2026-10-10T16:58:00Z'))).toBe(true);
+  });
+
+  it('keeps to 20:00 local when the clocks go back', () => {
+    // Kyiv leaves summer time on 25 October 2026: 20:00 is then 18:00 UTC.
+    expect(nextDigestAt(at('2026-10-24T17:00:00Z'), 24 * 60, 20, 'Europe/Kyiv')).toEqual(at('2026-10-25T18:00:00Z'));
+  });
+
+  it('moves when the hour is changed', () => {
+    const sent = at('2026-10-09T17:00:00Z'); // 20:00 yesterday evening
+    expect(nextDigestAt(sent, 24 * 60, 9, 'Europe/Kyiv')).toEqual(at('2026-10-10T06:00:00Z'));
+  });
+
+  it('keeps to the hour every few days and every week', () => {
+    expect(nextDigestAt(at('2026-10-09T17:02:00Z'), 7 * 24 * 60, 20, 'Europe/Kyiv')).toEqual(at('2026-10-16T17:00:00Z'));
+    expect(nextDigestAt(at('2026-10-09T17:02:00Z'), 3 * 24 * 60, 20, 'Europe/Kyiv')).toEqual(at('2026-10-12T17:00:00Z'));
+  });
+
+  it('is ignored for intervals shorter than a day', () => {
+    const hourly = { ...kyiv, reviewDigestMinutes: 60, reviewDigestSentAt: at('2026-10-09T10:00:00Z') };
+    expect(reviewDigestIsDue(hourly, at('2026-10-09T11:00:00Z'))).toBe(true);
   });
 });
 

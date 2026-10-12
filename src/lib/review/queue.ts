@@ -179,18 +179,81 @@ export async function loadReviewQueue(
 }
 
 /**
- * Whether a channel's interval has passed since its last notification. The
- * first one is due at once; whether there is anything to tell is asked
- * separately.
+ * Whether a channel's notification is due. The first one is due at once — or,
+ * with an hour set, at that hour — and whether there is anything to tell is
+ * asked separately.
+ *
+ * Without an hour: once the interval has passed since the last one. With an
+ * hour (intervals of a day or more): at that hour, local to the reviewer, on
+ * the day the interval comes round — so a daily notification keeps to the
+ * evening across the clocks changing, and moving the hour moves the next one.
  */
 export function reviewDigestIsDue(
-  workspace: Pick<Workspace, 'reviewDigestMinutes' | 'reviewDigestSentAt'>,
+  workspace: Pick<Workspace, 'reviewDigestMinutes' | 'reviewDigestSentAt' | 'reviewDigestHour' | 'reviewDigestTimezone'>,
   now: Date,
 ): boolean {
-  if (workspace.reviewDigestMinutes === null) return false;
-  if (!workspace.reviewDigestSentAt) return true;
-  const interval = workspace.reviewDigestMinutes * 60 * 1000;
-  return now.getTime() - workspace.reviewDigestSentAt.getTime() >= interval - REVIEW_DIGEST_SLACK_MS;
+  const minutes = workspace.reviewDigestMinutes;
+  if (minutes === null) return false;
+  const sentAt = workspace.reviewDigestSentAt;
+  const { reviewDigestHour: hour, reviewDigestTimezone: timeZone } = workspace;
+
+  if (hour !== null && timeZone && minutes >= DAY_MINUTES) {
+    const next = sentAt ? nextDigestAt(sentAt, minutes, hour, timeZone) : hourOnLocalDay(now, hour, timeZone);
+    return now.getTime() >= next.getTime() - REVIEW_DIGEST_SLACK_MS;
+  }
+
+  if (!sentAt) return true;
+  return now.getTime() - sentAt.getTime() >= minutes * 60 * 1000 - REVIEW_DIGEST_SLACK_MS;
+}
+
+const DAY_MINUTES = 24 * 60;
+const DAY_MS = DAY_MINUTES * 60 * 1000;
+
+/**
+ * When the notification after one sent at `sentAt` goes out: the interval
+ * on, at the hour — on whichever day puts the hour nearest to that, so a
+ * notification sent a few minutes late does not push the next one a day.
+ */
+export function nextDigestAt(sentAt: Date, minutes: number, hour: number, timeZone: string): Date {
+  const target = new Date(sentAt.getTime() + minutes * 60 * 1000);
+  let slot = hourOnLocalDay(target, hour, timeZone);
+  if (slot.getTime() - target.getTime() > DAY_MS / 2) slot = hourOnLocalDay(new Date(target.getTime() - DAY_MS), hour, timeZone);
+  else if (target.getTime() - slot.getTime() > DAY_MS / 2) slot = hourOnLocalDay(new Date(target.getTime() + DAY_MS), hour, timeZone);
+  return slot;
+}
+
+/** `hour`:00 in `timeZone` on the local calendar day `at` falls on there. */
+function hourOnLocalDay(at: Date, hour: number, timeZone: string): Date {
+  const { year, month, day } = localParts(at, timeZone);
+  const asIfUtc = Date.UTC(year, month - 1, day, hour);
+  // The zone's offset at that moment, found twice: the first guess may sit on
+  // the other side of a clock change.
+  const first = asIfUtc - offsetMs(new Date(asIfUtc), timeZone);
+  return new Date(asIfUtc - offsetMs(new Date(first), timeZone));
+}
+
+function localParts(at: Date, timeZone: string) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
+      .formatToParts(at)
+      .map((part) => [part.type, Number(part.value)]),
+  ) as Record<'year' | 'month' | 'day' | 'hour' | 'minute' | 'second', number>;
+  return parts;
+}
+
+/** How far ahead of UTC `timeZone` is at `at`, in milliseconds. */
+function offsetMs(at: Date, timeZone: string): number {
+  const p = localParts(at, timeZone);
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(at.getTime() / 1000) * 1000;
 }
 
 /** The notification's text. Telegram HTML: the channel's name is escaped. */

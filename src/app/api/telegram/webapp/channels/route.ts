@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { describeError } from '@/lib/errors';
+import { isKnownTimeZone } from '@/lib/sync/approval';
 import { authorizeReviewer, json } from '@/lib/telegram/webapp-request';
 import {
   REVIEW_DIGEST_MINUTES_MAX,
@@ -25,8 +26,15 @@ const updateSchema = z
     workspaceId: z.number().int().positive(),
     /** Minutes between queue notifications, or null for each post in the chat. */
     reviewDigestMinutes: z.number().int().min(REVIEW_DIGEST_MINUTES_MIN).max(REVIEW_DIGEST_MINUTES_MAX).nullable(),
+    /** For a day or more: the hour, 0–23, in `timezone`; null for whenever it is due; absent to keep it. */
+    reviewDigestHour: z.number().int().min(0).max(23).nullable().optional(),
+    /** The browser's IANA zone, which the hour is in. */
+    timezone: z.string().max(64).refine(isKnownTimeZone, 'unknown time zone').optional(),
   })
-  .strict();
+  .strict()
+  .refine((body) => body.reviewDigestHour === undefined || body.reviewDigestHour === null || body.timezone, {
+    message: 'an hour needs its time zone',
+  });
 
 export async function POST(request: Request): Promise<Response> {
   let auth: Awaited<ReturnType<typeof authorizeReviewer>>;
@@ -49,16 +57,25 @@ export async function POST(request: Request): Promise<Response> {
     workspaceId: body.workspaceId,
     reviewerWorkspaceIds: auth.workspaces.map((workspace) => workspace.id),
     minutes: body.reviewDigestMinutes,
+    hour:
+      body.reviewDigestHour === undefined
+        ? undefined
+        : body.reviewDigestHour === null
+          ? null
+          : { hour: body.reviewDigestHour, timeZone: body.timezone! },
   });
   if (!updated) return json({ error: 'No such channel.' }, 404);
 
   auth.logger.info('webapp.review_digest_changed', {
     workspaceId: updated.id,
     reviewDigestMinutes: updated.reviewDigestMinutes,
+    reviewDigestHour: updated.reviewDigestHour,
   });
   return json({
     id: updated.id,
     reviewDigestMinutes: updated.reviewDigestMinutes,
+    reviewDigestHour: updated.reviewDigestHour,
+    reviewDigestTimezone: updated.reviewDigestTimezone,
     // A queue needs the Mini App; without it posts still come to the chat.
     queueActive: usesReviewQueue(updated, auth.env),
   });

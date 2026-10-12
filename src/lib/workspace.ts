@@ -245,18 +245,31 @@ export const REVIEW_DIGEST_MINUTES_MAX = 90 * 24 * 60;
 
 /**
  * Set how often a channel's reviewer hears about its review queue, in minutes,
- * or null to have each post sent to the chat as it arrives. Scoped to the
- * workspaces the caller reviews for; returns the updated row, or null for one
- * that is not theirs.
+ * or null to have each post sent to the chat as it arrives — and, for a day
+ * or more, the hour it comes at, in the reviewer's zone; an hour left
+ * undefined is kept as it was. Scoped to the workspaces the caller reviews
+ * for; returns the updated row, or null for one that is not theirs.
  */
 export async function setReviewDigestMinutes(
   db: Database,
-  input: { workspaceId: number; reviewerWorkspaceIds: number[]; minutes: number | null },
+  input: {
+    workspaceId: number;
+    reviewerWorkspaceIds: number[];
+    minutes: number | null;
+    /** Null for "whenever the interval has passed". */
+    hour?: { hour: number; timeZone: string } | null;
+  },
 ): Promise<Workspace | null> {
   if (!input.reviewerWorkspaceIds.includes(input.workspaceId)) return null;
   const rows = await db
     .update(workspaces)
-    .set({ reviewDigestMinutes: input.minutes, updatedAt: new Date() })
+    .set({
+      reviewDigestMinutes: input.minutes,
+      ...(input.hour === undefined
+        ? {}
+        : { reviewDigestHour: input.hour?.hour ?? null, reviewDigestTimezone: input.hour?.timeZone ?? null }),
+      updatedAt: new Date(),
+    })
     .where(eq(workspaces.id, input.workspaceId))
     .returning();
   return rows[0] ?? null;

@@ -32,6 +32,9 @@ interface ChannelView {
   name: string;
   /** Minutes between review queue notifications; null sends each post to the chat. */
   reviewDigestMinutes: number | null;
+  /** For a day or more: the hour it comes at, in `reviewDigestTimezone`; null for whenever it is due. */
+  reviewDigestHour: number | null;
+  reviewDigestTimezone: string | null;
   sources: SourceView[];
 }
 
@@ -191,12 +194,22 @@ export function SettingsPanel({ request }: Pick<PanelTools, 'request'>) {
   }, [request]);
 
   /** Save how often a channel's reviewer hears about the queue: shown at once, put back if refused. */
-  const saveDigest = useCallback(async (channel: ChannelView, minutes: number | null) => {
-    const previous = channel.reviewDigestMinutes;
-    const apply = (next: number | null) =>
-      setChannels((all) => all.map((item) => (item.id === channel.id ? { ...item, reviewDigestMinutes: next } : item)));
+  const saveDigest = useCallback(async (channel: ChannelView, minutes: number | null, hour?: number | null) => {
+    const previous = {
+      reviewDigestMinutes: channel.reviewDigestMinutes,
+      reviewDigestHour: channel.reviewDigestHour,
+      reviewDigestTimezone: channel.reviewDigestTimezone,
+    };
+    // The hour is in this browser's zone — the reviewer's own, wherever they are.
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const next = {
+      reviewDigestMinutes: minutes,
+      ...(hour === undefined ? {} : { reviewDigestHour: hour, reviewDigestTimezone: hour === null ? null : timezone }),
+    };
+    const apply = (change: Partial<ChannelView>) =>
+      setChannels((all) => all.map((item) => (item.id === channel.id ? { ...item, ...change } : item)));
 
-    apply(minutes);
+    apply(next);
     setSavingDigest((current) => new Set(current).add(channel.id));
     setDigestMessage(null);
 
@@ -204,7 +217,11 @@ export function SettingsPanel({ request }: Pick<PanelTools, 'request'>) {
       const response = await request('/api/telegram/webapp/channels', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ workspaceId: channel.id, reviewDigestMinutes: minutes }),
+        body: JSON.stringify({
+          workspaceId: channel.id,
+          reviewDigestMinutes: minutes,
+          ...(hour === undefined ? {} : { reviewDigestHour: hour, ...(hour === null ? {} : { timezone }) }),
+        }),
       });
       const body = (await response.json()) as { error?: string; queueActive?: boolean };
       if (!response.ok) throw new Error(body.error ?? `Save failed (${response.status})`);
@@ -385,6 +402,36 @@ export function SettingsPanel({ request }: Pick<PanelTools, 'request'>) {
                       >
                         Save
                       </button>
+                    </div>
+                  ) : null}
+                  {channel.reviewDigestMinutes !== null && channel.reviewDigestMinutes >= DAY_MINUTES ? (
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem' }}>
+                      <span>at</span>
+                      <select
+                        value={channel.reviewDigestHour === null ? 'any' : String(channel.reviewDigestHour)}
+                        disabled={busy}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          void saveDigest(channel, channel.reviewDigestMinutes, value === 'any' ? null : Number(value));
+                        }}
+                        style={{ ...inputStyle, width: 'auto', flex: 1 }}
+                      >
+                        <option value="any">any time — as soon as it is due</option>
+                        {Array.from({ length: 24 }, (_, hour) => (
+                          <option key={hour} value={hour}>
+                            {String(hour).padStart(2, '0')}:00
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : null}
+                  {channel.reviewDigestHour !== null &&
+                  channel.reviewDigestTimezone &&
+                  channel.reviewDigestMinutes !== null &&
+                  channel.reviewDigestMinutes >= DAY_MINUTES ? (
+                    <div style={{ color: theme.hint, fontSize: '0.75rem', marginTop: '0.2rem' }}>
+                      Your time, {channel.reviewDigestTimezone.replace(/_/g, ' ')} — kept when the clocks change. Sent
+                      only when something new has come in.
                     </div>
                   ) : null}
                 </div>

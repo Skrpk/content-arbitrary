@@ -891,7 +891,10 @@ X ──► cron ──► review queue ──(at most once an hour)──► "�
 
 - **How often** is per channel, under ⚙️ Settings: every 15 minutes, every hour (the default),
   every 3, 6 or 12 hours, once a day, every few days, once a week — or **each post in the
-  chat**, as it arrives, which is the per-post flow described below. A notification goes out
+  chat**, as it arrives, which is the per-post flow described below. For a day or more you can
+  also pick **the hour** it comes at — in your own time zone, as your browser gives it, and kept
+  through the clocks changing (`review_digest_hour`, `review_digest_timezone`). The cron runs
+  every 15 minutes, so it arrives within a quarter of an hour of it. A notification goes out
   only when a post has joined the queue since the last one, so a quiet stretch sends nothing,
   and each one replaces the one before (Telegram lets a bot delete its own message for 48
   hours; an older one simply stays).

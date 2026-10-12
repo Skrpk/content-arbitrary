@@ -176,6 +176,13 @@
       "when": 1791557902388,
       "tag": "0024_user_review_link",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1791563925523,
+      "tag": "0025_review_digest_hour",
+      "breakpoints": true
     }
   ]
 }

@@ -554,11 +554,40 @@ describeIfDb('a queued post scheduled for later', () => {
 describeIfDb('POST /api/telegram/webapp/channels', () => {
   it('sets how often the queue is announced, or turns it off for the chat', async () => {
     const hourly = await setInterval({ workspaceId: DEFAULT_WORKSPACE_ID, reviewDigestMinutes: 180 });
-    expect(await hourly.json()).toEqual({ id: DEFAULT_WORKSPACE_ID, reviewDigestMinutes: 180, queueActive: true });
+    expect(await hourly.json()).toEqual({
+      id: DEFAULT_WORKSPACE_ID,
+      reviewDigestMinutes: 180,
+      reviewDigestHour: null,
+      reviewDigestTimezone: null,
+      queueActive: true,
+    });
 
     const chat = await setInterval({ workspaceId: DEFAULT_WORKSPACE_ID, reviewDigestMinutes: null });
     expect(await chat.json()).toMatchObject({ reviewDigestMinutes: null, queueActive: false });
     expect((await workspaceRow()).reviewDigestMinutes).toBeNull();
+  });
+
+  it('sets the hour a daily notification comes at, in the reviewer’s zone, and keeps it when the interval changes', async () => {
+    const daily = await setInterval({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      reviewDigestMinutes: 1440,
+      reviewDigestHour: 20,
+      timezone: 'Europe/Kyiv',
+    });
+    expect(await daily.json()).toMatchObject({ reviewDigestHour: 20, reviewDigestTimezone: 'Europe/Kyiv' });
+
+    await setInterval({ workspaceId: DEFAULT_WORKSPACE_ID, reviewDigestMinutes: 10080 });
+    expect(await workspaceRow()).toMatchObject({ reviewDigestMinutes: 10080, reviewDigestHour: 20 });
+
+    await setInterval({ workspaceId: DEFAULT_WORKSPACE_ID, reviewDigestMinutes: 1440, reviewDigestHour: null });
+    expect(await workspaceRow()).toMatchObject({ reviewDigestHour: null, reviewDigestTimezone: null });
+  });
+
+  it('refuses an hour without its zone, or with a zone that does not exist', async () => {
+    const base = { workspaceId: DEFAULT_WORKSPACE_ID, reviewDigestMinutes: 1440, reviewDigestHour: 20 };
+    expect((await setInterval(base)).status).toBe(400);
+    expect((await setInterval({ ...base, timezone: 'Mars/Olympus' })).status).toBe(400);
+    expect((await setInterval({ ...base, reviewDigestHour: 24, timezone: 'Europe/Kyiv' })).status).toBe(400);
   });
 
   it('refuses an interval outside one cron run to ninety days, and another reviewer’s channel', async () => {
