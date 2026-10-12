@@ -556,10 +556,12 @@ async function processTextPost(
  * How a post names its source in its own text. A feed entry ends with its
  * article's link — a summary without it would leave readers nowhere to go —
  * and the preview card Telegram draws for it is the post's picture. An X post
- * follows sourceLineInPost.
+ * follows sourceLineInPost, and so does a Telegram channel's, naming its own
+ * link rather than one on x.com.
  */
 function sourceFraming(post: NormalizedPost, env: Env): { includeSourceLink: boolean; sourceLine?: string } {
   if (post.platform === 'rss') return post.url ? { includeSourceLink: true, sourceLine: post.url } : { includeSourceLink: false };
+  if (post.platform === 'telegram') return { includeSourceLink: sourceLineInPost(env), sourceLine: `Source: ${post.url}` };
   return { includeSourceLink: sourceLineInPost(env) };
 }
 

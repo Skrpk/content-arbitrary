@@ -1,13 +1,13 @@
 import { and, count, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { processedPosts, workspaces, type ReviewLinkTarget, type Workspace } from '@/db/schema';
+import { processedPosts, workspaces, type ReviewLinkTarget, type SourcePlatform, type Workspace } from '@/db/schema';
 import type { Database } from '@/lib/db';
 import type { Env } from '@/lib/env';
 import { describeError } from '@/lib/errors';
 import type { Logger } from '@/lib/logger';
 import { findReviewScores, type ReviewScore } from '@/lib/radar/review-note';
 import { richDocumentPlainText } from '@/lib/rich/document';
-import { isRssItemId, sourceLabelOfPost } from '@/lib/sources/display';
+import { platformOfPostId, sourceLabelOfPost } from '@/lib/sources/display';
 import type { TelegramClient } from '@/lib/telegram/client';
 import type { InlineKeyboardButton } from '@/lib/telegram/send-media';
 import { reviewLinkFor } from '@/lib/accounts/users';
@@ -99,10 +99,10 @@ export async function countReviewQueue(
 /** One post on the queue page — everything shown, nothing that is not. */
 export interface ReviewQueueItem {
   id: number;
-  platform: 'x' | 'rss';
-  /** `@handle`, or a feed's title. */
+  platform: SourcePlatform;
+  /** `@handle`, a channel's `@username`, or a feed's title. */
   sourceLabel: string | null;
-  /** The post on X, or the feed entry's article; empty when it links nowhere. */
+  /** The post on X or in its channel, or the feed entry's article; empty when it links nowhere. */
   url: string;
   /** When the author posted it, as the source reported; null when it did not say. */
   postedAt: string | null;
@@ -162,7 +162,7 @@ export async function loadReviewQueue(
 
     return {
       id: row.id,
-      platform: isRssItemId(row.xPostId) ? 'rss' : 'x',
+      platform: platformOfPostId(row.xPostId),
       sourceLabel: sourceLabelOfPost(row.xPostId, row.xAuthorUsername),
       url: row.xPostUrl,
       postedAt: (row.xCreatedAt ?? row.createdAt).toISOString(),

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { RssBadge } from '@/app/(app)/rss-badge';
+import { PlatformBadge } from '@/app/(app)/platform-badge';
 import { readJson, type PanelTools } from '@/components/panel-tools';
 import { theme } from '@/lib/telegram/webapp-client';
 
@@ -20,11 +20,13 @@ type Period = '7d' | '30d' | 'all';
 
 interface SourceView {
   sourceId: number;
-  platform: 'x' | 'rss';
+  platform: 'x' | 'rss' | 'telegram';
   username: string;
-  /** `@handle`, or a feed's title. */
+  /** `@handle` (X or a Telegram channel), or a feed's title. */
   label: string;
   feedUrl: string | null;
+  /** A Telegram channel's t.me link. */
+  channelUrl: string | null;
   enabled: boolean;
   posts: number;
   approved: number;
@@ -341,7 +343,7 @@ export function SourceStatsPanel({ request, confirm }: Pick<PanelTools, 'request
                     >
                       <span style={{ fontWeight: 600 }}>
                         {source.label}
-                        {source.platform === 'rss' ? <RssBadge /> : null}
+                        <PlatformBadge platform={source.platform} />
                         {source.enabled ? null : (
                           <span style={{ color: theme.hint, fontWeight: 400, fontSize: '0.8rem' }}> · paused</span>
                         )}
@@ -390,7 +392,7 @@ export function SourceStatsPanel({ request, confirm }: Pick<PanelTools, 'request
 
                     <div style={{ fontSize: '0.8rem', color: theme.hint, marginTop: '0.25rem' }}>
                       {source.readCostUsd === null
-                        ? `${hostOf(source.feedUrl)} · no read cost`
+                        ? `${hostOf(source.feedUrl ?? source.channelUrl)} · no read cost`
                         : `X reads ≈ ${dollars(source.readCostUsd)} · ${dollars(source.costPerApprovedUsd)} per approved`}{' '}
                       · last post {ago(source.lastPostAt)}
                     </div>

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Workspace } from '@/db/schema';
+import type { SourcePlatform, Workspace } from '@/db/schema';
 import { getDb, getSql, type Database } from '@/lib/db';
 import { getEnv, type Env } from '@/lib/env';
 import { describeError } from '@/lib/errors';
@@ -32,6 +32,8 @@ import { createImageUnderstander, type ImageUnderstander } from '@/lib/media/pro
 import { mediaUnderstandingConfig } from '@/lib/media/understanding';
 import { syncXSource } from '@/lib/sync/sync-x-source';
 import { syncRssSource } from '@/lib/sync/sync-rss-source';
+import { syncTelegramSource } from '@/lib/sync/sync-telegram-source';
+import type { FetchChannelOptions } from '@/lib/telegram-channel/client';
 import { sendReviewDigest } from '@/lib/review/queue';
 import {
   channelLabelFor,
@@ -89,6 +91,8 @@ export interface SyncOptions {
   translationProvider?: RadarProvider | null;
   /** How RSS / Atom feeds are fetched; injected by tests. */
   feedFetch?: FetchFeedOptions;
+  /** How public Telegram channels' pages are fetched; injected by tests. */
+  channelFetch?: FetchChannelOptions;
   /** Overrides the model that looks at a post's first image; injected by tests. */
   imageUnderstander?: ImageUnderstander | null;
   /** Overrides when the run stops taking new posts (epoch ms); injected by tests. */
@@ -298,12 +302,14 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
             now,
           };
 
-          // Neither ever throws; a failure is reported in its summary so the
-          // remaining sources — of either platform — and tenants get their turn.
+          // None ever throws; a failure is reported in its summary so the
+          // remaining sources — of any platform — and tenants get their turn.
           const sourceSummary =
             source.platform === 'rss'
               ? await syncRssSource(source, { ...shared, feedFetch: options.feedFetch })
-              : await syncXSource(source, { ...shared, xClient });
+              : source.platform === 'telegram'
+                ? await syncTelegramSource(source, { ...shared, channelFetch: options.channelFetch })
+                : await syncXSource(source, { ...shared, xClient });
           if (sourceSummary.stoppedForTime) summary.timeBudgetReached = true;
 
           summary.sources.push(sourceSummary);
@@ -340,7 +346,7 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
       summary.error =
         `${failedSources.length} of ${summary.sources.length} source(s) failed: ` +
         failedSources
-          .map((source) => `${formatSourceLabel(source.platform === 'rss' ? 'rss' : 'x', source.username)} (${source.error})`)
+          .map((source) => `${formatSourceLabel(source.platform as SourcePlatform, source.username)} (${source.error})`)
           .join('; ');
     }
 

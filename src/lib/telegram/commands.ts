@@ -5,6 +5,8 @@ import { escapeHtml } from '@/lib/telegram/format-caption';
 import { normalizeXUsername } from '@/lib/sources/normalize';
 import { addSource, updateSourceUsername } from '@/lib/sources/repository';
 import { addRssSource } from '@/lib/sources/add-rss';
+import { addTelegramSource } from '@/lib/sources/add-telegram';
+import type { FetchChannelOptions } from '@/lib/telegram-channel/client';
 import type { FetchFeedOptions } from '@/lib/rss/client';
 import { sourceLabelOfPost } from '@/lib/sources/display';
 import type { XClient } from '@/lib/x/client';
@@ -97,6 +99,8 @@ export interface CommandContext {
   workspaces?: WorkspaceRef[];
   /** How /addrss fetches the feed it checks; injected by tests. */
   feedFetch?: FetchFeedOptions;
+  /** How /addtelegram reads the channel's page; injected by tests. */
+  channelFetch?: FetchChannelOptions;
 }
 
 /**
@@ -162,6 +166,7 @@ export const BOT_COMMANDS: { command: string; description: string }[] = [
   { command: 'sourcestats', description: 'How each source performs: posts, approvals, cost' },
   { command: 'addsource', description: 'Start watching an account: /addsource @username' },
   { command: 'addrss', description: 'Start watching an RSS or Atom feed: /addrss <feed URL>' },
+  { command: 'addtelegram', description: 'Start watching a public Telegram channel: /addtelegram @channel' },
   { command: 'scheduled', description: 'Posts waiting to be published at a set time' },
   { command: 'help', description: 'What the bot can do' },
 ];
@@ -172,6 +177,7 @@ const HELP_TEXT = [
   '/sourcestats — every source and how it performs: posts, approvals, cost',
   '/addsource @username — start watching an account',
   '/addrss &lt;feed URL&gt; — start watching an RSS or Atom feed (with several channels: /addrss &lt;channel id&gt; &lt;feed URL&gt;)',
+  '/addtelegram @channel — start watching a public Telegram channel (with several channels: /addtelegram &lt;channel id&gt; @channel)',
   '',
   'Pause, resume or remove a source with the buttons under it in /sourcestats; options such as mirroring ' +
     'posts without media are under its ⚙️ Settings button.',
@@ -208,6 +214,10 @@ export async function handleAddSource(
   context: CommandContext,
   args: string,
 ): Promise<CommandReply> {
+  // A t.me link is a Telegram channel, never an X account.
+  if (/^(?:https?:\/\/)?(?:www\.)?(?:t|telegram)\.me\//i.test(args.trim())) {
+    return { text: 'That is a Telegram link — add a channel with <code>/addtelegram @channel</code>.' };
+  }
   const resolved = await resolveHandleArgument(args, '/addsource @username');
   if (!resolved.ok) return { text: resolved.reply };
 
@@ -317,6 +327,64 @@ export async function handleAddRss(context: CommandContext, args: string): Promi
       `${where}✅ <b>RSS source added</b>\n\n${escapeHtml(result.title)}\n${escapeHtml(result.source.externalId)}\n\n` +
       `${result.entries} ${result.entries === 1 ? 'entry' : 'entries'} currently in the feed. ` +
       'They will not be sent — only entries that appear from now on come to review.',
+    offerSettings: true,
+  };
+}
+
+/**
+ * /addtelegram @channel, or /addtelegram <channel id> @channel for a reviewer
+ * of several channels — the same shape as /addrss.
+ */
+export async function handleAddTelegram(context: CommandContext, args: string): Promise<CommandReply> {
+  const channels = channelsOf(context);
+  const parts = args.split(/\s+/).filter(Boolean);
+  const usage = channels.length > 1 ? '/addtelegram <channel id> @channel' : '/addtelegram @channel';
+
+  let workspaceId = context.workspaceId;
+  let channel = parts[0] ?? '';
+  if (parts.length === 2 && /^\d+$/.test(parts[0]!)) {
+    workspaceId = Number(parts[0]);
+    channel = parts[1]!;
+    if (!channels.some((choice) => choice.id === workspaceId)) {
+      return { text: '⚠️ That channel is not one of yours.' };
+    }
+  } else if (parts.length !== 1) {
+    return { text: `Usage: <code>${escapeHtml(usage)}</code>` };
+  } else if (channels.length > 1) {
+    return {
+      text: [
+        'You review several channels — say which one it is for:',
+        '',
+        ...channels.map((choice) => `${choice.id} — ${escapeHtml(choice.name)}`),
+        '',
+        `<code>/addtelegram ${channels[0]!.id} ${escapeHtml(channel)}</code>`,
+        '',
+        'Or use ➕ Add in ⚙️ Settings.',
+      ].join('\n'),
+      offerSettings: true,
+    };
+  }
+
+  const result = await addTelegramSource(context.db, {
+    channel,
+    workspaceId,
+    channelFetch: context.channelFetch,
+    logger: context.logger,
+  });
+  if (!result.ok) return { text: `⚠️ ${escapeHtml(result.reason)}` };
+
+  const where = channels.length > 1 ? `📢 ${escapeHtml(channels.find((c) => c.id === workspaceId)!.name)}\n\n` : '';
+  const label = `@${escapeHtml(result.source.username)}`;
+  if (!result.created) {
+    const note = result.source.enabled ? '' : '\n\nIt is currently paused — resume it in /sourcestats.';
+    return { text: `${where}ℹ️ <b>${label}</b> is already in your sources.${note}`, offerSettings: true };
+  }
+
+  return {
+    text:
+      `${where}✅ <b>Telegram channel added</b>\n\n${escapeHtml(result.title)} · ${label}\n\n` +
+      'Posts with photos or videos only, from now on — what it has posted so far is not sent. ' +
+      'Use Settings to mirror text posts too.',
     offerSettings: true,
   };
 }
@@ -476,6 +544,8 @@ export async function dispatchCommand(
       };
     case 'addrss':
       return handleAddRss(context, parsed.args);
+    case 'addtelegram':
+      return handleAddTelegram(context, parsed.args);
     case 'addsource':
       return channels.length > 1
         ? sourceCommandAcrossChannels(context, command, parsed.args, channels)

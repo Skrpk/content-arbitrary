@@ -33,14 +33,15 @@ export interface NormalizedMedia {
 
 /**
  * A post reduced to only what the publisher needs — from X, or a feed entry
- * (src/lib/rss/normalize.ts) in the same shape.
+ * (src/lib/rss/normalize.ts) or a Telegram channel post
+ * (src/lib/telegram-channel/normalize.ts) in the same shape.
  */
 export interface NormalizedPost {
   /** Where it came from; absent means X, as every post did before feeds. */
-  platform?: 'x' | 'rss';
-  /** X's post id, or a feed item's namespaced id (`rss:…`). */
+  platform?: 'x' | 'rss' | 'telegram';
+  /** X's post id, a feed item's namespaced id (`rss:…`), or a channel post's (`tg:…`). */
   id: string;
-  /** The post on X, or the article a feed entry links to — empty when it links nowhere. */
+  /** The post on X or in its Telegram channel, or the article a feed entry links to — empty when it links nowhere. */
   url: string;
   authorUsername: string;
   createdAt: Date | null;

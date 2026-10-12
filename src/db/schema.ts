@@ -241,11 +241,11 @@ export const DEFAULT_WORKSPACE_ID = 1;
 /**
  * Platforms a source can come from.
  *
- * X accounts, and RSS / Atom feeds. The column is deliberately not named
- * `x_...` anywhere, so another platform is one enum value plus a fetcher, not
- * a schema reshape.
+ * X accounts, RSS / Atom feeds, and public Telegram channels. The column is
+ * deliberately not named `x_...` anywhere, so another platform is one enum
+ * value plus a fetcher, not a schema reshape.
  */
-export const sourcePlatformEnum = pgEnum('source_platform', ['x', 'rss']);
+export const sourcePlatformEnum = pgEnum('source_platform', ['x', 'rss', 'telegram']);
 
 export type SourcePlatform = (typeof sourcePlatformEnum.enumValues)[number];
 
@@ -255,7 +255,8 @@ export type SourcePlatform = (typeof sourcePlatformEnum.enumValues)[number];
  *
  * `external_id` is the canonical identity — an X user id never changes, while a
  * handle can be renamed or taken over by someone else; for a feed, its
- * normalised URL. `username` is therefore cached display data, refreshed when
+ * normalised URL; for a Telegram channel, its lower-cased username, the only
+ * identity its public page offers (a renamed channel is a new source). `username` is therefore cached display data, refreshed when
  * we happen to learn a new one, and is never used to decide whether two rows
  * are the same source. For a feed it holds the feed's title, shown without an
  * `@` — see formatSourceLabel.

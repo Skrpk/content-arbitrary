@@ -14,6 +14,7 @@ import {
 } from '@/db/schema';
 import { DELETE, GET, POST } from '@/app/api/telegram/webapp/sources/route';
 import { POST as ADD_RSS } from '@/app/api/telegram/webapp/sources/rss/route';
+import { POST as ADD_TELEGRAM } from '@/app/api/telegram/webapp/sources/telegram/route';
 
 // The feed a test adds, without the network: only fetching is replaced.
 const feedXml = vi.hoisted(() => ({ value: '' }));
@@ -21,7 +22,24 @@ vi.mock('@/lib/rss/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/rss/client')>()),
   fetchFeed: async (url: string) => ({ xml: feedXml.value, finalUrl: url }),
 }));
+// The channel page a test adds, likewise; null when t.me has no public page for it.
+const channelHtml = vi.hoisted(() => ({ value: null as string | null }));
+vi.mock('@/lib/telegram-channel/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/telegram-channel/client')>();
+  const { ChannelPageError } = await import('@/lib/errors');
+  const { parseChannelPage } = await import('@/lib/telegram-channel/parser');
+  return {
+    ...actual,
+    fetchChannelPage: async () => {
+      if (channelHtml.value === null) {
+        throw new ChannelPageError('No public channel by that name', { transient: false, code: 'channel_no_preview' });
+      }
+      return parseChannelPage(channelHtml.value);
+    },
+  };
+});
 import { ensureTestWorkspace, withEnv } from './helpers';
+import { CDN, channelPage } from './channel-page-fakes';
 
 /**
  * The settings Mini App endpoint end to end: a signed request, the tenant
@@ -163,6 +181,7 @@ describeIfDb('GET /api/telegram/webapp/sources', () => {
               username: 'alpha',
               label: '@alpha',
               feedUrl: null,
+              channelUrl: null,
               enabled: true,
               includeTextOnly: false,
             },
@@ -190,6 +209,7 @@ describeIfDb('POST /api/telegram/webapp/sources', () => {
         username: 'alpha',
         label: '@alpha',
         feedUrl: null,
+        channelUrl: null,
         enabled: true,
         includeTextOnly: true,
       },
@@ -334,6 +354,46 @@ describeIfDb('POST /api/telegram/webapp/sources/rss', () => {
 
     expect((await add({ url: FEED, workspaceId: DEFAULT_WORKSPACE_ID }, auth(STRANGER_ID))).status).toBe(401);
     expect((await add({ url: 'http://169.254.169.254/', workspaceId: DEFAULT_WORKSPACE_ID })).status).toBe(422);
+    expect(await db.select().from(sources)).toEqual([]);
+  });
+});
+
+describeIfDb('POST /api/telegram/webapp/sources/telegram', () => {
+  const add = (body: unknown, authorization = auth()) =>
+    withEnv(routeEnv, () =>
+      ADD_TELEGRAM(
+        new Request('https://example.vercel.app/api/telegram/webapp/sources/telegram', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization },
+          body: JSON.stringify(body),
+        }),
+      ),
+    );
+
+  beforeEach(() => {
+    channelHtml.value = channelPage([{ id: 1, text: 'Hello', photos: [`${CDN}/a.jpg`] }]);
+  });
+
+  it('adds a public channel to the channel picked, with its link', async () => {
+    const response = await add({ channel: 'https://t.me/SpaceNews', workspaceId: DEFAULT_WORKSPACE_ID });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      created: true,
+      title: 'Space News',
+      source: { platform: 'telegram', label: '@spacenews', channelUrl: 'https://t.me/spacenews', feedUrl: null },
+    });
+  });
+
+  it('refuses another tenant’s channel, a name with no public page, and a stranger', async () => {
+    expect((await add({ channel: '@spacenews', workspaceId: OTHER_WORKSPACE })).status).toBe(404);
+
+    channelHtml.value = null;
+    const missing = await add({ channel: '@spacenews', workspaceId: DEFAULT_WORKSPACE_ID });
+    expect(missing.status).toBe(422);
+    expect(((await missing.json()) as { error: string }).error).toContain('not a public Telegram channel');
+
+    expect((await add({ channel: '@spacenews', workspaceId: DEFAULT_WORKSPACE_ID }, auth(STRANGER_ID))).status).toBe(401);
     expect(await db.select().from(sources)).toEqual([]);
   });
 });

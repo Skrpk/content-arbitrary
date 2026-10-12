@@ -1,7 +1,8 @@
 # content-arbitrary
 
 Content monitoring and an editorial assistant for **Telegram channels**. It watches your
-sources — **X accounts** and **RSS / Atom feeds** — and brings every new post to you for review:
+sources — **X accounts**, **RSS / Atom feeds** and **public Telegram channels** — and brings every
+new post to you for review:
 scored by [Shadow Radar](#shadow-radar), rewritten in your channel's [language](#translation),
 ready to edit, schedule or reject. What you approve is published to the channel.
 
@@ -9,10 +10,10 @@ Runs as a scheduled job on Vercel: every 15 minutes it checks every source for p
 seen before.
 
 ```
-X accounts ─┐
-            ├─► /api/cron/sync ─► Radar ─► translation ─► review ─► edit / schedule ─► your channel
-RSS feeds ──┘         │
-                      └── PostgreSQL (sources, posts, decisions, cursors)
+X accounts ─────────┐
+RSS feeds ──────────┼─► /api/cron/sync ─► Radar ─► translation ─► review ─► edit / schedule ─► your channel
+Telegram channels ──┘         │
+                              └── PostgreSQL (sources, posts, decisions, cursors)
 ```
 
 Without review switched on, posts go straight to the channel, as the bot first did.
@@ -42,6 +43,7 @@ Without review switched on, posts go straight to the channel, as the bot first d
 - [Q. Telegram 429 and retry_after](#q-telegram-429-and-retry_after)
 - [R. When X does not return the media you expect](#r-when-x-does-not-return-the-media-you-expect)
 - [RSS and Atom feeds](#rss-and-atom-feeds)
+- [Telegram channels](#telegram-channels)
 - [Multiple channels](#multiple-channels)
 - [Review website](#review-website)
 - [Shadow Radar](#shadow-radar)
@@ -569,6 +571,7 @@ environment change and no redeploy:
 | `/sourcestats` | Open a page with every source and how it performs — and buttons to pause, resume or remove it |
 | `/addsource @karpathy` | Start watching an account |
 | `/addrss <feed URL>` | Start watching an RSS or Atom feed — see [RSS and Atom feeds](#rss-and-atom-feeds) |
+| `/addtelegram @channel` | Start watching a public Telegram channel — see [Telegram channels](#telegram-channels) |
 
 `/addsource` accepts whatever is easiest to paste — `karpathy`, `@karpathy`,
 `x.com/karpathy`, a full profile URL, or even a link to one of the account's posts.
@@ -662,7 +665,7 @@ npm run rss:check -- https://www.esa.int/rssfeed/Our_Activities/Space_Science
 **What a candidate is.** The entry's title and summary — or its content, when the summary says
 too little — as plain text, capped at 6000 characters. The article itself is never fetched: no
 scraping, no images, no enclosures. RSS candidates are text posts, whatever the source's **Posts
-without media** switch (Settings shows it only for X). Under the text, the published post carries
+without media** switch (Settings shows it only for X and Telegram channels). Under the text, the published post carries
 the article's link, and Telegram's preview card of it is the post's picture. The review message
 names the feed — `Source: ESA Space Science` — and links the article; an entry with no link says so.
 
@@ -691,6 +694,59 @@ TODO: when the next platform connector lands (Reddit, YouTube…), rename these 
 `external_item_id`, `source_item_url`, `source_author` and `source_published_at`, and move X's
 metrics to platform metadata. Likewise `sources.username` holds a feed's title and should become
 `display_name`.
+
+## Telegram channels
+
+A source can also be a **public** Telegram channel — one with an `@username`. Its posts become
+ordinary candidates, exactly like an X account's: photos, videos and albums are mirrored, Radar
+scores them, the translator rewrites them, they come to review, and approved ones are published.
+
+| Command | What it does |
+| --- | --- |
+| `/addtelegram @spacenews` | Start watching a channel; `t.me/spacenews` or a link to one of its posts works too |
+| `/addtelegram 2 @spacenews` | The same, for a reviewer of several channels: `2` is the channel's workspace id |
+
+Or type a `t.me` link or an `@username` into **➕ Add RSS feed or Telegram channel** on the ⚙️
+Settings page. The channel's page is read once before it is stored, so a name that is not a public
+channel is turned away.
+
+**How it is read.** From the channel's public web page, `https://t.me/s/<channel>` — the page
+anyone gets in a browser. No Telegram account, no API key, and the bot does not need to be in the
+channel. That page is not an API and its markup is not promised; the parser
+(`src/lib/telegram-channel/parser.ts`) relies only on the widget's long-standing class names and
+drops a post it cannot read whole rather than half-read it. If t.me changes the page, sources
+fail with an error in their summary until the parser is updated.
+
+**What it cannot read.** Private channels (invite links `t.me/+…` are refused), groups, people and
+bots have no such page and cannot be added. Polls, files, stickers, voice and video messages, and
+videos too large for the web player ("Media is too big") are not shown on the page: a post whose
+only media is one of those is skipped, never sent as text alone — the same rule as an X video that
+cannot be sent. Photos are the size the page shows (up to 800 px wide), not the original upload.
+
+**What comes through.** Posts with photos or videos; text posts too when the source's **Posts
+without media** switch is on. Forwards from other chats are skipped, like reposts on X
+(`INCLUDE_REPOSTS`). The post's link, `t.me/<channel>/<id>`, is its source link. Views are kept as
+the post's `impressions` metric.
+
+**From now on, not the backlog.** A channel is followed from when it was added or resumed, by
+date, as an X account is. Each source keeps a cursor — the last message id it got through — and
+each run reads the channel's newest page and then the pages before it, up to 5 (about 100 posts),
+until it reaches the cursor. The cursor never passes a post that failed.
+
+**Media in the review queue.** The links the page gives to media carry a token, and a post can wait
+in the queue for days. So when a queued channel post is approved, its media are looked up again
+on the post's own page (`t.me/<channel>/<id>?embed=1`) and fetched from there. A post the channel
+deleted meanwhile fails to publish and stays in the queue, as a deleted X post does.
+
+**Safety.** Only `t.me` is ever fetched for pages, with a username already checked to be one, and
+redirects are not followed. Media are fetched only from Telegram's own content hosts, whatever a
+page says.
+
+**Under the hood.** `sources.external_id` holds the lower-cased username — the only identity the
+public page offers, so a renamed channel is a new source. A post's `x_post_id` is
+`tg:<channel>/<message id>`, `x_post_url` its t.me link, `x_author_username` the channel's username.
+In stats and settings a channel is `@username` with a **Telegram** badge and its link; reading it
+costs nothing.
 
 ## Multiple channels
 
@@ -1652,13 +1708,21 @@ src/
       text.ts                  HTML and entities to plain text
       identity.ts              Stable entry keys, rss:<feed>:<entry> item ids
       normalize.ts             Feed entry → candidate post
+    telegram-channel/
+      username.ts              @name / t.me links → a channel's username; invite links refused
+      client.ts                t.me/s/<channel> and one post's embed, no redirects, size-bounded
+      parser.ts                Channel page → posts, media and what the page cannot show
+      normalize.ts             Channel post → candidate post, tg:<channel>/<id> ids
+      refresh-media.ts         Fresh media links for a queued post, before it is published
     sources/
       display.ts               @handle vs feed title, everywhere a source is named
       add-rss.ts               Check-then-store for /addrss and Settings
+      add-telegram.ts          Check-then-store for /addtelegram and Settings
     sync/
-      sync-posts.ts            Orchestration, X and RSS sources alike
+      sync-posts.ts            Orchestration, X, RSS and Telegram sources alike
       sync-x-source.ts         One X account: cursor, candidates
       sync-rss-source.ts       One feed: backlog on follow, known-id dedup, candidates
+      sync-telegram-source.ts  One public channel: message-id cursor, pages back to it
       process-candidate.ts     Claim → Radar → translate → review/publish → record, shared
       process-post.ts          Per-post publish, all-or-nothing media policy
       acquire-media.ts         Fetch and check every asset before a send, for both paths

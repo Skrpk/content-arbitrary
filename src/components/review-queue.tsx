@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
-import { RssBadge } from '@/app/(app)/rss-badge';
+import { PlatformBadge } from '@/app/(app)/platform-badge';
 import { readJson, type PanelTools } from '@/components/panel-tools';
 import { fromQueue, theme } from '@/lib/telegram/webapp-client';
 
@@ -20,7 +20,7 @@ import { fromQueue, theme } from '@/lib/telegram/webapp-client';
 
 export interface QueueItem {
   id: number;
-  platform: 'x' | 'rss';
+  platform: 'x' | 'rss' | 'telegram';
   sourceLabel: string | null;
   url: string;
   postedAt: string | null;
@@ -386,7 +386,7 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
               )}
               <span style={{ fontWeight: 600, flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>
                 {item.sourceLabel ?? 'unknown source'}
-                {item.platform === 'rss' ? <RssBadge /> : null}
+                <PlatformBadge platform={item.platform} />
               </span>
               <span style={{ color: theme.hint, fontSize: '0.8rem', whiteSpace: 'nowrap' }}>{ago(item.postedAt)}</span>
             </div>

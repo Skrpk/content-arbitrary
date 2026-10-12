@@ -2,6 +2,7 @@ import { and, desc, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import { processedPosts, sources, type RejectionReason, type SourcePlatform } from '@/db/schema';
 import { formatSourceLabel } from '@/lib/sources/display';
+import { channelUrl } from '@/lib/telegram-channel/username';
 import { RSS_BACKLOG_REASON } from '@/lib/sync/repository';
 
 /**
@@ -120,11 +121,13 @@ export async function loadSourceStats(
 
   return rows.map(({ externalId, ...row }) => {
     const decided = row.approved + row.rejected;
-    const readCostUsd = row.platform === 'rss' ? null : row.posts * X_POST_READ_USD;
+    // Feeds and channel pages are read for free; only X bills per post read.
+    const readCostUsd = row.platform === 'x' ? row.posts * X_POST_READ_USD : null;
     return {
       ...row,
       label: formatSourceLabel(row.platform, row.username),
       feedUrl: row.platform === 'rss' ? externalId : null,
+      channelUrl: row.platform === 'telegram' ? channelUrl(externalId) : null,
       notSent: row.posts - row.approved - row.rejected - row.waiting,
       approvalRate: decided > 0 ? row.approved / decided : null,
       rejectionReasons: reasons
