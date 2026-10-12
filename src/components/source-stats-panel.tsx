@@ -66,6 +66,7 @@ const actionButton = {
   borderRadius: '0.5rem',
   fontSize: '0.85rem',
   fontWeight: 600,
+  cursor: 'pointer',
 } as const;
 
 const percent = (rate: number | null) => (rate === null ? '—' : `${Math.round(rate * 100)}%`);
