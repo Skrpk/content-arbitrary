@@ -6,6 +6,7 @@ import type { Env } from '@/lib/env';
 import { describeError } from '@/lib/errors';
 import type { Logger } from '@/lib/logger';
 import { findReviewScores, type ReviewScore } from '@/lib/radar/review-note';
+import { richDocumentPlainText } from '@/lib/rich/document';
 import { isRssItemId, sourceLabelOfPost } from '@/lib/sources/display';
 import type { TelegramClient } from '@/lib/telegram/client';
 import type { InlineKeyboardButton } from '@/lib/telegram/send-media';
@@ -114,6 +115,8 @@ export interface ReviewQueueItem {
   score: ReviewScore | null;
   /** Edited by the reviewer since it came in. */
   edited: boolean;
+  /** Written in the website's editor: published as a rich message, as written there. */
+  rich: boolean;
 }
 
 /**
@@ -136,6 +139,7 @@ export async function loadReviewQueue(
       approvalPayload: processedPosts.approvalPayload,
       reviewMedia: processedPosts.reviewMedia,
       captionEditedAt: processedPosts.captionEditedAt,
+      richDoc: processedPosts.richDoc,
       createdAt: processedPosts.createdAt,
     })
     .from(processedPosts)
@@ -162,14 +166,15 @@ export async function loadReviewQueue(
       sourceLabel: sourceLabelOfPost(row.xPostId, row.xAuthorUsername),
       url: row.xPostUrl,
       postedAt: (row.xCreatedAt ?? row.createdAt).toISOString(),
-      text: captionToPlainText(body ?? stored),
-      fullText: overflowBody ? captionToPlainText(overflowBody) : null,
+      text: row.richDoc ? richDocumentPlainText(row.richDoc) : captionToPlainText(body ?? stored),
+      fullText: !row.richDoc && overflowBody ? captionToPlainText(overflowBody) : null,
       media: (row.reviewMedia ?? []).map((item) => ({
         kind: item.kind,
         imageUrl: (item.kind === 'photo' ? item.url : item.previewUrl) ?? null,
       })),
       score: scores.get(row.id) ?? null,
       edited: row.captionEditedAt !== null,
+      rich: row.richDoc !== null,
     };
   });
 

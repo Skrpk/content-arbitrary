@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import type { NormalizedMedia } from '../types';
+import type { RichDocument } from '../lib/rich/document';
 import {
   bigint,
   boolean,
@@ -487,6 +488,14 @@ export const processedPosts = pgTable(
      * text that actually went out is never lost.
      */
     caption: text('caption'),
+    /**
+     * The post as written in the website's editor — headings, formatting, its
+     * pictures between paragraphs — published as a Telegram rich message
+     * instead of media with a caption. The editor's document, checked and
+     * turned into Telegram HTML on the server (src/lib/rich/document.ts).
+     * Null for a post never opened there, which goes out as it always did.
+     */
+    richDoc: jsonb('rich_doc').$type<RichDocument>(),
     /**
      * When the reviewer last saved a caption in the editor; null if they never
      * did. Saving does not imply a change — compare the two captions for that.

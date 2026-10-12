@@ -18,6 +18,8 @@ import {
 import { GET as loadQueueRoute, POST as decideRoute } from '@/app/api/telegram/webapp/queue/route';
 import { POST as channelsRoute } from '@/app/api/telegram/webapp/channels/route';
 import * as accountRoute from '@/app/api/account/route';
+import * as richRoute from '@/app/api/telegram/webapp/rich/route';
+import * as captionRoute from '@/app/api/telegram/webapp/caption/route';
 import { syncPosts } from '@/lib/sync/sync-posts';
 import { publishDueScheduledPosts } from '@/lib/sync/publish-scheduled';
 import { schedulePost } from '@/lib/sync/repository';
@@ -132,7 +134,7 @@ function makeStack(options: { cdnStatus?: number } = {}) {
     if (method === 'sendPhoto') {
       return ok({ message_id: nextMessageId++, chat, photo: [{ file_id: 'ONE', file_size: 900 }] });
     }
-    if (method === 'sendMessage') return ok({ message_id: nextMessageId++, chat });
+    if (method === 'sendMessage' || method === 'sendRichMessage') return ok({ message_id: nextMessageId++, chat });
     return ok(true);
   });
 
@@ -641,5 +643,135 @@ describeIfDb('the account API', () => {
     expect((await call({ method: 'POST', body: JSON.stringify({ reviewLink: 'website' }) })).status).toBe(200);
     expect(await (await call()).json()).toMatchObject({ reviewLink: 'website' });
     expect((await call({ method: 'POST', body: JSON.stringify({ reviewLink: 'email' }) })).status).toBe(400);
+  });
+});
+
+describeIfDb('the website editor', () => {
+  const rich = (method: 'GET' | 'POST' | 'DELETE', body?: unknown, postId?: number) =>
+    withEnv(queueEnv, () =>
+      richRoute[method](
+        new Request(`https://example.vercel.app/api/telegram/webapp/rich${postId ? `?post=${postId}` : ''}`, {
+          method,
+          headers: { authorization: auth(), 'content-type': 'application/json' },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        }),
+      ),
+    );
+
+  const twoPhotos: ApprovalPayload = {
+    method: 'sendMediaGroup',
+    caption: 'Short caption',
+    overflowMessage: 'The whole long text\n\nof the post',
+    items: [],
+    sourceMedia: [
+      { mediaKey: 'a', kind: 'photo', url: 'https://cdn.example/a.jpg', width: 1600, height: 1200 },
+      { mediaKey: 'b', kind: 'photo', url: 'https://cdn.example/b.jpg', width: 1600, height: 1200 },
+    ],
+  };
+
+  const laidOut = {
+    type: 'doc',
+    content: [
+      { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'Bears' }] },
+      { type: 'postMedia', attrs: { ref: 'm1', caption: 'Second first' } },
+      { type: 'paragraph', content: [{ type: 'text', text: 'By the lake.', marks: [{ type: 'bold' }] }] },
+    ],
+  };
+
+  it('opens a post never edited as its pictures, then its whole text', async () => {
+    const post = await queuedPost({
+      approvalPayload: twoPhotos,
+      reviewMedia: [
+        { kind: 'photo', url: 'https://cdn.example/a.jpg' },
+        { kind: 'photo', url: 'https://cdn.example/b.jpg' },
+      ],
+    });
+
+    const body = (await (await rich('GET', undefined, post.id)).json()) as Record<string, unknown>;
+
+    expect(body).toMatchObject({
+      isRich: false,
+      media: [
+        { ref: 'm0', kind: 'photo', previewUrl: 'https://cdn.example/a.jpg' },
+        { ref: 'm1', kind: 'photo', previewUrl: 'https://cdn.example/b.jpg' },
+      ],
+      doc: {
+        type: 'doc',
+        content: [
+          { type: 'postMedia', attrs: { ref: 'm0' } },
+          { type: 'postMedia', attrs: { ref: 'm1' } },
+          { type: 'paragraph', content: [{ type: 'text', text: 'The whole long text' }] },
+          { type: 'paragraph', content: [{ type: 'text', text: 'of the post' }] },
+        ],
+      },
+    });
+  });
+
+  it('saves a layout, refuses one the channel cannot show, and goes back to the plain post', async () => {
+    const post = await queuedPost({ approvalPayload: twoPhotos });
+
+    expect((await rich('POST', { postId: post.id, doc: laidOut })).status).toBe(200);
+    expect((await reload(post.id)).richDoc).toEqual(laidOut);
+
+    const bad = { type: 'doc', content: [{ type: 'postMedia', attrs: { ref: 'm7', caption: null } }] };
+    expect((await rich('POST', { postId: post.id, doc: bad })).status).toBe(422);
+    expect((await reload(post.id)).richDoc).toEqual(laidOut);
+
+    // The Mini App's caption editor would be overwritten by it, so it says where to go.
+    const caption = await withEnv(queueEnv, () =>
+      captionRoute.GET(new Request(`https://example.vercel.app/api/telegram/webapp/caption?post=${post.id}`, { headers: { authorization: auth() } })),
+    );
+    expect(caption.status).toBe(409);
+
+    expect((await rich('DELETE', { postId: post.id })).status).toBe(200);
+    expect((await reload(post.id)).richDoc).toBeNull();
+  });
+
+  it('publishes a laid-out queued post as one rich message, uploading only the pictures it places', async () => {
+    const stack = makeStack();
+    vi.stubGlobal('fetch', stack.fetchImpl);
+    await db.update(workspaces).set({ postFooter: '[Bears](https://t.me/bears)' }).where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+    const post = await queuedPost({ approvalPayload: twoPhotos, richDoc: laidOut as never });
+
+    expect((await decide({ action: 'approve', postId: post.id })).status).toBe(200);
+
+    expect(stack.calls.map((call) => [call.method, call.body.chat_id])).toEqual([['sendRichMessage', CHANNEL_CHAT]]);
+    const sent = stack.calls[0]!.body;
+    const message = JSON.parse(String(sent.rich_message)) as { html: string; media: { id: string; media: { type: string; media: string } }[] };
+    expect(message.html).toBe(
+      '<h1>Bears</h1><figure><img src="tg://photo?id=m1"/><figcaption>Second first</figcaption></figure>' +
+        '<p><b>By the lake.</b></p><p><a href="https://t.me/bears">Bears</a></p>',
+    );
+    expect(message.media).toEqual([{ id: 'm1', media: { type: 'photo', media: 'attach://upload_m1' } }]);
+    expect(sent.upload_m1).toBeInstanceOf(Blob);
+
+    const row = await reload(post.id);
+    expect(row).toMatchObject({ status: 'published', telegramMethod: 'sendRichMessage', mediaCount: 1 });
+  });
+
+  it('publishes a laid-out post reviewed in the chat from Telegram’s own copies', async () => {
+    const stack = makeStack();
+    vi.stubGlobal('fetch', stack.fetchImpl);
+    const post = await queuedPost({
+      adminChatId: ADMIN_CHAT,
+      adminMessageId: 77,
+      reviewQueuedAt: null,
+      approvalPayload: { method: 'sendPhoto', caption: 'Bear', items: [{ kind: 'photo', fileId: 'FILE_A' }] },
+      richDoc: {
+        type: 'doc',
+        content: [
+          { type: 'paragraph', content: [{ type: 'text', text: 'Above' }] },
+          { type: 'postMedia', attrs: { ref: 'm0', caption: null } },
+        ],
+      } as never,
+    });
+
+    expect((await decide({ action: 'approve', postId: post.id })).status).toBe(200);
+
+    expect(stack.calls[0]!.method).toBe('sendRichMessage');
+    expect(stack.calls[0]!.body.rich_message).toEqual({
+      html: '<p>Above</p><img src="tg://photo?id=m0"/>',
+      media: [{ id: 'm0', media: { type: 'photo', media: 'FILE_A' } }],
+    });
   });
 });

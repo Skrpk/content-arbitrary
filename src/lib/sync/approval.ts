@@ -343,7 +343,7 @@ export interface ReviewRequest {
   /** The source as people know it — `@handle`, or a feed's title — shown in the preview. */
   sourceLabel: string;
   /** `sendMessage` for a text-only post: `caption` is its text, `payloads` empty. */
-  method: Exclude<TelegramMethod, 'none'>;
+  method: Exclude<TelegramMethod, 'none' | 'sendRichMessage'>;
   caption: string;
   overflowMessage?: string;
   payloads: MediaPayload[];

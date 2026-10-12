@@ -791,6 +791,25 @@ approve, `r` then `1`–`6` to reject, `e` to edit, `s` to schedule, `o` for the
 to step back). The Mini Apps stay as they are: each page is one component (`src/components/`)
 in two frames, so both use the same API, the same rules and the same screens.
 
+### The post editor
+
+On the website, **✏️ Edit text** opens a full editor: headings, **bold**, *italic*,
+underline, strikethrough, highlight, links, lists, quotations and dividers — and the post's own
+photos and videos, which can be dragged anywhere between paragraphs, each with a caption, or
+taken out. A post saved there goes out as one Telegram **rich message** (Bot API
+`sendRichMessage`, from 10.1) laid out as written, with the channel's footer at the end, instead
+of media with a caption — so its text is no longer held to a caption's 1,024 characters; a rich
+message takes up to 32,768 and 50 media. **Back to the plain post** drops the layout. A post
+never opened there is published exactly as before.
+
+The editor's document is stored as it is (`processed_posts.rich_doc`) and turned into Telegram's
+rich HTML on the server when the post is published: only the nodes and marks above are accepted,
+every bit of text is escaped, a link must be http(s), and a picture must be one of the post's
+own (`src/lib/rich/document.ts`). Media go out the same way as for any approval: Telegram's own
+copies for a post reviewed in the chat, fetched again from X for a queued one. Uploading other
+pictures is not supported yet. The Mini App keeps its plain caption editor, and refuses to edit
+a post laid out on the website, where its layout is what will be published.
+
 Where the bot's **📋 Open review queue** buttons — the queue notification and `/review` — take
 you is yours to choose under Settings: the Mini App, inside Telegram (the default), or the
 website, in the browser (`users.review_link`).
@@ -1653,6 +1672,8 @@ src/
       adapters/telegram-json.ts  Telegram Desktop JSON export
       profile/                 History → editorial profile: sources, prompts, map/reduce, store
       embeddings/              Embedded text and fingerprint, OpenAI embeddings, backfill, search
+    rich/
+      document.ts              A rich post: the editor's document, checked, to Telegram rich HTML
     review/
       queue.ts                 The review queue: its page's list, the notification and when it is due
     accounts/
@@ -1666,6 +1687,7 @@ src/
     settings-panel.tsx         Settings, likewise
     source-stats-panel.tsx     Source stats, likewise
     mini-app-frame.tsx         The Mini App frame: Telegram's script, initData-signed requests
+    rich-editor/               The website's post editor (Tiptap) and its picture block
     media/
       understanding.ts         ImageUnderstanding, its prompt, schema and config
       provider.ts              The vision call: one low-detail image, no reasoning

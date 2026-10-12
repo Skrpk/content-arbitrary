@@ -183,6 +183,13 @@
       "when": 1791563925523,
       "tag": "0025_review_digest_hour",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1791807172380,
+      "tag": "0026_rich_doc",
+      "breakpoints": true
     }
   ]
 }

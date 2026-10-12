@@ -36,6 +36,9 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
+/** Said of a post written in the website's editor, which is what will be published. */
+const RICH_ELSEWHERE = 'This post was written in the website editor — edit it there.';
+
 const saveSchema = z.object({
   postId: z.number().int().positive(),
   /** Plain text as typed; escaping is this server's job, never the client's. */
@@ -72,6 +75,7 @@ export async function GET(request: Request): Promise<Response> {
   if (!post || !post.approvalPayload) {
     return json({ error: 'This post is no longer awaiting review.' }, 404);
   }
+  if (post.richDoc) return json({ error: RICH_ELSEWHERE }, 409);
 
   // The editor works in plain text; the stored caption is escaped. The
   // fallback covers a post queued before the caption column existed.
@@ -125,6 +129,8 @@ export async function POST(request: Request): Promise<Response> {
   if (!target?.approvalPayload) {
     return json({ error: 'This post is no longer awaiting review.' }, 409);
   }
+  // Its rich document is what goes out; a caption saved here would be ignored.
+  if (target.richDoc) return json({ error: RICH_ELSEWHERE }, 409);
 
   // The footer goes back under the text exactly as the editor showed it.
   const footer = parsePostFooter(workspace.postFooter);

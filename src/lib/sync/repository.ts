@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, inArray, isNull, lt, lte, or, sql as rawSql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import type { PostMetrics } from '@/types';
+import type { RichDocument } from '@/lib/rich/document';
 import {
   DEFAULT_WORKSPACE_ID,
   payloadMediaCount,
@@ -419,6 +420,33 @@ export async function updateApprovalCaption(
   return rows.length > 0
     ? { updated: true, droppedOverflowPreviewId: existing.approvalPayload.adminOverflowMessageId }
     : { updated: false, currentStatus: existing.status };
+}
+
+/**
+ * Store what the reviewer wrote in the website's editor — or, with null, go
+ * back to the plain post. Like a caption edit: one guarded UPDATE, only while
+ * the post has not gone out.
+ */
+export async function setRichDocument(
+  db: Database,
+  input: { id: number; workspaceId: number; doc: RichDocument | null },
+): Promise<{ updated: boolean; currentStatus?: PostStatus }> {
+  const rows = await db
+    .update(processedPosts)
+    .set({
+      richDoc: input.doc,
+      ...(input.doc ? { captionEditedAt: new Date() } : {}),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(processedPosts.id, input.id),
+        eq(processedPosts.workspaceId, input.workspaceId),
+        inArray(processedPosts.status, openStatuses(true)),
+      ),
+    )
+    .returning({ id: processedPosts.id });
+  return rows.length > 0 ? { updated: true } : { updated: false, currentStatus: await findStatusInWorkspace(db, input) };
 }
 
 /**

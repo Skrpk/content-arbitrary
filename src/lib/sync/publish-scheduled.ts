@@ -8,6 +8,7 @@ import type { Logger } from '@/lib/logger';
 import type { TelegramClient } from '@/lib/telegram/client';
 import { TELEGRAM_PARSE_MODE, escapeHtml } from '@/lib/telegram/format-caption';
 import { TELEGRAM_MIN_DELAY_BETWEEN_SENDS_MS } from '@/lib/telegram/limits';
+import { parsePostFooter } from '@/lib/telegram/post-footer';
 import {
   buildApprovalKeyboard,
   formatReviewControlText,
@@ -145,6 +146,7 @@ export async function publishDueScheduledPosts(input: {
         db,
         env,
         client,
+        footer: parsePostFooter(workspace!.postFooter),
         fetchImpl: input.fetchImpl,
         row,
         payload,

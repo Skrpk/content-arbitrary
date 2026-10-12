@@ -236,3 +236,53 @@ export async function sendText(
     telegramMessageSchema,
   );
 }
+
+/**
+ * A rich message: Telegram rich HTML, with the media it names — as
+ * `tg://photo?id=<ref>` / `tg://video?id=<ref>` — sent alongside under those
+ * ids. Media Telegram already holds go by file_id, the rest are uploaded in
+ * the same request (`attach://`) or fetched by Telegram from their URL.
+ */
+export async function sendRichMessage(
+  context: SendContext,
+  html: string,
+  media: { ref: string; payload: MediaPayload }[],
+): Promise<TelegramMessage> {
+  const form = new FormData();
+  let usesMultipart = false;
+
+  const entries = media.map(({ ref, payload }) => {
+    const kind = payloadMedia(payload).kind;
+    let reference: string;
+    if (payload.mode === 'multipart') {
+      usesMultipart = true;
+      const attachName = `upload_${ref}`;
+      form.set(attachName, toBlob(payload.downloaded), payload.downloaded.filename);
+      reference = `attach://${attachName}`;
+    } else {
+      reference = remoteReference(payload);
+    }
+    return { id: ref, media: { type: kind, media: reference, ...(kind === 'video' ? { supports_streaming: true } : {}) } };
+  });
+
+  const richMessage = { html, ...(entries.length > 0 ? { media: entries } : {}) };
+
+  if (!usesMultipart) {
+    return context.client.call(
+      'sendRichMessage',
+      {
+        chat_id: context.chatId,
+        rich_message: richMessage,
+        disable_notification: context.disableNotification,
+        ...(context.replyMarkup ? { reply_markup: context.replyMarkup } : {}),
+      },
+      telegramMessageSchema,
+    );
+  }
+
+  form.set('chat_id', context.chatId);
+  form.set('rich_message', JSON.stringify(richMessage));
+  form.set('disable_notification', String(context.disableNotification));
+  if (context.replyMarkup) form.set('reply_markup', JSON.stringify(context.replyMarkup));
+  return context.client.call('sendRichMessage', form, telegramMessageSchema);
+}

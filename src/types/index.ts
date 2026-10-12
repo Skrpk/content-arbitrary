@@ -114,4 +114,4 @@ export interface SyncSummary {
   error?: string;
 }
 
-export type TelegramMethod = 'sendPhoto' | 'sendVideo' | 'sendMediaGroup' | 'sendMessage' | 'none';
+export type TelegramMethod = 'sendPhoto' | 'sendVideo' | 'sendMediaGroup' | 'sendMessage' | 'sendRichMessage' | 'none';

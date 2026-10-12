@@ -8,6 +8,7 @@ import { describeError } from '@/lib/errors';
 import { createLogger } from '@/lib/logger';
 import { TelegramClient } from '@/lib/telegram/client';
 import { TELEGRAM_PARSE_MODE, escapeHtml } from '@/lib/telegram/format-caption';
+import { parsePostFooter } from '@/lib/telegram/post-footer';
 import {
   buildApprovalKeyboard,
   buildRejectNoteUrl,
@@ -386,6 +387,7 @@ export async function POST(request: Request): Promise<Response> {
       db,
       env,
       client,
+      footer: parsePostFooter(workspace.postFooter),
       row: claim.row,
       payload,
       destination: resolved.destination,

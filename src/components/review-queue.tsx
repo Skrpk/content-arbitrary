@@ -34,6 +34,8 @@ export interface QueueItem {
     possiblyAlreadyCovered: boolean;
   } | null;
   edited: boolean;
+  /** Written in the website's editor: goes out as a rich message. */
+  rich: boolean;
 }
 
 interface Channel {
@@ -54,6 +56,8 @@ export interface ReviewQueueProps extends PanelTools {
   surface: 'mini-app' | 'website';
   /** The workspace to open on, when it is one of theirs. */
   initialWorkspaceId: number | null;
+  /** Open a post in the frame's editor; without it, the Mini App's caption editor. */
+  onEdit?: (postId: number, workspaceId: number) => void;
 }
 
 /** Where one card is: undecided, picking a reason, editing, on its way, or settled. */
@@ -61,7 +65,6 @@ type CardState =
   | { kind: 'open' }
   | { kind: 'choosing-reason' }
   | { kind: 'writing-note'; note: string }
-  | { kind: 'editing' }
   | { kind: 'scheduling' }
   | { kind: 'sending'; what: 'approve' | 'reject' }
   | { kind: 'done'; outcome: string };
@@ -118,7 +121,7 @@ function scoreColour(score: number): string {
   return '#8a8f94';
 }
 
-export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, openLink }: ReviewQueueProps) {
+export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, openLink, onEdit }: ReviewQueueProps) {
   const [data, setData] = useState<QueueResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [channelId, setChannelId] = useState<number | null>(null);
@@ -156,19 +159,6 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
         else delete next[id];
         return next;
       }),
-    [],
-  );
-  const updateItem = useCallback(
-    (id: number, change: Partial<QueueItem>) =>
-      setData((current) =>
-        current && {
-          ...current,
-          channels: current.channels.map((channel) => ({
-            ...channel,
-            items: channel.items.map((item) => (item.id === id ? { ...item, ...change } : item)),
-          })),
-        },
-      ),
     [],
   );
 
@@ -211,10 +201,11 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
 
   const edit = useCallback(
     (item: QueueItem) => {
-      if (website) setCard(item.id, { kind: 'editing' });
-      else if (channel) window.location.assign(fromQueue(`/review?post=${item.id}`, channel.id));
+      if (!channel) return;
+      if (onEdit) onEdit(item.id, channel.id);
+      else window.location.assign(fromQueue(`/review?post=${item.id}`, channel.id));
     },
-    [channel, setCard, website],
+    [channel, onEdit],
   );
   const schedule = useCallback(
     (item: QueueItem) => {
@@ -411,45 +402,36 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
               <MediaGallery media={item.media} />
 
               <div>
-                {state.kind === 'editing' ? (
-                  <CaptionEditor
-                    postId={item.id}
-                    request={request}
-                    onDone={(saved) => {
-                      if (saved !== null) updateItem(item.id, { text: saved, fullText: null, edited: true });
-                      setCard(item.id, { kind: 'open' });
-                    }}
-                  />
+                {shownText ? (
+                  <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: '0.92rem', lineHeight: 1.4 }}>
+                    {shownText}
+                  </div>
                 ) : (
-                  <>
-                    {shownText ? (
-                      <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: '0.92rem', lineHeight: 1.4 }}>
-                        {shownText}
-                      </div>
-                    ) : (
-                      <div style={{ color: theme.hint, fontSize: '0.85rem' }}>(no text)</div>
-                    )}
-                    {long ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setExpanded((all) => {
-                            const next = new Set(all);
-                            if (next.has(item.id)) next.delete(item.id);
-                            else next.add(item.id);
-                            return next;
-                          })
-                        }
-                        style={{ ...smallButton, border: 'none', padding: '0.25rem 0', color: theme.link }}
-                      >
-                        {fullShown ? 'Less' : item.fullText ? 'Full text (sent as a second message)' : 'More'}
-                      </button>
-                    ) : null}
-                    {item.edited ? (
-                      <div style={{ color: theme.hint, fontSize: '0.75rem', marginTop: '0.2rem' }}>✏️ edited</div>
-                    ) : null}
-                  </>
+                  <div style={{ color: theme.hint, fontSize: '0.85rem' }}>(no text)</div>
                 )}
+                {long ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setExpanded((all) => {
+                        const next = new Set(all);
+                        if (next.has(item.id)) next.delete(item.id);
+                        else next.add(item.id);
+                        return next;
+                      })
+                    }
+                    style={{ ...smallButton, border: 'none', padding: '0.25rem 0', color: theme.link }}
+                  >
+                    {fullShown ? 'Less' : item.fullText ? 'Full text (sent as a second message)' : 'More'}
+                  </button>
+                ) : null}
+                {item.rich ? (
+                  <div style={{ color: theme.hint, fontSize: '0.75rem', marginTop: '0.2rem' }}>
+                    📰 written in the editor — goes out as laid out there
+                  </div>
+                ) : item.edited ? (
+                  <div style={{ color: theme.hint, fontSize: '0.75rem', marginTop: '0.2rem' }}>✏️ edited</div>
+                ) : null}
 
                 {item.score?.reason || item.score?.possiblyAlreadyCovered ? (
                   <div style={{ color: theme.hint, fontSize: '0.8rem', marginTop: '0.45rem', lineHeight: 1.35 }}>
@@ -465,7 +447,7 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
                       Original ↗
                     </button>
                   ) : null}
-                  <button type="button" disabled={busy || state.kind === 'editing'} onClick={() => edit(item)} style={smallButton}>
+                  <button type="button" disabled={busy} onClick={() => edit(item)} style={smallButton}>
                     ✏️ Edit text
                   </button>
                   <button
@@ -537,7 +519,7 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
                       ↩️ Back
                     </button>
                   </div>
-                ) : state.kind === 'editing' || state.kind === 'scheduling' ? null : (
+                ) : state.kind === 'scheduling' ? null : (
                   <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem' }}>
                     <button
                       type="button"
@@ -580,102 +562,6 @@ function activeCard(items: QueueItem[], cards: Record<number, CardState>, focuse
   const at = items.findIndex((item) => item.id === focused);
   if (at === -1) return items.find(undecided)?.id ?? null;
   return (items.slice(at).find(undecided) ?? items.slice(0, at).reverse().find(undecided))?.id ?? null;
-}
-
-/**
- * The text of one post, edited in place on the website — the same endpoint
- * as the Mini App's editor, and the same rules: the channel's footer is shown
- * under the box, not in it, and the limit is what Telegram allows.
- */
-function CaptionEditor({
-  postId,
-  request,
-  onDone,
-}: {
-  postId: number;
-  request: ReviewQueueProps['request'];
-  /** The saved text, or null when nothing was saved. */
-  onDone: (saved: string | null) => void;
-}) {
-  const [details, setDetails] = useState<{ caption: string; footer: string | null; limit: number } | null>(null);
-  const [text, setText] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    request(`/api/telegram/webapp/caption?post=${postId}`)
-      .then((response) => readJson<{ caption: string; footer: string | null; limit: number }>(response))
-      .then((body) => {
-        if (cancelled) return;
-        setDetails(body);
-        setText(body.caption);
-      })
-      .catch((reason: unknown) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : 'Could not load the text.');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [postId, request]);
-
-  const save = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      const body = await readJson<{ caption: string }>(
-        await request('/api/telegram/webapp/caption', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ postId, caption: text }),
-        }),
-      );
-      onDone(body.caption);
-    } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : 'Could not save.');
-      setSaving(false);
-    }
-  };
-
-  if (!details) {
-    return error ? <p style={{ color: '#e53935', fontSize: '0.85rem' }}>{error}</p> : <p style={{ color: theme.hint }}>Loading…</p>;
-  }
-
-  const length = text.trim().length;
-  const tooLong = length > details.limit;
-  return (
-    <div>
-      <textarea
-        value={text}
-        autoFocus
-        onChange={(event) => setText(event.target.value)}
-        rows={10}
-        style={{ ...fieldStyle, resize: 'vertical' }}
-      />
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: tooLong ? '#e53935' : theme.hint }}>
-        <span>{details.footer ? `+ footer: ${details.footer}` : ''}</span>
-        <span>
-          {length} / {details.limit}
-        </span>
-      </div>
-      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.4rem' }}>
-        <button
-          type="button"
-          disabled={saving || tooLong || length === 0}
-          onClick={() => {
-            void save();
-          }}
-          style={{ ...button, background: theme.button, color: theme.buttonText, opacity: saving || tooLong || length === 0 ? 0.6 : 1 }}
-        >
-          {saving ? 'Saving…' : 'Save text'}
-        </button>
-        <button type="button" disabled={saving} onClick={() => onDone(null)} style={{ ...button, background: theme.bg, color: theme.text }}>
-          Cancel
-        </button>
-      </div>
-      {error ? <p style={{ color: '#e53935', fontSize: '0.85rem', margin: '0.4rem 0 0' }}>{error}</p> : null}
-    </div>
-  );
 }
 
 /** A local `datetime-local` value for a moment: what the picker shows, in this browser's zone. */

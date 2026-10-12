@@ -1,0 +1,1 @@
+ALTER TABLE "processed_posts" ADD COLUMN "rich_doc" jsonb;

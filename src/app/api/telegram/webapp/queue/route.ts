@@ -4,6 +4,7 @@ import { describeError } from '@/lib/errors';
 import { loadReviewQueue, REVIEW_QUEUE_PAGE_LIMIT } from '@/lib/review/queue';
 import { TelegramClient } from '@/lib/telegram/client';
 import { escapeHtml } from '@/lib/telegram/format-caption';
+import { parsePostFooter } from '@/lib/telegram/post-footer';
 import { authorizeReviewer, json, reviewerWorkspaceForPost } from '@/lib/telegram/webapp-request';
 import {
   formatRejectionNotice,
@@ -152,6 +153,7 @@ export async function POST(request: Request): Promise<Response> {
       db: auth.db,
       env: auth.env,
       client,
+      footer: parsePostFooter(workspace.postFooter),
       row,
       payload: row.approvalPayload,
       destination: resolved.destination,
