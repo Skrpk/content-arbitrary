@@ -15,3 +15,6 @@ coverage
 
 # Telegram chat exports (history imports): media and private data, never committed
 ChatExport_*/
+
+# Local Claude Code config (machine paths)
+.claude/
