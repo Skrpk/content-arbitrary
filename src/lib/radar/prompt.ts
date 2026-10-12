@@ -40,16 +40,12 @@ export const RADAR_PROMPT_VERSIONS = [
 export type RadarPromptVersion = (typeof RADAR_PROMPT_VERSIONS)[number];
 
 /**
- * The versions live Radar scores every post with: the baseline, the best so
- * far (v3), and v5 — v3 plus similar rejected posts and nothing else, so v3
- * against v5 measures exactly that addition on the same posts. v2 and v4 are
- * compared on backfills; v4 scored below v3 live.
+ * The versions live Radar scores every post with: the baseline and the best
+ * so far (v3). The others are compared on backfills: v4 scored below v3 live,
+ * and neither v5 nor v6 ordered a day's posts better than v3 (the daily hit
+ * rate) — they only lowered every score.
  */
-export const LIVE_RADAR_PROMPT_VERSIONS: readonly RadarPromptVersion[] = [
-  RADAR_PROMPT_BASELINE,
-  RADAR_PROMPT_APPROVED,
-  RADAR_PROMPT_REJECTED,
-];
+export const LIVE_RADAR_PROMPT_VERSIONS: readonly RadarPromptVersion[] = [RADAR_PROMPT_BASELINE, RADAR_PROMPT_APPROVED];
 
 export function isRadarPromptVersion(value: string): value is RadarPromptVersion {
   return (RADAR_PROMPT_VERSIONS as readonly string[]).includes(value);

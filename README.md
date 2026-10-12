@@ -1244,8 +1244,9 @@ their [stored descriptions](#image-understanding), never the image itself; and
 help) plus the [five most similar posts the editor turned down](#similar-rejected-posts); and
 `radar-v6-nearest-decisions`, which is `radar-v3` plus the [editor's ten nearest
 decisions](#nearest-decisions), approved and rejected together. Live, every post is scored with
-`radar-v1`, `radar-v3` and `radar-v5` (`radar-v4` scored below `radar-v3` live, so it runs on
-backfills only); backfills score all six by default.
+`radar-v1` and `radar-v3`; the others run on backfills only — `radar-v4` scored below `radar-v3`
+live, and neither `radar-v5` nor `radar-v6` ordered a day's posts better than it — and backfills
+score all six by default.
 `LIVE_RADAR_PROMPT_VERSIONS` in
 [`src/lib/radar/prompt.ts`](src/lib/radar/prompt.ts) is the live list.
 
@@ -1546,6 +1547,12 @@ this kind of post, well below it that they turn it down, near it nothing either 
 nearest of the approved and rejected searches merged — ten of each fetched, the first five
 approved still shown as `radar-v3` shows them — so no extra query or embedding; recorded in
 `history_retrieval.nearest`.
+
+It did no better: on the same backfill its daily hit rate matched `radar-v3`'s, and like
+`radar-v5` it mostly lowered every score — cleaner at the very top, more approvals under 50.
+Ranking posts by the share approved among their ten nearest decisions alone, with no model at
+all, gets about 30–34% against `radar-v3`'s 41%: the model earns its keep, but more neighbours in
+its prompt add nothing. Both run on backfills only.
 
 **Cost.** One embedding call per new post (a few hundred tokens), and the history once: VECTOR's
 83 posts with text, about 24,000 characters, cost a fraction of a cent. `history:embed` prints the
