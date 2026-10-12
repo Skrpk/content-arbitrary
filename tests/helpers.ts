@@ -97,6 +97,7 @@ export async function ensureTestWorkspace(db: Database): Promise<void> {
         editorialProfile: null,
         language: null,
         postFooter: null,
+        autoPublish: false,
         reviewDigestMinutes: 60,
         reviewDigestHour: null,
         reviewDigestTimezone: null,

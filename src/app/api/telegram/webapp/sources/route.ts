@@ -47,6 +47,7 @@ export async function GET(request: Request): Promise<Response> {
       reviewDigestMinutes: workspace.reviewDigestMinutes,
       reviewDigestHour: workspace.reviewDigestHour,
       reviewDigestTimezone: workspace.reviewDigestTimezone,
+      autoPublish: workspace.autoPublish,
       sources: (await listSources(auth.db, workspace.id)).map(sourceView),
     })),
   );

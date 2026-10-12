@@ -115,6 +115,7 @@ export async function processPost(
   const env = options.env ?? getEnv();
   const logger = options.logger;
   const sleep = options.sleep ?? defaultSleep;
+  const review = reviewsPost(env, options.destination);
 
   // Telegram albums hold at most 10 items. X currently allows at most 4, but
   // clamping here means a future change upstream degrades gracefully instead of
@@ -135,7 +136,7 @@ export async function processPost(
       text,
       username: post.authorUsername,
       postId: post.id,
-      ...sourceFraming(post, env),
+      ...sourceFraming(post, env, review),
       prefix: env.CAPTION_PREFIX,
       suffix: env.CAPTION_SUFFIX,
       footer: options.footer,
@@ -179,7 +180,7 @@ export async function processPost(
   }
 
   if (env.DRY_RUN) {
-    logDryRun(logger, post, media, method, caption, overflowMessage, env.REQUIRE_APPROVAL);
+    logDryRun(logger, post, media, method, caption, overflowMessage, review);
     return {
       status: 'dry-run',
       method,
@@ -217,11 +218,12 @@ export async function processPost(
   // --- Phase 2: review, or publish straight to the channel. ------------------
 
   /**
-   * With REQUIRE_APPROVAL the post goes to the reviewer's private chat instead
+   * With REQUIRE_APPROVAL — unless the tenant publishes without review — the
+   * post goes to the reviewer's private chat instead
    * of the channel. Telegram hands back a file_id for each asset, which is
    * stored so that approval can re-send without downloading from X again.
    */
-  if (env.REQUIRE_APPROVAL) {
+  if (review) {
     // destinationFor refuses a tenant with approval on and no reviewer, so by
     // the time a post reaches here the admin chat is known to exist.
     const reviewContext: SendContext = {
@@ -443,13 +445,14 @@ async function processTextPost(
   },
 ): Promise<ProcessOutcome> {
   const { env, logger } = options;
+  const review = reviewsPost(env, options.destination);
   const method: TelegramMethod = 'sendMessage';
   const textFor = (body: string) =>
     formatTextPost({
       text: body,
       username: post.authorUsername,
       postId: post.id,
-      ...sourceFraming(post, env),
+      ...sourceFraming(post, env, review),
       prefix: env.CAPTION_PREFIX,
       suffix: env.CAPTION_SUFFIX,
       footer: options.footer,
@@ -459,12 +462,12 @@ async function processTextPost(
   const base = { method, mediaCount: 0, caption: text, primaryMessageId: null };
 
   if (env.DRY_RUN) {
-    logDryRun(logger, post, [], method, text, undefined, env.REQUIRE_APPROVAL);
+    logDryRun(logger, post, [], method, text, undefined, review);
     return { ...base, status: 'dry-run', messages: [] };
   }
 
   try {
-    if (env.REQUIRE_APPROVAL) {
+    if (review) {
       const [translated, radarNote] = await Promise.all([
         translateText(options.translate, post.text, logger),
         runBeforeReview(options.beforeReview, logger, {}),
@@ -536,7 +539,7 @@ async function processTextPost(
     };
   } catch (error) {
     const permanent = isPermanentTelegramError(error);
-    logger.error(env.REQUIRE_APPROVAL ? 'approval.review_send_failed' : 'telegram.upload_failed', {
+    logger.error(review ? 'approval.review_send_failed' : 'telegram.upload_failed', {
       xPostId: post.id,
       method,
       permanent,
@@ -559,10 +562,14 @@ async function processTextPost(
  * follows sourceLineInPost, and so does a Telegram channel's, naming its own
  * link rather than one on x.com.
  */
-function sourceFraming(post: NormalizedPost, env: Env): { includeSourceLink: boolean; sourceLine?: string } {
+function sourceFraming(
+  post: NormalizedPost,
+  env: Env,
+  review: boolean,
+): { includeSourceLink: boolean; sourceLine?: string } {
   if (post.platform === 'rss') return post.url ? { includeSourceLink: true, sourceLine: post.url } : { includeSourceLink: false };
-  if (post.platform === 'telegram') return { includeSourceLink: sourceLineInPost(env), sourceLine: `Source: ${post.url}` };
-  return { includeSourceLink: sourceLineInPost(env) };
+  if (post.platform === 'telegram') return { includeSourceLink: sourceLineInPost(env, review), sourceLine: `Source: ${post.url}` };
+  return { includeSourceLink: sourceLineInPost(env, review) };
 }
 
 /** The link a feed entry's text message previews; none for X, whose previews stay off. */
@@ -575,8 +582,16 @@ function linkPreviewOf(post: NormalizedPost): string | undefined {
  * not: the message with the buttons already carries the link to the original,
  * so the post the reviewer approves — and the channel reads — is clean of it.
  */
-function sourceLineInPost(env: Env): boolean {
-  return env.INCLUDE_SOURCE_LINK && !env.REQUIRE_APPROVAL;
+function sourceLineInPost(env: Env, review: boolean): boolean {
+  return env.INCLUDE_SOURCE_LINK && !review;
+}
+
+/**
+ * Whether this post goes to review before the channel: REQUIRE_APPROVAL,
+ * unless its tenant publishes without review (see reviewsPosts in workspace).
+ */
+function reviewsPost(env: Pick<Env, 'REQUIRE_APPROVAL'>, destination: Pick<TelegramDestination, 'autoPublish'>): boolean {
+  return env.REQUIRE_APPROVAL && !destination.autoPublish;
 }
 
 function isPermanentTelegramError(error: unknown): boolean {

@@ -814,7 +814,8 @@ The reviewer then adds sources from their own chat with the bot:
 
 Nothing else is needed; the next cron run picks the workspace up. A workspace with no
 `telegram_chat_id` is skipped as still being set up, and so is one with no reviewer while
-`REQUIRE_APPROVAL=true` — publishing unreviewed would defeat the point. `/api/status` lists
+`REQUIRE_APPROVAL=true` — publishing unreviewed would defeat the point — unless it
+[publishes without review](#publishing-without-review) on purpose. `/api/status` lists
 every workspace with a `publishable` flag and the reason when it is false.
 
 `TELEGRAM_CHAT_ID` and `TELEGRAM_ADMIN_CHAT_ID` **seed workspace 1 only**, and only while its
@@ -933,6 +934,16 @@ X ──► cron ──► your private chat  ──[Approve]──►  channel
                       │
                       └──[Reject]──► pick a reason ──►  recorded, never published
 ```
+
+### Publishing without review
+
+Approval is switched on for the whole installation, but a channel that reposts everything its
+sources bring in has nothing to decide. **Publish without review** on the ⚙️ Settings page
+(`workspaces.auto_publish`) sends that channel's posts straight to it as they arrive, as if
+`REQUIRE_APPROVAL` were off for it alone: nothing goes to the review queue or the chat, the
+post keeps its `Source:` line (`INCLUDE_SOURCE_LINK`), and Radar, which scores posts on their
+way to review, does not run for it. Such a channel needs no reviewer. Turning it on leaves posts
+already waiting for review where they are.
 
 Reject does not settle the post by itself: it swaps the buttons for a short list of reasons —
 *Not interesting*, *Off-topic*, *Already covered*, *Too minor*, *Weak source*, *Other* — and the

@@ -400,6 +400,23 @@ describeIfDb('a sync run with the review queue on', () => {
 
     expect(stack.calls.map((call) => call.method)).toEqual(['sendPhoto', 'sendMessage']);
   });
+
+  it('publishes straight to the channel for one that publishes without review, reviewer or not', async () => {
+    await db
+      .update(workspaces)
+      .set({ autoPublish: true, telegramAdminChatId: null })
+      .where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+    const stack = makeStack();
+    const summary = await runSync(stack, timelinePayload('1750000000000000042', ['3_1', '3_2']));
+
+    expect(summary).toMatchObject({ published: 1, awaitingApproval: 0 });
+    // The album in the channel, and nothing to a reviewer: no notification, no buttons.
+    expect(stack.calls.map((call) => call.method)).toEqual(['sendMediaGroup']);
+    expect(stack.calls[0]!.body.chat_id).toBe(CHANNEL_CHAT);
+    const row = (await db.select().from(processedPosts))[0]!;
+    expect(row).toMatchObject({ status: 'published', reviewQueuedAt: null, adminMessageId: null });
+    expect((await workspaceRow()).reviewDigestSentAt).toBeNull();
+  });
 });
 
 describeIfDb('GET /api/telegram/webapp/queue', () => {
@@ -561,6 +578,7 @@ describeIfDb('POST /api/telegram/webapp/channels', () => {
       reviewDigestMinutes: 180,
       reviewDigestHour: null,
       reviewDigestTimezone: null,
+      autoPublish: false,
       queueActive: true,
     });
 
@@ -604,6 +622,35 @@ describeIfDb('POST /api/telegram/webapp/channels', () => {
     expect((await setInterval({ workspaceId: DEFAULT_WORKSPACE_ID, reviewDigestMinutes: 200_000 })).status).toBe(400);
     expect((await setInterval({ workspaceId: OTHER_WORKSPACE, reviewDigestMinutes: 60 })).status).toBe(404);
     expect((await workspaceRow(OTHER_WORKSPACE)).reviewDigestMinutes).toBe(60);
+  });
+});
+
+describeIfDb('POST /api/telegram/webapp/channels — publishing without review', () => {
+  it('turns it on and off, and the queue with it', async () => {
+    const on = await setInterval({ workspaceId: DEFAULT_WORKSPACE_ID, autoPublish: true });
+    expect(await on.json()).toEqual({ id: DEFAULT_WORKSPACE_ID, autoPublish: true, queueActive: false });
+    expect((await workspaceRow()).autoPublish).toBe(true);
+
+    const off = await setInterval({ workspaceId: DEFAULT_WORKSPACE_ID, autoPublish: false });
+    expect(await off.json()).toEqual({ id: DEFAULT_WORKSPACE_ID, autoPublish: false, queueActive: true });
+    // The notification interval is left as it was.
+    expect((await workspaceRow()).reviewDigestMinutes).toBe(60);
+  });
+
+  it('refuses both changes at once, neither, and another reviewer’s channel', async () => {
+    await db.insert(workspaces).values({
+      id: OTHER_WORKSPACE,
+      name: 'second',
+      telegramChatId: '-1002000000002',
+      telegramAdminChatId: String(OTHER_REVIEWER_ID),
+    });
+
+    expect(
+      (await setInterval({ workspaceId: DEFAULT_WORKSPACE_ID, autoPublish: true, reviewDigestMinutes: 60 })).status,
+    ).toBe(400);
+    expect((await setInterval({ workspaceId: DEFAULT_WORKSPACE_ID })).status).toBe(400);
+    expect((await setInterval({ workspaceId: OTHER_WORKSPACE, autoPublish: true })).status).toBe(404);
+    expect((await workspaceRow(OTHER_WORKSPACE)).autoPublish).toBe(false);
   });
 });
 

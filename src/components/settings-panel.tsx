@@ -37,6 +37,8 @@ interface ChannelView {
   /** For a day or more: the hour it comes at, in `reviewDigestTimezone`; null for whenever it is due. */
   reviewDigestHour: number | null;
   reviewDigestTimezone: string | null;
+  /** Every post goes straight to the channel, with no review. */
+  autoPublish: boolean;
   sources: SourceView[];
 }
 
@@ -237,6 +239,35 @@ export function SettingsPanel({ request }: Pick<PanelTools, 'request'>) {
     }
   }, [request]);
 
+  /** Turn publishing without review on or off: shown at once, put back if refused. */
+  const saveAutoPublish = useCallback(async (channel: ChannelView, autoPublish: boolean) => {
+    const apply = (value: boolean) =>
+      setChannels((all) => all.map((item) => (item.id === channel.id ? { ...item, autoPublish: value } : item)));
+
+    apply(autoPublish);
+    setSavingDigest((current) => new Set(current).add(channel.id));
+    setDigestMessage(null);
+
+    try {
+      const response = await request('/api/telegram/webapp/channels', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ workspaceId: channel.id, autoPublish }),
+      });
+      const body = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? `Save failed (${response.status})`);
+    } catch (error: unknown) {
+      apply(channel.autoPublish);
+      setDigestMessage(`${channel.name}: ${error instanceof Error ? error.message : 'could not save'}`);
+    } finally {
+      setSavingDigest((current) => {
+        const next = new Set(current);
+        next.delete(channel.id);
+        return next;
+      });
+    }
+  }, [request]);
+
   /** Save where the review buttons go: shown at once, put back if refused. */
   const saveReviewLink = useCallback(
     async (next: ReviewLink) => {
@@ -303,89 +334,113 @@ export function SettingsPanel({ request }: Pick<PanelTools, 'request'>) {
                   {channels.length > 1 ? (
                     <div style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>📢 {channel.name}</div>
                   ) : null}
-                  <select
-                    value={choice}
-                    disabled={busy}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      if (value === 'chat') void saveDigest(channel, null);
-                      else if (value === 'days') void saveDigest(channel, Math.max(2, Number(storedDays)) * DAY_MINUTES);
-                      else void saveDigest(channel, Number(value));
-                    }}
-                    style={inputStyle}
+                  <label
+                    style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem', padding: '0.25rem 0 0.5rem', cursor: 'pointer' }}
                   >
-                    {[...DIGEST_CHOICES, ...(extra ? [extra] : [])].map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  {choice === 'days' ? (
-                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem' }}>
-                      <span>Every</span>
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        min={1}
-                        max={90}
-                        value={days}
-                        disabled={busy}
-                        onChange={(event) =>
-                          setDigestDays((all) => ({ ...all, [channel.id]: event.target.value }))
-                        }
-                        style={{ ...inputStyle, width: '5rem' }}
-                      />
-                      <span style={{ flex: 1 }}>days</span>
-                      <button
-                        type="button"
-                        disabled={busy || !daysValid || daysValue * DAY_MINUTES === channel.reviewDigestMinutes}
-                        onClick={() => {
-                          void saveDigest(channel, daysValue * DAY_MINUTES);
-                        }}
-                        style={{
-                          padding: '0.5rem 0.9rem',
-                          border: 'none',
-                          borderRadius: '0.5rem',
-                          background: theme.button,
-                          color: theme.buttonText,
-                          fontWeight: 600,
-                          opacity: busy || !daysValid || daysValue * DAY_MINUTES === channel.reviewDigestMinutes ? 0.6 : 1,
-                        }}
-                      >
-                        Save
-                      </button>
-                    </div>
-                  ) : null}
-                  {channel.reviewDigestMinutes !== null && channel.reviewDigestMinutes >= DAY_MINUTES ? (
-                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem' }}>
-                      <span>at</span>
+                    <input
+                      type="checkbox"
+                      checked={channel.autoPublish}
+                      disabled={busy}
+                      onChange={(event) => {
+                        void saveAutoPublish(channel, event.target.checked);
+                      }}
+                      style={{ marginTop: '0.3rem', accentColor: theme.button }}
+                    />
+                    <span>
+                      <span style={{ display: 'block' }}>Publish without review</span>
+                      <span style={{ display: 'block', color: theme.hint, fontSize: '0.8rem' }}>
+                        Every post goes straight to the channel as it comes in — for a channel that reposts everything.
+                        Radar does not score them.
+                      </span>
+                    </span>
+                  </label>
+                  {channel.autoPublish ? null : (
+                    <>
                       <select
-                        value={channel.reviewDigestHour === null ? 'any' : String(channel.reviewDigestHour)}
+                        value={choice}
                         disabled={busy}
                         onChange={(event) => {
                           const value = event.target.value;
-                          void saveDigest(channel, channel.reviewDigestMinutes, value === 'any' ? null : Number(value));
+                          if (value === 'chat') void saveDigest(channel, null);
+                          else if (value === 'days') void saveDigest(channel, Math.max(2, Number(storedDays)) * DAY_MINUTES);
+                          else void saveDigest(channel, Number(value));
                         }}
-                        style={{ ...inputStyle, width: 'auto', flex: 1 }}
+                        style={inputStyle}
                       >
-                        <option value="any">any time — as soon as it is due</option>
-                        {Array.from({ length: 24 }, (_, hour) => (
-                          <option key={hour} value={hour}>
-                            {String(hour).padStart(2, '0')}:00
+                        {[...DIGEST_CHOICES, ...(extra ? [extra] : [])].map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
                           </option>
                         ))}
                       </select>
-                    </div>
-                  ) : null}
-                  {channel.reviewDigestHour !== null &&
-                  channel.reviewDigestTimezone &&
-                  channel.reviewDigestMinutes !== null &&
-                  channel.reviewDigestMinutes >= DAY_MINUTES ? (
-                    <div style={{ color: theme.hint, fontSize: '0.75rem', marginTop: '0.2rem' }}>
-                      Your time, {channel.reviewDigestTimezone.replace(/_/g, ' ')} — kept when the clocks change. Sent
-                      only when something new has come in.
-                    </div>
-                  ) : null}
+                      {choice === 'days' ? (
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem' }}>
+                          <span>Every</span>
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            min={1}
+                            max={90}
+                            value={days}
+                            disabled={busy}
+                            onChange={(event) =>
+                              setDigestDays((all) => ({ ...all, [channel.id]: event.target.value }))
+                            }
+                            style={{ ...inputStyle, width: '5rem' }}
+                          />
+                          <span style={{ flex: 1 }}>days</span>
+                          <button
+                            type="button"
+                            disabled={busy || !daysValid || daysValue * DAY_MINUTES === channel.reviewDigestMinutes}
+                            onClick={() => {
+                              void saveDigest(channel, daysValue * DAY_MINUTES);
+                            }}
+                            style={{
+                              padding: '0.5rem 0.9rem',
+                              border: 'none',
+                              borderRadius: '0.5rem',
+                              background: theme.button,
+                              color: theme.buttonText,
+                              fontWeight: 600,
+                              opacity: busy || !daysValid || daysValue * DAY_MINUTES === channel.reviewDigestMinutes ? 0.6 : 1,
+                            }}
+                          >
+                            Save
+                          </button>
+                        </div>
+                      ) : null}
+                      {channel.reviewDigestMinutes !== null && channel.reviewDigestMinutes >= DAY_MINUTES ? (
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem' }}>
+                          <span>at</span>
+                          <select
+                            value={channel.reviewDigestHour === null ? 'any' : String(channel.reviewDigestHour)}
+                            disabled={busy}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              void saveDigest(channel, channel.reviewDigestMinutes, value === 'any' ? null : Number(value));
+                            }}
+                            style={{ ...inputStyle, width: 'auto', flex: 1 }}
+                          >
+                            <option value="any">any time — as soon as it is due</option>
+                            {Array.from({ length: 24 }, (_, hour) => (
+                              <option key={hour} value={hour}>
+                                {String(hour).padStart(2, '0')}:00
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : null}
+                      {channel.reviewDigestHour !== null &&
+                      channel.reviewDigestTimezone &&
+                      channel.reviewDigestMinutes !== null &&
+                      channel.reviewDigestMinutes >= DAY_MINUTES ? (
+                        <div style={{ color: theme.hint, fontSize: '0.75rem', marginTop: '0.2rem' }}>
+                          Your time, {channel.reviewDigestTimezone.replace(/_/g, ' ')} — kept when the clocks change. Sent
+                          only when something new has come in.
+                        </div>
+                      ) : null}
+                    </>
+                  )}
                 </div>
               );
             })}

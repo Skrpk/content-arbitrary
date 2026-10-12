@@ -64,6 +64,13 @@ export const workspaces = pgTable('workspaces', {
    */
   postFooter: text('post_footer'),
   /**
+   * Publish this tenant's posts straight to the channel, skipping review even
+   * while REQUIRE_APPROVAL is on — for a channel that reposts everything its
+   * sources bring in. Such a tenant needs no reviewer, and Radar, which only
+   * scores posts on their way to review, does not run for it.
+   */
+  autoPublish: boolean('auto_publish').notNull().default(false),
+  /**
    * How the reviewer hears of posts to review. A number of minutes collects
    * them in the review queue — a Mini App page, best Radar score first — and
    * sends one notification with a button to it at most that often, and only

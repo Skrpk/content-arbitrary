@@ -36,6 +36,11 @@ export interface TelegramDestination {
    * than to the chat one by one. See usesReviewQueue.
    */
   queueForReview?: boolean;
+  /**
+   * Publish straight to the channel even while REQUIRE_APPROVAL is on: the
+   * tenant reposts everything, so nothing is sent for review. See reviewsPosts.
+   */
+  autoPublish?: boolean;
 }
 
 /**
@@ -189,9 +194,10 @@ export function destinationFor(
     return { ok: false, reason: 'workspace has no telegram_chat_id' };
   }
 
-  if (env.REQUIRE_APPROVAL && !workspace.telegramAdminChatId) {
+  if (reviewsPosts(workspace, env) && !workspace.telegramAdminChatId) {
     // Publishing straight to the channel would quietly bypass review, which is
-    // the one thing approval exists to prevent.
+    // the one thing approval exists to prevent. A tenant that asked for that
+    // with auto_publish needs no reviewer.
     return {
       ok: false,
       reason: 'REQUIRE_APPROVAL is on but workspace has no telegram_admin_chat_id',
@@ -206,8 +212,20 @@ export function destinationFor(
       adminChatId: workspace.telegramAdminChatId,
       disableNotification: env.TELEGRAM_DISABLE_NOTIFICATION,
       queueForReview: usesReviewQueue(workspace, env),
+      ...(workspace.autoPublish ? { autoPublish: true } : {}),
     },
   };
+}
+
+/**
+ * Whether a tenant's posts go to review before the channel: REQUIRE_APPROVAL,
+ * unless the tenant publishes everything as it comes (auto_publish).
+ */
+export function reviewsPosts(
+  workspace: Partial<Pick<Workspace, 'autoPublish'>>,
+  env: Pick<Env, 'REQUIRE_APPROVAL'>,
+): boolean {
+  return env.REQUIRE_APPROVAL && !workspace.autoPublish;
 }
 
 /**
@@ -216,10 +234,10 @@ export function destinationFor(
  * no APP_BASE_URL there is no page to open, and posts go to the chat as before.
  */
 export function usesReviewQueue(
-  workspace: Pick<Workspace, 'reviewDigestMinutes'>,
+  workspace: Pick<Workspace, 'reviewDigestMinutes'> & Partial<Pick<Workspace, 'autoPublish'>>,
   env: Pick<Env, 'REQUIRE_APPROVAL' | 'APP_BASE_URL'>,
 ): boolean {
-  return env.REQUIRE_APPROVAL && Boolean(env.APP_BASE_URL) && workspace.reviewDigestMinutes !== null;
+  return reviewsPosts(workspace, env) && Boolean(env.APP_BASE_URL) && workspace.reviewDigestMinutes !== null;
 }
 
 /**
@@ -237,6 +255,24 @@ export async function markLegacySourceImported(
     .update(workspaces)
     .set({ legacySourceImportedAt: new Date(), updatedAt: new Date() })
     .where(eq(workspaces.id, workspaceId));
+}
+
+/**
+ * Turn publishing without review on or off for a channel. Scoped to the
+ * workspaces the caller reviews for; returns the updated row, or null for one
+ * that is not theirs. Posts already waiting for review stay there.
+ */
+export async function setAutoPublish(
+  db: Database,
+  input: { workspaceId: number; reviewerWorkspaceIds: number[]; autoPublish: boolean },
+): Promise<Workspace | null> {
+  if (!input.reviewerWorkspaceIds.includes(input.workspaceId)) return null;
+  const rows = await db
+    .update(workspaces)
+    .set({ autoPublish: input.autoPublish, updatedAt: new Date() })
+    .where(eq(workspaces.id, input.workspaceId))
+    .returning();
+  return rows[0] ?? null;
 }
 
 /** The shortest and longest queue notification intervals: one cron run, and ninety days. */
