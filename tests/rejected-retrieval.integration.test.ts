@@ -16,7 +16,7 @@ import {
 import { embedProcessedPosts } from '@/lib/history/embeddings/embed';
 import { findSimilarRejectedPosts } from '@/lib/history/embeddings/repository';
 import { ingestRadarBatch, submitRadarBackfill, waitForBatch } from '@/lib/radar/backfill';
-import { RADAR_PROMPT_APPROVED, RADAR_PROMPT_REJECTED } from '@/lib/radar/prompt';
+import { RADAR_PROMPT_APPROVED, RADAR_PROMPT_NEAREST, RADAR_PROMPT_REJECTED } from '@/lib/radar/prompt';
 import { createRadarRun, runLiveRadar } from '@/lib/radar/shadow';
 import { createTestLogger, ensureTestWorkspace } from './helpers';
 import { fakeEmbedding, fakeEmbeddings } from './history-fakes';
@@ -196,6 +196,53 @@ describeIfDb('Shadow Radar with similar rejected posts', () => {
       approved: { status: 'ok', matches: [{ id: approved.id }] },
       rejected: { status: 'ok', matches: [{ id: rejected.id }] },
     });
+  });
+});
+
+describeIfDb('Shadow Radar with the nearest decisions', () => {
+  it('shows v6 the nearest approved and rejected posts together, most similar first, and records them', async () => {
+    const approved = await post({ status: 'published', createdAt: at('2026-05-01T00:00:00Z'), text: 'APPROVED: galaxy merger' });
+    const rejected: { id: number }[] = [];
+    for (let i = 0; i < 12; i += 1) {
+      rejected.push(
+        await post({ status: 'rejected', createdAt: at(`2026-05-${String(i + 2).padStart(2, '0')}T00:00:00Z`), text: `REJECTED: galaxy ${i}` }),
+      );
+    }
+    await embedPosts();
+    const candidate = await post({ status: 'awaiting_approval', createdAt: new Date() });
+    const { provider, requests } = fakeAnthropic(() => messageResponse(radarOutput({ score: 30 })));
+
+    await runLiveRadar(
+      createRadarRun({ provider, embeddings: fakeEmbeddings().provider, promptVersions: [RADAR_PROMPT_NEAREST] }),
+      db,
+      {
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        processedPostId: candidate.id,
+        profile: 'Space news.',
+        item: { sourceUsername: 'esa', text: 'A beautiful galaxy', media: 'photo' },
+      },
+      createTestLogger(),
+    );
+
+    const shown = JSON.stringify(requests[0]!.messages);
+    const section = shown.slice(shown.indexOf('<nearest_decisions>'), shown.indexOf('</nearest_decisions>'));
+    expect(section.match(/<decision /g)).toHaveLength(10);
+    // The v3 list of approved posts is still there, for telling repeats.
+    expect(shown).toContain('<similar_approved>');
+    expect(shown).not.toContain('<similar_rejected>');
+
+    const [row] = await db.select().from(radarEvaluations);
+    const nearest = row!.historyRetrieval!.nearest!;
+    expect(nearest.status).toBe('ok');
+    expect(nearest.matches).toHaveLength(10);
+    const similarities = nearest.matches.map((match) => match.similarity);
+    expect(similarities).toEqual([...similarities].sort((a, b) => b - a));
+    const ids = nearest.matches.map((match) => match.id);
+    expect(ids.every((id) => id === approved.id || rejected.some((post) => post.id === id))).toBe(true);
+    expect(row!.historyRetrieval!.approved).toMatchObject({ status: 'ok', matches: [{ id: approved.id }] });
+    // The approved post is among the nearest exactly when it is nearer than the tenth rejected one.
+    const tenth = similarities[9]!;
+    expect(ids.includes(approved.id)).toBe(row!.historyRetrieval!.approved!.matches[0]!.similarity >= tenth);
   });
 });
 

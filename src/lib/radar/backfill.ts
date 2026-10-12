@@ -16,10 +16,12 @@ import {
   RADAR_PROMPT_BASELINE,
   RADAR_PROMPT_APPROVED,
   RADAR_PROMPT_MEDIA,
+  RADAR_PROMPT_NEAREST,
   RADAR_PROMPT_REJECTED,
   RADAR_PROMPT_RETRIEVAL,
   RADAR_PROMPT_VERSIONS,
   usesApprovedRetrieval,
+  usesNearestDecisions,
   usesRejectedRetrieval,
   usesHistoryRetrieval,
   usesMediaUnderstanding,
@@ -107,6 +109,7 @@ const PROMPT_TAGS: Record<RadarPromptVersion, string> = {
   [RADAR_PROMPT_APPROVED]: 'v3a',
   [RADAR_PROMPT_MEDIA]: 'v4m',
   [RADAR_PROMPT_REJECTED]: 'v5r',
+  [RADAR_PROMPT_NEAREST]: 'v6n',
 };
 
 /**
@@ -295,6 +298,7 @@ export async function submitRadarBackfill(input: {
           before: post.createdAt,
           includeApproved: requests.some(({ version }) => usesApprovedRetrieval(version)),
           includeRejected: requests.some(({ version }) => usesRejectedRetrieval(version)),
+          includeNearest: requests.some(({ version }) => usesNearestDecisions(version)),
           logger: input.logger,
         })
       : null;
@@ -323,6 +327,7 @@ export async function submitRadarBackfill(input: {
         similarPublications: usesHistoryRetrieval(version) ? (retrieval?.matches ?? []) : null,
         similarApproved: usesApprovedRetrieval(version) ? (retrieval?.approved?.matches ?? []) : null,
         similarRejected: usesRejectedRetrieval(version) ? (retrieval?.rejected?.matches ?? []) : null,
+        nearestDecisions: usesNearestDecisions(version) ? (retrieval?.nearest?.matches ?? []) : null,
         media: usesMediaUnderstanding(version) ? { image: media?.understanding ?? null } : null,
       });
 
@@ -458,6 +463,7 @@ export async function ingestRadarBatch(input: {
                 before: post.createdAt,
                 includeApproved: true,
                 includeRejected: true,
+                includeNearest: true,
               })
             : null,
         );
@@ -465,14 +471,16 @@ export async function ingestRadarBatch(input: {
       const replayed = retrievals.get(key.processedPostId);
       const withApproved = usesApprovedRetrieval(key.promptVersion);
       const withRejected = usesRejectedRetrieval(key.promptVersion);
+      const withNearest = usesNearestDecisions(key.promptVersion);
       historyRetrieval = replayed
-        ? toRetrievalRecord(replayed, { approved: withApproved, rejected: withRejected })
+        ? toRetrievalRecord(replayed, { approved: withApproved, rejected: withRejected, nearest: withNearest })
         : {
             status: 'unavailable',
             embeddingModel: null,
             matches: [],
             ...(withApproved ? { approved: { status: 'unavailable' as const, matches: [] } } : {}),
             ...(withRejected ? { rejected: { status: 'unavailable' as const, matches: [] } } : {}),
+            ...(withNearest ? { nearest: { status: 'unavailable' as const, matches: [] } } : {}),
           };
     }
 

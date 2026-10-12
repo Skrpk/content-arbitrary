@@ -37,6 +37,13 @@ export const HISTORY_RETRIEVAL_LIMIT = 5;
 export const APPROVED_RETRIEVAL_LIMIT = 5;
 /** How many similar rejected posts, likewise. */
 export const REJECTED_RETRIEVAL_LIMIT = 5;
+/** How many of the editor's nearest decisions, of either kind: enough to read as a vote. */
+export const NEAREST_DECISIONS_LIMIT = 10;
+
+/** One of the editor's decisions nearest to a new post, approved or rejected. */
+export type NearestDecisionMatch =
+  | (ApprovedMatch & { decision: 'approve'; decidedAt: Date; rejectionReason: null; rejectionNote: null })
+  | (RejectedMatch & { decision: 'reject'; decidedAt: Date });
 
 const RETRIEVAL_TIMEOUT_MS = 10_000;
 
@@ -49,6 +56,8 @@ export interface HistoryRetrieval {
   approved?: { status: HistoryRetrievalStatus; matches: ApprovedMatch[] };
   /** Only when rejected posts were searched too, with their own status. */
   rejected?: { status: HistoryRetrievalStatus; matches: RejectedMatch[] };
+  /** Only when the nearest decisions were asked for, with their own status. */
+  nearest?: { status: HistoryRetrievalStatus; matches: NearestDecisionMatch[] };
   /** Spent embedding the post now; zero when its vector was already stored. */
   inputTokens: number;
   error?: string;
@@ -75,6 +84,8 @@ interface RetrievalInput {
   includeApproved?: boolean;
   /** Search the posts the editor rejected as well. */
   includeRejected?: boolean;
+  /** Find the editor's nearest decisions, approved and rejected together. */
+  includeNearest?: boolean;
   limit?: number;
 }
 
@@ -108,6 +119,8 @@ export async function retrieveSimilarPublications(
         topApprovedSimilarity: retrieval.approved?.matches[0]?.similarity,
         rejectedMatches: retrieval.rejected?.matches.length,
         topRejectedSimilarity: retrieval.rejected?.matches[0]?.similarity,
+        nearestApproved: retrieval.nearest?.matches.filter((match) => match.decision === 'approve').length,
+        nearestMatches: retrieval.nearest?.matches.length,
         // Not `inputTokens`: the logger redacts any key named *token*.
         usage: { input: retrieval.inputTokens },
       });
@@ -149,8 +162,10 @@ async function search(
   const approved = { ...history, excludePostId: input.processedPostId };
 
   const historyCount = await countSearchableHistory(input.db, history);
-  const approvedCount = input.includeApproved ? await countSearchableApproved(input.db, approved) : 0;
-  const rejectedCount = input.includeRejected ? await countSearchableRejected(input.db, approved) : 0;
+  const approvedCount =
+    input.includeApproved || input.includeNearest ? await countSearchableApproved(input.db, approved) : 0;
+  const rejectedCount =
+    input.includeRejected || input.includeNearest ? await countSearchableRejected(input.db, approved) : 0;
   // Checked first, so a workspace with nothing to search costs no embedding call.
   if (historyCount === 0 && approvedCount === 0 && rejectedCount === 0) return none(input, model, 'no_history');
 
@@ -171,6 +186,9 @@ async function search(
         matches: [],
         ...(input.includeApproved ? { approved: { status: approvedCount > 0 ? failed : 'no_history', matches: [] } } : {}),
         ...(input.includeRejected ? { rejected: { status: rejectedCount > 0 ? failed : 'no_history', matches: [] } } : {}),
+        ...(input.includeNearest
+          ? { nearest: { status: approvedCount + rejectedCount > 0 ? failed : 'no_history', matches: [] } }
+          : {}),
         inputTokens: 0,
       };
     }
@@ -186,25 +204,45 @@ async function search(
           limit: input.limit ?? HISTORY_RETRIEVAL_LIMIT,
         })
       : [];
-  const approvedMatches =
+  // The nearest decisions are the nearest of both searches merged, so each
+  // fetches as many as the nearest list could take; the approved and rejected
+  // lists are the first few of those, exactly what a search of their own finds.
+  const nearestLimit = input.includeNearest ? (input.limit ?? NEAREST_DECISIONS_LIMIT) : 0;
+  const approvedFound =
     approvedCount > 0
       ? await findSimilarApprovedPosts(input.db, {
           ...approved,
           embedding: vector,
-          limit: input.limit ?? APPROVED_RETRIEVAL_LIMIT,
+          limit: Math.max(input.limit ?? APPROVED_RETRIEVAL_LIMIT, nearestLimit),
         })
       : [];
-  const rejectedMatches =
+  const rejectedFound =
     rejectedCount > 0
       ? await findSimilarRejectedPosts(input.db, {
           ...approved,
           embedding: vector,
-          limit: input.limit ?? REJECTED_RETRIEVAL_LIMIT,
+          limit: Math.max(input.limit ?? REJECTED_RETRIEVAL_LIMIT, nearestLimit),
         })
       : [];
+  const approvedMatches = input.includeApproved ? approvedFound.slice(0, input.limit ?? APPROVED_RETRIEVAL_LIMIT) : [];
+  const rejectedMatches = input.includeRejected ? rejectedFound.slice(0, input.limit ?? REJECTED_RETRIEVAL_LIMIT) : [];
+  const nearestMatches: NearestDecisionMatch[] = input.includeNearest
+    ? [
+        ...approvedFound.map((match) => ({
+          ...match,
+          decision: 'approve' as const,
+          decidedAt: match.approvedAt,
+          rejectionReason: null,
+          rejectionNote: null,
+        })),
+        ...rejectedFound.map((match) => ({ ...match, decision: 'reject' as const, decidedAt: match.rejectedAt })),
+      ]
+        .sort((a, b) => b.similarity - a.similarity || a.processedPostId - b.processedPostId)
+        .slice(0, nearestLimit)
+    : [];
 
   if (input.mediaConfig) {
-    await describeImages(input.db, input.mediaConfig, [...matches, ...approvedMatches, ...rejectedMatches]);
+    await describeImages(input.db, input.mediaConfig, [...matches, ...approvedFound, ...rejectedFound, ...nearestMatches]);
   }
 
   return {
@@ -216,6 +254,9 @@ async function search(
       : {}),
     ...(input.includeRejected
       ? { rejected: { status: rejectedMatches.length > 0 ? 'ok' : 'no_history', matches: rejectedMatches } }
+      : {}),
+    ...(input.includeNearest
+      ? { nearest: { status: nearestMatches.length > 0 ? 'ok' : 'no_history', matches: nearestMatches } }
       : {}),
     inputTokens,
   };
@@ -237,7 +278,7 @@ async function describeImages(
 }
 
 function none(
-  input: Pick<RetrievalInput, 'includeApproved' | 'includeRejected'>,
+  input: Pick<RetrievalInput, 'includeApproved' | 'includeRejected' | 'includeNearest'>,
   model: string | null,
   status: HistoryRetrievalStatus,
   error?: string,
@@ -248,6 +289,7 @@ function none(
     matches: [],
     ...(input.includeApproved ? { approved: { status, matches: [] } } : {}),
     ...(input.includeRejected ? { rejected: { status, matches: [] } } : {}),
+    ...(input.includeNearest ? { nearest: { status, matches: [] } } : {}),
     inputTokens: 0,
     ...(error ? { error } : {}),
   };
@@ -255,12 +297,12 @@ function none(
 
 /**
  * What a radar_evaluations row keeps of a search: ids and similarities, not
- * the texts — and the approved and rejected posts only for a prompt that was
- * shown them.
+ * the texts — and the approved and rejected posts, and the nearest decisions,
+ * only for a prompt that was shown them.
  */
 export function toRetrievalRecord(
   retrieval: HistoryRetrieval,
-  options: { approved?: boolean; rejected?: boolean } = {},
+  options: { approved?: boolean; rejected?: boolean; nearest?: boolean } = {},
 ): HistoryRetrievalRecord {
   const ids = (matches: { id: number; similarity: number }[]) =>
     matches.map((match) => ({ id: match.id, similarity: Math.round(match.similarity * 10_000) / 10_000 }));
@@ -284,6 +326,16 @@ export function toRetrievalRecord(
             status: retrieval.rejected.status,
             matches: ids(
               retrieval.rejected.matches.map((match) => ({ id: match.processedPostId, similarity: match.similarity })),
+            ),
+          },
+        }
+      : {}),
+    ...(options.nearest && retrieval.nearest
+      ? {
+          nearest: {
+            status: retrieval.nearest.status,
+            matches: ids(
+              retrieval.nearest.matches.map((match) => ({ id: match.processedPostId, similarity: match.similarity })),
             ),
           },
         }

@@ -29,6 +29,7 @@ import {
   RADAR_EXAMPLES_PER_CLASS,
   RADAR_PROMPT_APPROVED,
   usesApprovedRetrieval,
+  usesNearestDecisions,
   usesRejectedRetrieval,
   usesHistoryRetrieval,
 } from '../src/lib/radar/prompt';
@@ -83,6 +84,7 @@ async function main() {
         before: post.createdAt,
         includeApproved: usesApprovedRetrieval(promptVersion),
         includeRejected: usesRejectedRetrieval(promptVersion),
+        includeNearest: usesNearestDecisions(promptVersion),
       })
     : null;
 
@@ -108,6 +110,12 @@ async function main() {
         .join(', ');
       console.log(`# Similar rejected posts: ${retrieval.rejected.status}${rejected ? ` · ${rejected}` : ''}`);
     }
+    if (retrieval.nearest) {
+      const nearest = retrieval.nearest.matches
+        .map((match) => `post ${match.processedPostId} ${match.decision} (${match.similarity.toFixed(3)})`)
+        .join(', ');
+      console.log(`# Nearest decisions: ${retrieval.nearest.status}${nearest ? ` · ${nearest}` : ''}`);
+    }
   }
   console.log('\n## Instructions (system)\n');
   console.log(buildSystemPrompt(workspace.editorialProfile, history.approvalRate, publication?.profile, promptVersion));
@@ -124,6 +132,7 @@ async function main() {
     usesApprovedRetrieval(promptVersion) ? (retrieval?.approved?.matches ?? []) : null,
     null,
     usesRejectedRetrieval(promptVersion) ? (retrieval?.rejected?.matches ?? []) : null,
+    usesNearestDecisions(promptVersion) ? (retrieval?.nearest?.matches ?? []) : null,
   );
   for (const part of content) console.log(part.type === 'text' ? part.text : '[image]');
 }

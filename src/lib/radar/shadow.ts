@@ -9,6 +9,7 @@ import {
   usesApprovedRetrieval,
   usesHistoryRetrieval,
   usesMediaUnderstanding,
+  usesNearestDecisions,
   usesRejectedRetrieval,
   type RadarImage,
   type RadarItem,
@@ -214,6 +215,7 @@ export async function scoreAndRecord(
         before: options.before,
         includeApproved: pending.some(({ version }) => usesApprovedRetrieval(version)),
         includeRejected: pending.some(({ version }) => usesRejectedRetrieval(version)),
+        includeNearest: pending.some(({ version }) => usesNearestDecisions(version)),
         timeoutMs: Math.min(RETRIEVAL_TIMEOUT_MS, options.timeoutMs),
         logger: options.logger,
       })
@@ -227,7 +229,10 @@ export async function scoreAndRecord(
       const shown = usesHistoryRetrieval(version) ? retrieval : null;
       const withApproved = usesApprovedRetrieval(version);
       const withRejected = usesRejectedRetrieval(version);
-      const historyRetrieval = shown ? toRetrievalRecord(shown, { approved: withApproved, rejected: withRejected }) : null;
+      const withNearest = usesNearestDecisions(version);
+      const historyRetrieval = shown
+        ? toRetrievalRecord(shown, { approved: withApproved, rejected: withRejected, nearest: withNearest })
+        : null;
       const startedAt = Date.now();
       try {
         const prediction = await provider.score(
@@ -242,6 +247,7 @@ export async function scoreAndRecord(
             similarPublications: shown?.matches ?? null,
             similarApproved: withApproved ? (shown?.approved?.matches ?? []) : null,
             similarRejected: withRejected ? (shown?.rejected?.matches ?? []) : null,
+            nearestDecisions: withNearest ? (shown?.nearest?.matches ?? []) : null,
             media: readsMedia ? { image: subject.media?.understanding ?? null } : null,
           },
           { timeoutMs: options.timeoutMs },

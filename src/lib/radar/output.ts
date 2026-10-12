@@ -9,6 +9,7 @@ import type {
   RadarMediaContext,
   RadarSimilarApproved,
   RadarSimilarRejected,
+  RadarNearestDecision,
   RadarSimilarPublication,
 } from '@/lib/radar/prompt';
 import { truncateToLength } from '@/lib/telegram/format-caption';
@@ -73,6 +74,8 @@ export interface RadarInput {
   similarApproved?: RadarSimilarApproved[] | null;
   /** Rejected-posts prompt only: the most similar posts the editor turned down. */
   similarRejected?: RadarSimilarRejected[] | null;
+  /** Nearest-decisions prompt only: the editor's decisions nearest to the post, of either kind. */
+  nearestDecisions?: RadarNearestDecision[] | null;
   /** Media prompt only: what the post's first image shows, in place of the image. */
   media?: RadarMediaContext | null;
 }

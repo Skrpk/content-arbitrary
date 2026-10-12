@@ -90,6 +90,7 @@ export function createOpenAiRadar(options: {
           input.similarApproved,
           input.media,
           input.similarRejected,
+          input.nearestDecisions,
         ).map(
           toOpenAiPart,
         ),

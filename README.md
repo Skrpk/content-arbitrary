@@ -1232,7 +1232,7 @@ reads that description. (The earlier experiment — scoring the text with its ra
 the `text_image` variant — runs live only with `RADAR_LIVE_IMAGE_VARIANT=true`; backfills still
 score it.)
 
-**Prompts, side by side.** Five versions build on each other, so each addition is measured on
+**Prompts, side by side.** Six versions build on each other, so each addition is measured on
 the same posts, not on two different sets: `radar-v1` (the baseline above);
 `radar-v2-history-retrieval`, which adds the channel's [five most similar past
 publications](#similar-past-publications) and asks what they show;
@@ -1241,9 +1241,11 @@ approved](#similar-approved-posts); and `radar-v4-media-understanding`, which al
 images show — the new post's, and the past publications', approved posts' and examples' — from
 their [stored descriptions](#image-understanding), never the image itself; and
 `radar-v5-similar-rejected`, which is `radar-v3` (not `radar-v4`: image descriptions did not
-help) plus the [five most similar posts the editor turned down](#similar-rejected-posts). Live, every post is scored with `radar-v1`, `radar-v3` and `radar-v5`
-(`radar-v4` scored below `radar-v3` live, so it runs on backfills only); backfills score all
-five by default.
+help) plus the [five most similar posts the editor turned down](#similar-rejected-posts); and
+`radar-v6-nearest-decisions`, which is `radar-v3` plus the [editor's ten nearest
+decisions](#nearest-decisions), approved and rejected together. Live, every post is scored with
+`radar-v1`, `radar-v3` and `radar-v5` (`radar-v4` scored below `radar-v3` live, so it runs on
+backfills only); backfills score all six by default.
 `LIVE_RADAR_PROMPT_VERSIONS` in
 [`src/lib/radar/prompt.ts`](src/lib/radar/prompt.ts) is the live list.
 
@@ -1321,7 +1323,8 @@ npm run radar:report -- --workspace 2 --compare radar-v1,radar-v2-history-retrie
 ```
 
 Per mode (live, backfill) and variant: how often the editor approved, the mean score of approved
-and rejected posts, how well the scores separate them (AUC: 0.5 is chance, 1.0 perfect),
+and rejected posts, how well the scores separate them (AUC: 0.5 is chance, 1.0 perfect), the
+[daily hit rate](#the-core-measure-the-daily-hit-rate),
 precision at 80, recall at 50, approval rate by score band, and — for a few thresholds — how much
 review work hiding the posts below it would save and how many approved posts it would have hidden.
 A live score made after the editor had already decided is not counted. Text against text-and-image
@@ -1330,9 +1333,21 @@ is compared on the same posts only.
 For the retrieval prompt it adds how the search went (matches found, no history, no text,
 failed) and how often its "possibly already covered" flag agreed with the editor's
 `already_covered` rejections. `--compare` puts two prompt versions side by side on exactly the
-posts both scored, per mode, variant and model: AUC, mean scores, precision at 80, recall and work
+posts both scored, per mode, variant and model: AUC, the daily hit rate, mean scores, precision at 80, recall and work
 saved at each threshold, approvals scored under 50 — and which of those one version rescued and
 the other missed — and the cost.
+
+#### The core measure: the daily hit rate
+
+The editor reads the review queue about once a day, best score first. So what decides whether a
+change to Radar is kept is how well it orders each day's posts: for every day, take Radar's top N
+posts, N being the number the editor approved that day, and count how many of them are the ones
+they approved — "had you published Radar's top N, how many would have been yours". Shown as
+`13/41 32%`, beside what a random order would get on the same days (`chance`), and next to it the
+share of approvals within the top quarter of each day: what reading only a quarter of the queue
+would have found. Days are arrival days in UTC; tied scores at the cut count at their expected
+share. With a few weeks of decisions the counts are small, which the `13/41` is there to show:
+a difference of two or three approvals is noise.
 
 A prompt change gets a new version in [`src/lib/radar/prompt.ts`](src/lib/radar/prompt.ts):
 results of different prompts are reported separately and never mixed — and so are scores made
@@ -1515,6 +1530,22 @@ so `radar-v3` against `radar-v5` measures this one addition. A galaxy posted as 
 found among galaxies: the post's image description is embedded with its text, whichever prompt
 reads it. Same vectors, same boundaries (rejected strictly before the new post arrived), no extra
 embedding call; recorded in `history_retrieval.rejected`.
+
+On a backfill it ranked no better than `radar-v3` (same AUC and daily hit rate) and turned
+pessimistic about everything: with nine posts in ten rejected, rejected neighbours turn up for
+almost any post, and it read their mere presence as a verdict — halving the galaxy photos scored
+high, and missing approvals with a bare caption too.
+
+### Nearest decisions
+
+So `radar-v6-nearest-decisions` shows both kinds at once: `radar-v3` plus the ten posts the editor
+had decided nearest to the new one, approved and rejected together, most similar first, counted
+("3 approved, 7 rejected"), each rejection with its reason and note. Radar reads them as a vote
+weighed against the editor's usual approval rate: a share approved well above it says they take
+this kind of post, well below it that they turn it down, near it nothing either way. They are the
+nearest of the approved and rejected searches merged — ten of each fetched, the first five
+approved still shown as `radar-v3` shows them — so no extra query or embedding; recorded in
+`history_retrieval.nearest`.
 
 **Cost.** One embedding call per new post (a few hundred tokens), and the history once: VECTOR's
 83 posts with text, about 24,000 characters, cost a fraction of a cent. `history:embed` prints the

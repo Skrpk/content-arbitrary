@@ -19,6 +19,11 @@ import { ANTHROPIC_RADAR_MODEL, OPENAI_RADAR_MODEL } from '@/lib/radar/providers
  * model that rejects everything is 75% "accurate" and useless. What matters is
  * whether approved posts score higher than rejected ones, and how much review
  * work a threshold would save for how much good content it would hide.
+ *
+ * The core measure is the daily hit rate (see dailyRanking): the editor reads
+ * the review queue about once a day, best score first, so what counts is how
+ * well Radar orders each day's posts — not how it scores them on some scale.
+ * A change to Radar is kept when it raises that.
  */
 
 export interface ReportRow {
@@ -34,6 +39,8 @@ export interface ReportRow {
   inputTokens: number | null;
   outputTokens: number | null;
   evaluatedAt: Date;
+  /** When the post arrived — which day's review queue it was in. */
+  arrivedAt: Date;
   /** The publication-history profile the prompt carried, if any. */
   publicationHistoryProfileId: number | null;
   /** Retrieval prompt only: what the similar-publication search found. */
@@ -98,6 +105,7 @@ export async function loadReportRows(db: Database, workspaceId: number): Promise
       inputTokens: radarEvaluations.inputTokens,
       outputTokens: radarEvaluations.outputTokens,
       evaluatedAt: radarEvaluations.createdAt,
+      arrivedAt: processedPosts.createdAt,
       publicationHistoryProfileId: radarEvaluations.publicationHistoryProfileId,
       historyRetrieval: radarEvaluations.historyRetrieval,
       historicalAssessment: radarEvaluations.historicalAssessment,
@@ -173,6 +181,15 @@ function formatGroup(key: string, rows: ReportRow[]): string {
         `Score, approved: mean ${mean(approvedScores).toFixed(1)}, median ${median(approvedScores)}`,
         `Score, rejected: mean ${mean(rejectedScores).toFixed(1)}, median ${median(rejectedScores)}`,
         `Separation (AUC): ${auc(approvedScores, rejectedScores).toFixed(2)}  — 0.50 is chance, 1.00 perfect`,
+      );
+    }
+
+    const daily = dailyRanking(scored);
+    if (daily) {
+      lines.push(
+        `Daily hit rate: ${share(daily.hits, daily.approvals)} (chance ${percent(daily.chance, daily.approvals)}) — ` +
+          `each day's top N by score, N = that day's approvals; ${daily.approvals} approvals over ${daily.days} days`,
+        `Top quarter of each day: ${share(daily.topQuarter, daily.approvals)} of approvals`,
       );
     }
 
@@ -382,6 +399,18 @@ function comparison(
       const rejected = side.filter((row) => !row.approved).map((row) => row.score!);
       return approved.length > 0 && rejected.length > 0 ? auc(approved, rejected).toFixed(2) : 'n/a';
     }),
+    line('Daily hit rate', (side) => {
+      const daily = dailyRanking(side);
+      return daily ? share(daily.hits, daily.approvals) : 'n/a';
+    }),
+    line('  chance', (side) => {
+      const daily = dailyRanking(side);
+      return daily ? percent(daily.chance, daily.approvals) : 'n/a';
+    }),
+    line('Top quarter of each day', (side) => {
+      const daily = dailyRanking(side);
+      return daily ? share(daily.topQuarter, daily.approvals) : 'n/a';
+    }),
     line('Mean score, approved', (side) => meanOf(side.filter((row) => row.approved))),
     line('Mean score, rejected', (side) => meanOf(side.filter((row) => !row.approved))),
     line('Precision@80', (side) => {
@@ -432,6 +461,62 @@ function comparison(
     );
   }
   return lines.join('\n');
+}
+
+/**
+ * How well the scores order each day's posts — the review queue as the editor
+ * reads it, about once a day, best score first. Days are the posts' arrival
+ * days, in UTC.
+ *
+ * - hits: for each day, the approvals among its top N posts by score, where N
+ *   is the number it had approved — "had you published Radar's top N, how
+ *   many would have been yours". Divided by `approvals`, the daily hit rate.
+ * - chance: what a random order would score on the same days, for scale.
+ * - topQuarter: the approvals within the top quarter of each day's posts —
+ *   what reading only that much of the queue would have found.
+ *
+ * Tied scores at the cut share the remaining places, so a tie counts as the
+ * expected outcome of breaking it at random. Null without a single approval.
+ */
+export function dailyRanking(
+  rows: Pick<ReportRow, 'arrivedAt' | 'score' | 'approved'>[],
+): { days: number; approvals: number; hits: number; chance: number; topQuarter: number } | null {
+  const byDay = new Map<string, { score: number; approved: boolean }[]>();
+  for (const row of rows) {
+    if (row.score === null || row.approved === null) continue;
+    const day = row.arrivedAt.toISOString().slice(0, 10);
+    byDay.set(day, [...(byDay.get(day) ?? []), { score: row.score, approved: row.approved }]);
+  }
+
+  let approvals = 0;
+  let hits = 0;
+  let chance = 0;
+  let topQuarter = 0;
+  let days = 0;
+  for (const day of byDay.values()) {
+    const approved = day.filter((post) => post.approved).length;
+    if (approved === 0) continue;
+    days += 1;
+    approvals += approved;
+    hits += expectedHitsInTop(day, approved);
+    chance += (approved * approved) / day.length;
+    topQuarter += expectedHitsInTop(day, Math.ceil(day.length / 4));
+  }
+  return approvals === 0 ? null : { days, approvals, hits, chance, topQuarter };
+}
+
+/** Approvals among the `k` best-scored posts, ties at the cut counted at their expected share. */
+function expectedHitsInTop(posts: { score: number; approved: boolean }[], k: number): number {
+  if (k <= 0) return 0;
+  if (k >= posts.length) return posts.filter((post) => post.approved).length;
+  const cut = [...posts].sort((a, b) => b.score - a.score)[k - 1]!.score;
+  const above = posts.filter((post) => post.score > cut);
+  const tied = posts.filter((post) => post.score === cut);
+  const places = k - above.length;
+  return (
+    above.filter((post) => post.approved).length +
+    (tied.filter((post) => post.approved).length * places) / tied.length
+  );
 }
 
 function meanOf(rows: ReportRow[]): string {
@@ -488,6 +573,11 @@ function median(values: number[]): number {
 
 function sum(values: number[]): number {
   return values.reduce((total, value) => total + value, 0);
+}
+
+/** `13/41 32%`: the count beside the share, so a small sample shows as one. */
+function share(part: number, whole: number): string {
+  return `${Math.round(part)}/${whole} ${percent(part, whole)}`;
 }
 
 function percent(part: number, whole: number): string {
