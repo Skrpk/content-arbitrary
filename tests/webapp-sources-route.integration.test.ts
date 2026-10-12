@@ -15,12 +15,25 @@ import {
 import { DELETE, GET, POST } from '@/app/api/telegram/webapp/sources/route';
 import { POST as ADD_RSS } from '@/app/api/telegram/webapp/sources/rss/route';
 import { POST as ADD_TELEGRAM } from '@/app/api/telegram/webapp/sources/telegram/route';
+import { POST as ADD_X } from '@/app/api/telegram/webapp/sources/x/route';
 
 // The feed a test adds, without the network: only fetching is replaced.
 const feedXml = vi.hoisted(() => ({ value: '' }));
 vi.mock('@/lib/rss/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/rss/client')>()),
   fetchFeed: async (url: string) => ({ xml: feedXml.value, finalUrl: url }),
+}));
+// The X accounts that exist, by handle → id; any other is not found.
+const xAccounts = vi.hoisted(() => ({ known: {} as Record<string, string> }));
+vi.mock('@/lib/x/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/x/client')>()),
+  XClient: class {
+    async getUserByUsername(username: string) {
+      const id = xAccounts.known[username.toLowerCase()];
+      if (!id) throw new Error('Could not find user');
+      return { id, username };
+    }
+  },
 }));
 // The channel page a test adds, likewise; null when t.me has no public page for it.
 const channelHtml = vi.hoisted(() => ({ value: null as string | null }));
@@ -394,6 +407,46 @@ describeIfDb('POST /api/telegram/webapp/sources/telegram', () => {
     expect(((await missing.json()) as { error: string }).error).toContain('not a public Telegram channel');
 
     expect((await add({ channel: '@spacenews', workspaceId: DEFAULT_WORKSPACE_ID }, auth(STRANGER_ID))).status).toBe(401);
+    expect(await db.select().from(sources)).toEqual([]);
+  });
+});
+
+describeIfDb('POST /api/telegram/webapp/sources/x', () => {
+  const add = (body: unknown, authorization = auth()) =>
+    withEnv(routeEnv, () =>
+      ADD_X(
+        new Request('https://example.vercel.app/api/telegram/webapp/sources/x', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization },
+          body: JSON.stringify(body),
+        }),
+      ),
+    );
+
+  beforeEach(() => {
+    xAccounts.known = { karpathy: '33836629' };
+  });
+
+  it('adds an account X knows, under its id, from a link as well as a handle', async () => {
+    const response = await add({ username: 'https://x.com/karpathy', workspaceId: DEFAULT_WORKSPACE_ID });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ created: true, source: { platform: 'x', label: '@karpathy' } });
+    expect(await db.select().from(sources)).toEqual([
+      expect.objectContaining({ platform: 'x', externalId: '33836629', workspaceId: DEFAULT_WORKSPACE_ID }),
+    ]);
+
+    const again = await add({ username: '@karpathy', workspaceId: DEFAULT_WORKSPACE_ID });
+    expect(await again.json()).toMatchObject({ created: false });
+  });
+
+  it('refuses an account X does not know, a bad handle, another tenant’s channel and a stranger', async () => {
+    const missing = await add({ username: '@nobody_here', workspaceId: DEFAULT_WORKSPACE_ID });
+    expect(missing.status).toBe(422);
+    expect(((await missing.json()) as { error: string }).error).toContain('Could not find @nobody_here on X');
+    expect((await add({ username: 'not a handle!', workspaceId: DEFAULT_WORKSPACE_ID })).status).toBe(422);
+    expect((await add({ username: '@karpathy', workspaceId: OTHER_WORKSPACE })).status).toBe(404);
+    expect((await add({ username: '@karpathy', workspaceId: DEFAULT_WORKSPACE_ID }, auth(STRANGER_ID))).status).toBe(401);
     expect(await db.select().from(sources)).toEqual([]);
   });
 });

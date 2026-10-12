@@ -481,7 +481,7 @@ describeIfDb('/sourcestats', () => {
 
     expect(callsTo('sendMessage').at(-1)?.body.reply_markup).toEqual({
       inline_keyboard: [
-        [{ text: '📊 Open stats', web_app: { url: 'https://example.vercel.app/source-stats' } }],
+        [{ text: '📊 Sources', web_app: { url: 'https://example.vercel.app/source-stats' } }],
         [{ text: '⚙️ Settings', web_app: { url: 'https://example.vercel.app/settings' } }],
       ],
     });

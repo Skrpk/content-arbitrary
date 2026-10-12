@@ -521,7 +521,7 @@ function replyMarkupFor(
   ];
   if (!appBaseUrl) return rows.length > 0 ? { inline_keyboard: rows } : undefined;
   rows.push(
-    ...(reply.offerStats ? [[{ text: '📊 Open stats', web_app: { url: buildSourceStatsUrl(appBaseUrl) } }]] : []),
+    ...(reply.offerStats ? [[{ text: '📊 Sources', web_app: { url: buildSourceStatsUrl(appBaseUrl) } }]] : []),
     ...(reply.offerSettings ? [[{ text: '⚙️ Settings', web_app: { url: buildSettingsUrl(appBaseUrl) } }]] : []),
   );
   return rows.length > 0 ? { inline_keyboard: rows } : undefined;

@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from 'react';
 import { PlatformBadge } from '@/app/(app)/platform-badge';
 import { readJson, type PanelTools } from '@/components/panel-tools';
 import { theme } from '@/lib/telegram/webapp-client';
-import { looksLikeTelegramChannel } from '@/lib/telegram-channel/username';
 
 /**
  * Settings, for the Mini App and the website alike.
@@ -119,10 +118,6 @@ export function SettingsPanel({ request }: Pick<PanelTools, 'request'>) {
   const [account, setAccount] = useState<{ reviewLink: ReviewLink; websiteUrl: string } | null>(null);
   const [linkMessage, setLinkMessage] = useState<string | null>(null);
 
-  const [feedUrl, setFeedUrl] = useState('');
-  const [feedChannel, setFeedChannel] = useState<number | null>(null);
-  const [adding, setAdding] = useState(false);
-  const [addResult, setAddResult] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -145,7 +140,6 @@ export function SettingsPanel({ request }: Pick<PanelTools, 'request'>) {
       .then((body) => {
         if (cancelled) return;
         setChannels(body.channels ?? []);
-        setFeedChannel(body.channels?.[0]?.id ?? null);
         setPhase('ready');
       })
       .catch((error: unknown) => {
@@ -264,61 +258,6 @@ export function SettingsPanel({ request }: Pick<PanelTools, 'request'>) {
     },
     [account, request],
   );
-
-  /**
-   * Add a feed or a Telegram channel — told apart by what was typed, a t.me
-   * link or an @username being a channel. Either is checked on the server,
-   * its page or feed read once, before it is stored.
-   */
-  const addFeed = useCallback(async () => {
-    if (feedChannel === null || feedUrl.trim() === '') return;
-
-    const telegram = looksLikeTelegramChannel(feedUrl);
-    setAdding(true);
-    setAddResult(null);
-    try {
-      const response = await request(`/api/telegram/webapp/sources/${telegram ? 'telegram' : 'rss'}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(
-          telegram
-            ? { channel: feedUrl.trim(), workspaceId: feedChannel }
-            : { url: feedUrl.trim(), workspaceId: feedChannel },
-        ),
-      });
-      const body = (await response.json()) as {
-        error?: string;
-        created?: boolean;
-        entries?: number;
-        workspaceId?: number;
-        source?: SourceView;
-      };
-      if (!response.ok || !body.source) throw new Error(body.error ?? `Could not add (${response.status})`);
-
-      const added = body.source;
-      if (body.created) {
-        setChannels((all) =>
-          all.map((channel) =>
-            channel.id === body.workspaceId ? { ...channel, sources: [...channel.sources, added] } : channel,
-          ),
-        );
-        setFeedUrl('');
-        setAddResult({
-          ok: true,
-          text: telegram
-            ? `✅ ${added.label} added. What the channel has posted so far is not sent; only new posts come to review.`
-            : `✅ ${added.label} added. ${body.entries ?? 0} entries are in the feed now — they will not be ` +
-              'sent; only new ones come to review.',
-        });
-      } else {
-        setAddResult({ ok: true, text: `ℹ️ ${added.label} is already in your sources.` });
-      }
-    } catch (error: unknown) {
-      setAddResult({ ok: false, text: error instanceof Error ? error.message : 'Could not add the source.' });
-    } finally {
-      setAdding(false);
-    }
-  }, [feedChannel, feedUrl, request]);
 
   return (
     <>
@@ -498,79 +437,13 @@ export function SettingsPanel({ request }: Pick<PanelTools, 'request'>) {
 
           <h1 style={{ fontSize: '1.05rem', fontWeight: 600, margin: '0 0 0.75rem' }}>Sources</h1>
 
-          <section
-            style={{
-              background: theme.secondaryBg,
-              borderRadius: '0.6rem',
-              padding: '0.75rem 0.9rem',
-              marginBottom: '1rem',
-            }}
-          >
-            <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>➕ Add RSS feed or Telegram channel</div>
-            <input
-              type="text"
-              inputMode="url"
-              autoCapitalize="none"
-              autoCorrect="off"
-              placeholder="https://example.com/feed.xml or t.me/channel"
-              value={feedUrl}
-              onChange={(event) => setFeedUrl(event.target.value)}
-              style={inputStyle}
-            />
-            {channels.length > 1 ? (
-              <select
-                value={feedChannel ?? ''}
-                onChange={(event) => setFeedChannel(Number(event.target.value))}
-                style={{ ...inputStyle, marginTop: '0.5rem' }}
-              >
-                {channels.map((channel) => (
-                  <option key={channel.id} value={channel.id}>
-                    📢 {channel.name}
-                  </option>
-                ))}
-              </select>
-            ) : null}
-            <button
-              type="button"
-              disabled={adding || feedUrl.trim() === ''}
-              onClick={() => {
-                void addFeed();
-              }}
-              style={{
-                width: '100%',
-                marginTop: '0.5rem',
-                padding: '0.55rem 0',
-                border: 'none',
-                borderRadius: '0.5rem',
-                background: theme.button,
-                color: theme.buttonText,
-                fontWeight: 600,
-                opacity: adding || feedUrl.trim() === '' ? 0.6 : 1,
-              }}
-            >
-              {adding ? 'Checking…' : 'Add'}
-            </button>
-            <div style={{ color: theme.hint, fontSize: '0.8rem', marginTop: '0.4rem' }}>
-              A feed&apos;s own URL (RSS 2.0 or Atom), not the site&apos;s home page — or a public Telegram
-              channel&apos;s t.me link or @username. What is there now is not sent — only new posts come to review.
-            </div>
-            {addResult ? (
-              <p
-                style={{
-                  margin: '0.5rem 0 0',
-                  fontSize: '0.85rem',
-                  color: addResult.ok ? theme.text : '#e53935',
-                }}
-              >
-                {addResult.text}
-              </p>
-            ) : null}
-          </section>
+          <p style={{ color: theme.hint, fontSize: '0.85rem', margin: '0 0 0.75rem' }}>
+            Each source&apos;s options. Add sources — X accounts, Telegram channels, RSS feeds — on the Sources page.
+          </p>
 
           {channels.every((channel) => channel.sources.length === 0) ? (
             <p style={{ color: theme.hint }}>
-              No sources yet. Add an X account in the chat with /addsource @username, or a feed or a Telegram channel
-              above.
+              No sources yet. Add one on the Sources page.
             </p>
           ) : null}
 

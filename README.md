@@ -568,13 +568,19 @@ environment change and no redeploy:
 | Command | What it does |
 | --- | --- |
 | `/review` | Open the review queue: posts waiting for a decision, best Radar score first — see [The review queue](#the-review-queue) |
-| `/sourcestats` | Open a page with every source and how it performs — and buttons to pause, resume or remove it |
+| `/sourcestats` | Open the **Sources** page: add any source — X account, Telegram channel, RSS feed — see how each performs, pause, resume or remove it |
 | `/addsource @karpathy` | Start watching an account |
 | `/addrss <feed URL>` | Start watching an RSS or Atom feed — see [RSS and Atom feeds](#rss-and-atom-feeds) |
 | `/addtelegram @channel` | Start watching a public Telegram channel — see [Telegram channels](#telegram-channels) |
 
 `/addsource` accepts whatever is easiest to paste — `karpathy`, `@karpathy`,
 `x.com/karpathy`, a full profile URL, or even a link to one of the account's posts.
+
+The **Sources** page (the button under `/sourcestats`, or `/sources` on the
+[review website](#review-website)) adds any kind of source too: **➕ Add a source** has a tab per
+kind — X account, Telegram channel, RSS feed — and a pasted `x.com`, `t.me` or other link picks
+the tab itself; only a bare `@name` needs the tab chosen. Each is checked on the server exactly as
+its command checks it before it is stored, and the list below refreshes with it.
 
 Pausing, resuming and removing a source are buttons under it on the `/sourcestats` page, next
 to its numbers: posts it brought in, how many were approved, why the rest were rejected, and
@@ -649,7 +655,7 @@ buttons, and once approved it is published like any other post.
 | `/addrss https://example.com/feed.xml` | Start watching a feed |
 | `/addrss 2 https://example.com/feed.xml` | The same, for a reviewer of several channels: `2` is the channel's workspace id |
 
-Or **➕ Add RSS feed** on the ⚙️ Settings page, which asks for the URL and, with several channels,
+Or **➕ Add a source → RSS feed** on the Sources page, which asks for the URL and, with several channels,
 which one. A reviewer of several channels who leaves the id out of `/addrss` is shown their
 channels' ids — a feed URL is too long for a channel button, and the command keeps no state
 between messages.
@@ -706,8 +712,8 @@ scores them, the translator rewrites them, they come to review, and approved one
 | `/addtelegram @spacenews` | Start watching a channel; `t.me/spacenews` or a link to one of its posts works too |
 | `/addtelegram 2 @spacenews` | The same, for a reviewer of several channels: `2` is the channel's workspace id |
 
-Or type a `t.me` link or an `@username` into **➕ Add RSS feed or Telegram channel** on the ⚙️
-Settings page. The channel's page is read once before it is stored, so a name that is not a public
+Or **➕ Add a source → Telegram channel** on the Sources page (a pasted `t.me` link picks that tab
+itself). The channel's page is read once before it is stored, so a name that is not a public
 channel is turned away.
 
 **How it is read.** From the channel's public web page, `https://t.me/s/<channel>` — the page
@@ -839,9 +845,9 @@ unless you genuinely want the tenant forgotten.
 
 ## Review website
 
-The review queue, the source stats and the settings also work as a website on its own
-subdomain — say `https://app.zmistik.com` — under one header with the three sections and Sign
-out. The queue gets room to read: each post's pictures beside its text, the text and the
+The review queue, the sources and the settings also work as a website on its own
+subdomain — say `https://app.zmistik.com` — under one header with the three sections
+(`/queue`, `/sources`, `/settings`; the old `/stats` redirects to `/sources`) and Sign out. The queue gets room to read: each post's pictures beside its text, the text and the
 schedule edited in place, and the keyboard to work through the list (`j` / `k` to move, `a` to
 approve, `r` then `1`–`6` to reject, `e` to edit, `s` to schedule, `o` for the original, `Esc`
 to step back). The Mini Apps stay as they are: each page is one component (`src/components/`)
@@ -1766,7 +1772,8 @@ src/
   components/
     review-queue.tsx           The review queue, shared by the Mini App and the website
     settings-panel.tsx         Settings, likewise
-    source-stats-panel.tsx     Source stats, likewise
+    source-stats-panel.tsx     The Sources page — adding and stats — likewise
+    add-source-form.tsx        ➕ Add a source: X, Telegram or RSS, on the Sources page
     mini-app-frame.tsx         The Mini App frame: Telegram's script, initData-signed requests
     rich-editor/               The website's post editor (Tiptap) and its picture block
     media/

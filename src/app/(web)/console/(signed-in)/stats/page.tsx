@@ -1,10 +1,6 @@
-'use client';
+import { redirect } from 'next/navigation';
 
-import { SourceStatsPanel } from '@/components/source-stats-panel';
-import { useWebsiteTools } from '../../use-website-tools';
-
-/** Source stats on the website: the same page as the Mini App's. */
+/** The page's old address, kept for bookmarks: it is /sources now. */
 export default function StatsPage() {
-  const { request, confirm } = useWebsiteTools();
-  return <SourceStatsPanel request={request} confirm={confirm} />;
+  redirect('/sources');
 }

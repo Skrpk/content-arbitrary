@@ -1,11 +1,11 @@
 import type { Database } from '@/lib/db';
-import { describeError } from '@/lib/errors';
 import type { Logger } from '@/lib/logger';
 import { escapeHtml } from '@/lib/telegram/format-caption';
 import { normalizeXUsername } from '@/lib/sources/normalize';
-import { addSource, updateSourceUsername } from '@/lib/sources/repository';
+import { updateSourceUsername } from '@/lib/sources/repository';
 import { addRssSource } from '@/lib/sources/add-rss';
 import { addTelegramSource } from '@/lib/sources/add-telegram';
+import { addXSource } from '@/lib/sources/add-x';
 import type { FetchChannelOptions } from '@/lib/telegram-channel/client';
 import type { FetchFeedOptions } from '@/lib/rss/client';
 import { sourceLabelOfPost } from '@/lib/sources/display';
@@ -163,7 +163,7 @@ function channelsOf(context: CommandContext): WorkspaceRef[] {
  */
 export const BOT_COMMANDS: { command: string; description: string }[] = [
   { command: 'review', description: 'Posts waiting for review, best Radar score first' },
-  { command: 'sourcestats', description: 'How each source performs: posts, approvals, cost' },
+  { command: 'sourcestats', description: 'Your sources: add new ones, see how each performs' },
   { command: 'addsource', description: 'Start watching an account: /addsource @username' },
   { command: 'addrss', description: 'Start watching an RSS or Atom feed: /addrss <feed URL>' },
   { command: 'addtelegram', description: 'Start watching a public Telegram channel: /addtelegram @channel' },
@@ -174,7 +174,7 @@ export const BOT_COMMANDS: { command: string; description: string }[] = [
 const HELP_TEXT = [
   '<b>Source management</b>',
   '',
-  '/sourcestats — every source and how it performs: posts, approvals, cost',
+  '/sourcestats — the Sources page: add any source (X, Telegram, RSS), and see how each performs',
   '/addsource @username — start watching an account',
   '/addrss &lt;feed URL&gt; — start watching an RSS or Atom feed (with several channels: /addrss &lt;channel id&gt; &lt;feed URL&gt;)',
   '/addtelegram @channel — start watching a public Telegram channel (with several channels: /addtelegram &lt;channel id&gt; @channel)',
@@ -221,28 +221,20 @@ export async function handleAddSource(
   const resolved = await resolveHandleArgument(args, '/addsource @username');
   if (!resolved.ok) return { text: resolved.reply };
 
-  let user: { id: string; username: string };
-  try {
-    // The X API is the authority on both existence and the numeric id.
-    user = await context.xClient.getUserByUsername(resolved.username);
-  } catch (error) {
-    context.logger.warn('command.addsource_resolve_failed', {
-      username: resolved.username,
-      error: describeError(error),
-    });
+  const result = await addXSource(context.db, {
+    username: resolved.username,
+    workspaceId: context.workspaceId,
+    xClient: context.xClient,
+    logger: context.logger,
+  });
+  if (!result.ok) {
     return {
       text:
         `⚠️ Could not find <b>@${escapeHtml(resolved.username)}</b> on X.\n\n` +
         'The account may not exist, or it may be protected or suspended.',
     };
   }
-
-  const result = await addSource(context.db, {
-    platform: 'x',
-    externalId: user.id,
-    username: user.username,
-    workspaceId: context.workspaceId,
-  });
+  const user = { username: result.username };
 
   if (!result.created) {
     const note = result.source.enabled
@@ -254,11 +246,6 @@ export async function handleAddSource(
     };
   }
 
-  context.logger.info('command.source_added', {
-    workspaceId: context.workspaceId,
-    username: user.username,
-    externalId: user.id,
-  });
   return {
     text:
       `✅ <b>Source added</b>\n\n@${escapeHtml(user.username)}\n\n` +
@@ -273,7 +260,7 @@ export async function handleAddSource(
  *
  * Deliberately plainer than /addsource's channel buttons: a feed URL does not
  * fit in a button's 64 bytes of callback data, and remembering it between
- * messages would need state. The Settings page has a form that asks for both.
+ * messages would need state. The Sources page has a form that asks for both.
  */
 export async function handleAddRss(context: CommandContext, args: string): Promise<CommandReply> {
   const channels = channelsOf(context);
@@ -299,9 +286,9 @@ export async function handleAddRss(context: CommandContext, args: string): Promi
         '',
         `<code>/addrss ${channels[0]!.id} ${escapeHtml(url)}</code>`,
         '',
-        'Or use ➕ Add RSS feed in ⚙️ Settings.',
+        'Or add it on the 📊 Sources page.',
       ].join('\n'),
-      offerSettings: true,
+      offerStats: true,
     };
   }
 
@@ -359,9 +346,9 @@ export async function handleAddTelegram(context: CommandContext, args: string): 
         '',
         `<code>/addtelegram ${channels[0]!.id} ${escapeHtml(channel)}</code>`,
         '',
-        'Or use ➕ Add in ⚙️ Settings.',
+        'Or add it on the 📊 Sources page.',
       ].join('\n'),
-      offerSettings: true,
+      offerStats: true,
     };
   }
 
@@ -536,9 +523,10 @@ export async function dispatchCommand(
     case 'sourcestats':
       return {
         text:
-          '<b>Source stats</b>\n\nPer source: posts it brought in, how many you approved and why the rest ' +
-          'were rejected, and roughly what reading them from X cost — with buttons to pause, resume or ' +
-          'remove each. ⚙️ Settings has the per-source options.',
+          '<b>Sources</b>\n\nAdd any source — an X account, a Telegram channel, an RSS feed — at the top of ' +
+          'the page. Per source: posts it brought in, how many you approved and why the rest were rejected, ' +
+          'and roughly what reading them from X cost — with buttons to pause, resume or remove each. ' +
+          '⚙️ Settings has the per-source options.',
         offerStats: true,
         offerSettings: true,
       };

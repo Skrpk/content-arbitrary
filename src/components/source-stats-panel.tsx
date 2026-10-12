@@ -2,13 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { PlatformBadge } from '@/app/(app)/platform-badge';
+import { AddSourceForm } from '@/components/add-source-form';
 import { readJson, type PanelTools } from '@/components/panel-tools';
 import { theme } from '@/lib/telegram/webapp-client';
 
 /**
- * Source stats, for the Mini App and the website alike.
+ * The Sources page — adding them, and their stats — for the Mini App and the
+ * website alike.
  *
- * Per source — grouped by
+ * Any kind of source is added at the top (src/components/add-source-form.tsx).
+ * Below, per source — grouped by
  * channel, each with its own totals — what it brought in over a period, how much of
  * it was approved, why the rest was turned down, and roughly what reading it
  * from X cost: the numbers to decide which accounts are worth keeping — and
@@ -243,7 +246,15 @@ export function SourceStatsPanel({ request, confirm }: Pick<PanelTools, 'request
 
   return (
     <>
-      <h1 style={{ fontSize: '1.05rem', fontWeight: 600, margin: '0 0 0.75rem' }}>Source stats</h1>
+      <h1 style={{ fontSize: '1.05rem', fontWeight: 600, margin: '0 0 0.75rem' }}>Sources</h1>
+
+      {data ? (
+        <AddSourceForm
+          request={request}
+          channels={data.channels.map((channel) => ({ id: channel.id, name: channel.name }))}
+          onAdded={() => void fetchStats(period)}
+        />
+      ) : null}
 
       <div role="tablist" style={{ display: 'flex', gap: '0.4rem', marginBottom: '1rem' }}>
         {PERIODS.map((option) => {
@@ -289,7 +300,7 @@ export function SourceStatsPanel({ request, confirm }: Pick<PanelTools, 'request
 
           {data.channels.every((channel) => channel.sources.length === 0) ? (
             <p style={{ color: theme.hint }}>
-              No sources yet. Add one in the chat with /addsource @username, or a feed with /addrss.
+              No sources yet. Add one above — an X account, a Telegram channel or an RSS feed.
             </p>
           ) : null}
 
