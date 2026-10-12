@@ -29,6 +29,7 @@ import {
   RADAR_EXAMPLES_PER_CLASS,
   RADAR_PROMPT_APPROVED,
   usesApprovedRetrieval,
+  usesRejectedRetrieval,
   usesHistoryRetrieval,
 } from '../src/lib/radar/prompt';
 import { loadRadarHistory } from '../src/lib/radar/repository';
@@ -81,6 +82,7 @@ async function main() {
         candidateText: post.sourceText,
         before: post.createdAt,
         includeApproved: usesApprovedRetrieval(promptVersion),
+        includeRejected: usesRejectedRetrieval(promptVersion),
       })
     : null;
 
@@ -100,6 +102,12 @@ async function main() {
         .join(', ');
       console.log(`# Similar approved posts: ${retrieval.approved.status}${approved ? ` · ${approved}` : ''}`);
     }
+    if (retrieval.rejected) {
+      const rejected = retrieval.rejected.matches
+        .map((match) => `post ${match.processedPostId} (${match.similarity.toFixed(3)})`)
+        .join(', ');
+      console.log(`# Similar rejected posts: ${retrieval.rejected.status}${rejected ? ` · ${rejected}` : ''}`);
+    }
   }
   console.log('\n## Instructions (system)\n');
   console.log(buildSystemPrompt(workspace.editorialProfile, history.approvalRate, publication?.profile, promptVersion));
@@ -114,6 +122,8 @@ async function main() {
     undefined,
     retrieval?.matches ?? null,
     usesApprovedRetrieval(promptVersion) ? (retrieval?.approved?.matches ?? []) : null,
+    null,
+    usesRejectedRetrieval(promptVersion) ? (retrieval?.rejected?.matches ?? []) : null,
   );
   for (const part of content) console.log(part.type === 'text' ? part.text : '[image]');
 }

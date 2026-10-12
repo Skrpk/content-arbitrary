@@ -7,6 +7,7 @@ import {
   publicationHistoryItems,
   radarCandidateEmbeddings,
   type HistoryContentType,
+  type RejectionReason,
 } from '@/db/schema';
 import { APPROVED_STATUSES } from '@/lib/radar/repository';
 
@@ -305,6 +306,83 @@ function approvedBefore(input: ApprovedScope) {
     eq(processedPosts.workspaceId, input.workspaceId),
     eq(radarCandidateEmbeddings.model, input.model),
     inArray(processedPosts.status, [...APPROVED_STATUSES]),
+    lt(processedPosts.reviewedAt, input.before),
+    ne(processedPosts.id, input.excludePostId),
+  );
+}
+
+/** One post the editor turned down, found similar to a new one. */
+export interface RejectedMatch {
+  processedPostId: number;
+  /** Cosine similarity of the two embeddings, -1..1. */
+  similarity: number;
+  text: string | null;
+  sourceUsername: string | null;
+  /** 'rss' when `sourceUsername` is a feed's title rather than an X handle. */
+  sourcePlatform?: 'rss';
+  /** When the editor rejected it. */
+  rejectedAt: Date;
+  rejectionReason: RejectionReason | null;
+  rejectionNote: string | null;
+  /** Its first image's fingerprint, to find what it shows; null without one. */
+  imageFingerprint: string | null;
+  /** What its first image shows, when asked for and understood. */
+  imageSummary?: string | null;
+}
+
+/** How many embedded posts the editor had rejected before `before` — zero means nothing to search. */
+export async function countSearchableRejected(db: Database, input: ApprovedScope): Promise<number> {
+  const [row] = await db
+    .select({ total: count() })
+    .from(radarCandidateEmbeddings)
+    .innerJoin(processedPosts, eq(processedPosts.id, radarCandidateEmbeddings.processedPostId))
+    .where(rejectedBefore(input));
+  return row?.total ?? 0;
+}
+
+/**
+ * The `limit` posts the editor had rejected before `before` nearest to
+ * `embedding`, most similar first — the same boundaries as the approved
+ * search, so a backfill never sees a rejection the editor had not yet made.
+ */
+export async function findSimilarRejectedPosts(
+  db: Database,
+  input: ApprovedScope & { embedding: number[]; limit: number },
+): Promise<RejectedMatch[]> {
+  const query = sql`${`[${input.embedding.join(',')}]`}::vector`;
+  const distance = sql`${radarCandidateEmbeddings.embedding} <=> ${query}`;
+
+  const rows = await db
+    .select({
+      processedPostId: processedPosts.id,
+      similarity: sql<number>`1 - (${distance})`.mapWith(Number),
+      text: processedPosts.sourceText,
+      sourceUsername: processedPosts.xAuthorUsername,
+      xPostId: processedPosts.xPostId,
+      rejectedAt: processedPosts.reviewedAt,
+      rejectionReason: processedPosts.rejectionReason,
+      rejectionNote: processedPosts.rejectionNote,
+      imageFingerprint: processedPosts.imageFingerprint,
+    })
+    .from(radarCandidateEmbeddings)
+    .innerJoin(processedPosts, eq(processedPosts.id, radarCandidateEmbeddings.processedPostId))
+    .where(and(rejectedBefore(input), eq(radarCandidateEmbeddings.dimensions, input.embedding.length)))
+    .orderBy(distance, asc(processedPosts.id))
+    .limit(input.limit);
+
+  // reviewed_at is non-null by the filter.
+  return rows.map(({ xPostId, ...row }) => ({
+    ...row,
+    ...(isRssItemId(xPostId) ? { sourcePlatform: 'rss' as const } : {}),
+    rejectedAt: row.rejectedAt!,
+  }));
+}
+
+function rejectedBefore(input: ApprovedScope) {
+  return and(
+    eq(processedPosts.workspaceId, input.workspaceId),
+    eq(radarCandidateEmbeddings.model, input.model),
+    eq(processedPosts.status, 'rejected'),
     lt(processedPosts.reviewedAt, input.before),
     ne(processedPosts.id, input.excludePostId),
   );

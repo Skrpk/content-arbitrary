@@ -9,6 +9,7 @@ import {
   usesApprovedRetrieval,
   usesHistoryRetrieval,
   usesMediaUnderstanding,
+  usesRejectedRetrieval,
   type RadarImage,
   type RadarItem,
   type RadarPromptVersion,
@@ -212,6 +213,7 @@ export async function scoreAndRecord(
         mediaConfig: media ? options.mediaConfig : null,
         before: options.before,
         includeApproved: pending.some(({ version }) => usesApprovedRetrieval(version)),
+        includeRejected: pending.some(({ version }) => usesRejectedRetrieval(version)),
         timeoutMs: Math.min(RETRIEVAL_TIMEOUT_MS, options.timeoutMs),
         logger: options.logger,
       })
@@ -224,7 +226,8 @@ export async function scoreAndRecord(
       const mediaUnderstandingId = readsMedia ? (subject.media?.understandingId ?? null) : null;
       const shown = usesHistoryRetrieval(version) ? retrieval : null;
       const withApproved = usesApprovedRetrieval(version);
-      const historyRetrieval = shown ? toRetrievalRecord(shown, { approved: withApproved }) : null;
+      const withRejected = usesRejectedRetrieval(version);
+      const historyRetrieval = shown ? toRetrievalRecord(shown, { approved: withApproved, rejected: withRejected }) : null;
       const startedAt = Date.now();
       try {
         const prediction = await provider.score(
@@ -238,6 +241,7 @@ export async function scoreAndRecord(
             promptVersion: version,
             similarPublications: shown?.matches ?? null,
             similarApproved: withApproved ? (shown?.approved?.matches ?? []) : null,
+            similarRejected: withRejected ? (shown?.rejected?.matches ?? []) : null,
             media: readsMedia ? { image: subject.media?.understanding ?? null } : null,
           },
           { timeoutMs: options.timeoutMs },

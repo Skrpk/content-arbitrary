@@ -16,9 +16,11 @@ import {
   RADAR_PROMPT_BASELINE,
   RADAR_PROMPT_APPROVED,
   RADAR_PROMPT_MEDIA,
+  RADAR_PROMPT_REJECTED,
   RADAR_PROMPT_RETRIEVAL,
   RADAR_PROMPT_VERSIONS,
   usesApprovedRetrieval,
+  usesRejectedRetrieval,
   usesHistoryRetrieval,
   usesMediaUnderstanding,
   type RadarImage,
@@ -104,6 +106,7 @@ const PROMPT_TAGS: Record<RadarPromptVersion, string> = {
   [RADAR_PROMPT_RETRIEVAL]: 'v2r',
   [RADAR_PROMPT_APPROVED]: 'v3a',
   [RADAR_PROMPT_MEDIA]: 'v4m',
+  [RADAR_PROMPT_REJECTED]: 'v5r',
 };
 
 /**
@@ -291,6 +294,7 @@ export async function submitRadarBackfill(input: {
           mediaConfig: readsMedia ? input.mediaConfig : null,
           before: post.createdAt,
           includeApproved: requests.some(({ version }) => usesApprovedRetrieval(version)),
+          includeRejected: requests.some(({ version }) => usesRejectedRetrieval(version)),
           logger: input.logger,
         })
       : null;
@@ -318,6 +322,7 @@ export async function submitRadarBackfill(input: {
         promptVersion: version,
         similarPublications: usesHistoryRetrieval(version) ? (retrieval?.matches ?? []) : null,
         similarApproved: usesApprovedRetrieval(version) ? (retrieval?.approved?.matches ?? []) : null,
+        similarRejected: usesRejectedRetrieval(version) ? (retrieval?.rejected?.matches ?? []) : null,
         media: usesMediaUnderstanding(version) ? { image: media?.understanding ?? null } : null,
       });
 
@@ -439,7 +444,7 @@ export async function ingestRadarBatch(input: {
     let historyRetrieval: HistoryRetrievalRecord | null = null;
     if (usesHistoryRetrieval(key.promptVersion)) {
       if (!retrievals.has(key.processedPostId)) {
-        // Both searches, whichever version asks first; each keeps its own part.
+        // Every search, whichever version asks first; each keeps its own part.
         retrievals.set(
           key.processedPostId,
           input.embeddingModel
@@ -452,19 +457,22 @@ export async function ingestRadarBatch(input: {
                 candidateImage: post.image.understanding,
                 before: post.createdAt,
                 includeApproved: true,
+                includeRejected: true,
               })
             : null,
         );
       }
       const replayed = retrievals.get(key.processedPostId);
       const withApproved = usesApprovedRetrieval(key.promptVersion);
+      const withRejected = usesRejectedRetrieval(key.promptVersion);
       historyRetrieval = replayed
-        ? toRetrievalRecord(replayed, { approved: withApproved })
+        ? toRetrievalRecord(replayed, { approved: withApproved, rejected: withRejected })
         : {
             status: 'unavailable',
             embeddingModel: null,
             matches: [],
             ...(withApproved ? { approved: { status: 'unavailable' as const, matches: [] } } : {}),
+            ...(withRejected ? { rejected: { status: 'unavailable' as const, matches: [] } } : {}),
           };
     }
 

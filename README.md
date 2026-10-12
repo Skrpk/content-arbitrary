@@ -1215,15 +1215,18 @@ reads that description. (The earlier experiment — scoring the text with its ra
 the `text_image` variant — runs live only with `RADAR_LIVE_IMAGE_VARIANT=true`; backfills still
 score it.)
 
-**Prompts, side by side.** Four versions build on each other, so each addition is measured on
+**Prompts, side by side.** Five versions build on each other, so each addition is measured on
 the same posts, not on two different sets: `radar-v1` (the baseline above);
 `radar-v2-history-retrieval`, which adds the channel's [five most similar past
 publications](#similar-past-publications) and asks what they show;
 `radar-v3-retrieval-approved`, which also adds the [five most similar posts the editor already
 approved](#similar-approved-posts); and `radar-v4-media-understanding`, which also reads what
 images show — the new post's, and the past publications', approved posts' and examples' — from
-their [stored descriptions](#image-understanding), never the image itself. Live, every post is
-scored with `radar-v1`, `radar-v3` and `radar-v4`; backfills score all four by default.
+their [stored descriptions](#image-understanding), never the image itself; and
+`radar-v5-similar-rejected`, which is `radar-v3` (not `radar-v4`: image descriptions did not
+help) plus the [five most similar posts the editor turned down](#similar-rejected-posts). Live, every post is scored with `radar-v1`, `radar-v3` and `radar-v5`
+(`radar-v4` scored below `radar-v3` live, so it runs on backfills only); backfills score all
+five by default.
 `LIVE_RADAR_PROMPT_VERSIONS` in
 [`src/lib/radar/prompt.ts`](src/lib/radar/prompt.ts) is the live list.
 
@@ -1481,6 +1484,20 @@ before the new post arrived, so a backfill never sees an approval the editor had
 and never the post itself. It shares the post's vector with the history search, so it costs no
 extra call, and runs even for a workspace with no imported history. What it found is recorded in
 `history_retrieval.approved`, with its own status.
+
+### Similar rejected posts
+
+Ten recent rejections say little about a kind of post the editor keeps turning down, and the
+approved search alone can mislead: for a striking galaxy photo it finds the one or two of its kind
+the editor did take, and nothing of the dozen they declined. So `radar-v5-similar-rejected` is
+`radar-v3` plus the five posts the editor rejected that are nearest to the new one, each with its
+rejection reason and note, and tells Radar to read them beside the approved ones: the same kind of
+material turned down again and again is the editor's answer for this post too, however appealing
+it is. It is built on `radar-v3` rather than `radar-v4`, which scored worse than `radar-v3` live,
+so `radar-v3` against `radar-v5` measures this one addition. A galaxy posted as "wow" is still
+found among galaxies: the post's image description is embedded with its text, whichever prompt
+reads it. Same vectors, same boundaries (rejected strictly before the new post arrived), no extra
+embedding call; recorded in `history_retrieval.rejected`.
 
 **Cost.** One embedding call per new post (a few hundred tokens), and the history once: VECTOR's
 83 posts with text, about 24,000 characters, cost a fraction of a cent. `history:embed` prints the

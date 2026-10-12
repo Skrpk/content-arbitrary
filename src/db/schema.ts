@@ -726,6 +726,8 @@ export interface HistoryRetrievalRecord {
    * above covers history; this has its own, as either can be empty alone.
    */
   approved?: { status: HistoryRetrievalStatus; matches: { id: number; similarity: number }[] };
+  /** The rejected-posts prompt only: the same, among posts the editor had rejected. */
+  rejected?: { status: HistoryRetrievalStatus; matches: { id: number; similarity: number }[] };
   error?: string;
 }
 

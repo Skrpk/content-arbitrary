@@ -6,12 +6,15 @@ import type { EmbeddingProvider } from '@/lib/history/embeddings/provider';
 import {
   countSearchableApproved,
   countSearchableHistory,
+  countSearchableRejected,
   findCandidateEmbedding,
   findSimilarApprovedPosts,
   findSimilarHistoricalItems,
+  findSimilarRejectedPosts,
   upsertCandidateEmbedding,
   type ApprovedMatch,
   type HistoricalMatch,
+  type RejectedMatch,
 } from '@/lib/history/embeddings/repository';
 import { buildCandidateEmbeddingText, embeddingFingerprint } from '@/lib/history/embeddings/text';
 import { loadUnderstandings } from '@/lib/media/repository';
@@ -19,8 +22,8 @@ import type { ImageUnderstanding, MediaUnderstandingConfig } from '@/lib/media/u
 
 /**
  * The past publications of a workspace most similar to a new post — and, when
- * asked, the most similar posts its editor already approved — for Shadow
- * Radar to read as context. One vector of the post serves both searches.
+ * asked, the most similar posts its editor already approved or rejected — for
+ * Shadow Radar to read as context. One vector of the post serves every search.
  *
  * Optional context, never a dependency: no text, nothing to search, no
  * embeddings configured, an API or database error — each ends in a result
@@ -32,6 +35,8 @@ import type { ImageUnderstanding, MediaUnderstandingConfig } from '@/lib/media/u
 export const HISTORY_RETRIEVAL_LIMIT = 5;
 /** How many similar approved posts, likewise. */
 export const APPROVED_RETRIEVAL_LIMIT = 5;
+/** How many similar rejected posts, likewise. */
+export const REJECTED_RETRIEVAL_LIMIT = 5;
 
 const RETRIEVAL_TIMEOUT_MS = 10_000;
 
@@ -42,6 +47,8 @@ export interface HistoryRetrieval {
   matches: HistoricalMatch[];
   /** Only when approved posts were searched too, with their own status. */
   approved?: { status: HistoryRetrievalStatus; matches: ApprovedMatch[] };
+  /** Only when rejected posts were searched too, with their own status. */
+  rejected?: { status: HistoryRetrievalStatus; matches: RejectedMatch[] };
   /** Spent embedding the post now; zero when its vector was already stored. */
   inputTokens: number;
   error?: string;
@@ -66,6 +73,8 @@ interface RetrievalInput {
   before: Date;
   /** Search the posts the editor already approved as well. */
   includeApproved?: boolean;
+  /** Search the posts the editor rejected as well. */
+  includeRejected?: boolean;
   limit?: number;
 }
 
@@ -97,6 +106,8 @@ export async function retrieveSimilarPublications(
         topSimilarity: retrieval.matches[0]?.similarity ?? null,
         approvedMatches: retrieval.approved?.matches.length,
         topApprovedSimilarity: retrieval.approved?.matches[0]?.similarity,
+        rejectedMatches: retrieval.rejected?.matches.length,
+        topRejectedSimilarity: retrieval.rejected?.matches[0]?.similarity,
         // Not `inputTokens`: the logger redacts any key named *token*.
         usage: { input: retrieval.inputTokens },
       });
@@ -139,8 +150,9 @@ async function search(
 
   const historyCount = await countSearchableHistory(input.db, history);
   const approvedCount = input.includeApproved ? await countSearchableApproved(input.db, approved) : 0;
+  const rejectedCount = input.includeRejected ? await countSearchableRejected(input.db, approved) : 0;
   // Checked first, so a workspace with nothing to search costs no embedding call.
-  if (historyCount === 0 && approvedCount === 0) return none(input, model, 'no_history');
+  if (historyCount === 0 && approvedCount === 0 && rejectedCount === 0) return none(input, model, 'no_history');
 
   const fingerprint = embeddingFingerprint(text);
   let vector = await findCandidateEmbedding(input.db, {
@@ -158,6 +170,7 @@ async function search(
         embeddingModel: model,
         matches: [],
         ...(input.includeApproved ? { approved: { status: approvedCount > 0 ? failed : 'no_history', matches: [] } } : {}),
+        ...(input.includeRejected ? { rejected: { status: rejectedCount > 0 ? failed : 'no_history', matches: [] } } : {}),
         inputTokens: 0,
       };
     }
@@ -181,8 +194,18 @@ async function search(
           limit: input.limit ?? APPROVED_RETRIEVAL_LIMIT,
         })
       : [];
+  const rejectedMatches =
+    rejectedCount > 0
+      ? await findSimilarRejectedPosts(input.db, {
+          ...approved,
+          embedding: vector,
+          limit: input.limit ?? REJECTED_RETRIEVAL_LIMIT,
+        })
+      : [];
 
-  if (input.mediaConfig) await describeImages(input.db, input.mediaConfig, [...matches, ...approvedMatches]);
+  if (input.mediaConfig) {
+    await describeImages(input.db, input.mediaConfig, [...matches, ...approvedMatches, ...rejectedMatches]);
+  }
 
   return {
     status: matches.length > 0 ? 'ok' : 'no_history',
@@ -190,6 +213,9 @@ async function search(
     matches,
     ...(input.includeApproved
       ? { approved: { status: approvedMatches.length > 0 ? 'ok' : 'no_history', matches: approvedMatches } }
+      : {}),
+    ...(input.includeRejected
+      ? { rejected: { status: rejectedMatches.length > 0 ? 'ok' : 'no_history', matches: rejectedMatches } }
       : {}),
     inputTokens,
   };
@@ -211,7 +237,7 @@ async function describeImages(
 }
 
 function none(
-  input: Pick<RetrievalInput, 'includeApproved'>,
+  input: Pick<RetrievalInput, 'includeApproved' | 'includeRejected'>,
   model: string | null,
   status: HistoryRetrievalStatus,
   error?: string,
@@ -221,6 +247,7 @@ function none(
     embeddingModel: model,
     matches: [],
     ...(input.includeApproved ? { approved: { status, matches: [] } } : {}),
+    ...(input.includeRejected ? { rejected: { status, matches: [] } } : {}),
     inputTokens: 0,
     ...(error ? { error } : {}),
   };
@@ -228,11 +255,12 @@ function none(
 
 /**
  * What a radar_evaluations row keeps of a search: ids and similarities, not
- * the texts — and the approved posts only for a prompt that was shown them.
+ * the texts — and the approved and rejected posts only for a prompt that was
+ * shown them.
  */
 export function toRetrievalRecord(
   retrieval: HistoryRetrieval,
-  options: { approved?: boolean } = {},
+  options: { approved?: boolean; rejected?: boolean } = {},
 ): HistoryRetrievalRecord {
   const ids = (matches: { id: number; similarity: number }[]) =>
     matches.map((match) => ({ id: match.id, similarity: Math.round(match.similarity * 10_000) / 10_000 }));
@@ -246,6 +274,16 @@ export function toRetrievalRecord(
             status: retrieval.approved.status,
             matches: ids(
               retrieval.approved.matches.map((match) => ({ id: match.processedPostId, similarity: match.similarity })),
+            ),
+          },
+        }
+      : {}),
+    ...(options.rejected && retrieval.rejected
+      ? {
+          rejected: {
+            status: retrieval.rejected.status,
+            matches: ids(
+              retrieval.rejected.matches.map((match) => ({ id: match.processedPostId, similarity: match.similarity })),
             ),
           },
         }
