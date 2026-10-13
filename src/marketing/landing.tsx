@@ -1,5 +1,5 @@
 import { CONTACT_URL, SITE_NAME, SITE_URL } from '@/lib/site';
-import { CONTENT } from './content';
+import { CONTENT, MOCKUP_SOURCES } from './content';
 import { localePath, type Locale } from './i18n';
 
 /**
@@ -8,39 +8,55 @@ import { localePath, type Locale } from './i18n';
  */
 
 /**
- * A static picture of what the bot does with a post: the source's original on
- * X, and the review message it becomes — rewritten in the channel's language,
- * with the bot's real buttons.
+ * A static picture of what the product does: three sources' posts on one
+ * event become one card in the review queue — ranked, rewritten in the
+ * channel's language, with the queue's real labels and buttons.
  */
 function ReviewMockup({ locale }: { locale: Locale }) {
   const text = CONTENT[locale].mockup;
+  const [lead, ...others] = MOCKUP_SOURCES;
 
   return (
     <figure className="mockup" aria-label={text.label}>
-      <div className="mockup__original">
-        <p className="mockup__original-label">{text.originalLabel}</p>
-        <p lang="en">{text.original}</p>
-      </div>
+      <p className="mockup__step">{text.sourcesLabel}</p>
+      <ul className="mockup__sources">
+        {MOCKUP_SOURCES.map((source) => (
+          <li key={source.name} className="mockup__original">
+            <p className="mockup__original-label">
+              <span className="mockup__platform">{source.platform}</span> {source.name}
+            </p>
+            <p lang="en">{source.text}</p>
+          </li>
+        ))}
+      </ul>
       <p className="mockup__arrow">
         <span aria-hidden="true">↓ </span>
-        {text.rewritten}
+        {text.merged}
       </p>
-      <div className="mockup__chat">
-        <div className="mockup__bubble">
-          <div className="mockup__media" aria-hidden="true">
-            <span>📷</span>
-          </div>
-          <p className="mockup__text" lang={text.textLang}>
-            {text.text}
-          </p>
-          <p className="mockup__source">Source: x.com/…/status/1750…</p>
+      <div className="mockup__card">
+        {/* The queue's own labels, which are English whatever the site's language. */}
+        <div className="mockup__card-head" lang="en">
+          <span className="mockup__score" title="Radar score">
+            82
+          </span>
+          <strong>{lead.name}</strong>
+          <span className="mockup__badge">📚 Same story · {others.length} more</span>
         </div>
-        <div className="mockup__bubble mockup__bubble--control">
-          <p className="mockup__source">Source: @source_account</p>
+        <div className="mockup__media" aria-hidden="true">
+          <span>🔭</span>
         </div>
-        {/* The bot's own labels, which are English whatever the site's language. */}
+        <p className="mockup__text" lang={text.textLang}>
+          {text.text}
+        </p>
+        <p className="mockup__reason">
+          <span lang="en">📡 likely approve — </span>
+          {text.reason}
+        </p>
+        <p className="mockup__others" lang="en">
+          {others.map((source) => source.name).join(' · ')} — ⇅ Use this one
+        </p>
         <div className="mockup__buttons" lang="en">
-          <span>✅ Approve</span>
+          <span className="mockup__approve">✅ Approve</span>
           <span>🚫 Reject</span>
           <span>🕒 Schedule</span>
           <span>✏️ Edit text</span>

@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { currentWebViewer } from '@/lib/accounts/current';
+import { SITE_NAME } from '@/lib/site';
 import { NavLinks } from './nav-links';
 
 /**
@@ -28,7 +29,7 @@ export default async function SignedInLayout({ children }: { children: ReactNode
           borderBottom: '1px solid var(--tg-theme-secondary-bg-color)',
         }}
       >
-        <strong>Story Radar</strong>
+        <strong>{SITE_NAME}</strong>
         <NavLinks />
         <span style={{ flex: 1 }} />
         <span style={{ color: 'var(--tg-theme-hint-color)', fontSize: '0.85rem' }}>

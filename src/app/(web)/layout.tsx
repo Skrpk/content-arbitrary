@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
+import { SITE_NAME } from '@/lib/site';
 
 /**
  * Root layout for the review website, served on its own subdomain
@@ -12,7 +13,7 @@ import type { ReactNode } from 'react';
  * right outside Telegram.
  */
 export const metadata: Metadata = {
-  title: 'Story Radar',
+  title: SITE_NAME,
   robots: { index: false, follow: false },
 };
 

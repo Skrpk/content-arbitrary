@@ -1,6 +1,7 @@
-# content-arbitrary
+# Zmistik
 
-Content monitoring and an editorial assistant for **Telegram channels**. It watches your
+Content monitoring and an editorial assistant for **Telegram channels** (`content-arbitrary` is the
+repository's and the deployment's name). It watches your
 sources — **X accounts**, **RSS / Atom feeds** and **public Telegram channels** — and brings every
 new post to you for review:
 scored by [Shadow Radar](#shadow-radar), rewritten in your channel's [language](#translation),

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
+import { SITE_NAME } from '@/lib/site';
 
 /**
  * Root layout for the Telegram Mini Apps (review, schedule, settings).
@@ -8,7 +9,7 @@ import type { ReactNode } from 'react';
  * are tools opened inside Telegram, in English, and must never be indexed.
  */
 export const metadata: Metadata = {
-  title: 'content-arbitrary',
+  title: SITE_NAME,
   robots: { index: false, follow: false },
 };
 

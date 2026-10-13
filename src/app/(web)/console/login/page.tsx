@@ -3,6 +3,7 @@ import { currentWebViewer } from '@/lib/accounts/current';
 import { safeReturnTo } from '@/lib/accounts/web';
 import { getEnv } from '@/lib/env';
 import { telegramLoginProvider } from '@/lib/accounts/telegram';
+import { SITE_NAME } from '@/lib/site';
 
 /**
  * Sign in. One way for now — Telegram, as OpenID Connect — and more are more
@@ -45,7 +46,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           textAlign: 'center',
         }}
       >
-        <h1 style={{ fontSize: '1.25rem', margin: '0 0 0.25rem' }}>Story Radar</h1>
+        <h1 style={{ fontSize: '1.25rem', margin: '0 0 0.25rem' }}>{SITE_NAME}</h1>
         <p style={{ color: 'var(--tg-theme-hint-color)', fontSize: '0.9rem', margin: '0 0 1.25rem' }}>
           Sign in to review your channels&apos; posts.
         </p>
