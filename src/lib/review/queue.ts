@@ -8,13 +8,14 @@ import type { Logger } from '@/lib/logger';
 import { findReviewScores, type ReviewScore } from '@/lib/radar/review-note';
 import { findRepeats, repeatOutcome, type Repeat } from '@/lib/stories/repeats';
 import { publishedInStories, storiesOf } from '@/lib/review/same-story';
-import { richDocumentPlainText } from '@/lib/rich/document';
 import { platformOfPostId, sourceLabelOfPost } from '@/lib/sources/display';
 import type { TelegramClient } from '@/lib/telegram/client';
 import type { InlineKeyboardButton } from '@/lib/telegram/send-media';
 import { reviewLinkFor } from '@/lib/accounts/users';
-import { escapeHtml, TELEGRAM_PARSE_MODE } from '@/lib/telegram/format-caption';
+import { TELEGRAM_PARSE_MODE } from '@/lib/telegram/format-caption';
 import { captionToPlainText, parsePostFooter, stripFooter } from '@/lib/telegram/post-footer';
+import { reviewText } from '@/lib/review/text';
+import { digestButtonText, formatReviewDigest, loadReviewDigest, markDigested } from '@/lib/review/digest';
 import { usesReviewQueue } from '@/lib/workspace';
 
 /**
@@ -42,10 +43,14 @@ export const REVIEW_QUEUE_PAGE_LIMIT = 300;
  */
 export const REVIEW_DIGEST_SLACK_MS = 3 * 60 * 1000;
 
-/** Absolute URL of the review queue page, opened on one channel when given. */
-export function buildReviewQueueUrl(baseUrl: string, workspaceId?: number): string {
+/** Absolute URL of the review queue page, opened on one channel, and at one post's card, when given. */
+export function buildReviewQueueUrl(baseUrl: string, workspaceId?: number, postId?: number): string {
   const base = `${baseUrl.replace(/\/+$/, '')}/queue`;
-  return workspaceId === undefined ? base : `${base}?workspace=${workspaceId}`;
+  const query = [
+    ...(workspaceId === undefined ? [] : [`workspace=${workspaceId}`]),
+    ...(postId === undefined ? [] : [`post=${postId}`]),
+  ];
+  return query.length === 0 ? base : `${base}?${query.join('&')}`;
 }
 
 /**
@@ -59,12 +64,17 @@ export function reviewQueueButton(input: {
   webAppUrl: string | undefined;
   target: ReviewLinkTarget;
   workspaceId?: number;
+  /** Opens the queue at this post's card. */
+  postId?: number;
+  text?: string;
 }): InlineKeyboardButton | null {
-  const text = '📋 Open review queue';
+  const text = input.text ?? '📋 Open review queue';
   if (input.target === 'website' && input.webAppUrl) {
-    return { text, url: buildReviewQueueUrl(input.webAppUrl, input.workspaceId) };
+    return { text, url: buildReviewQueueUrl(input.webAppUrl, input.workspaceId, input.postId) };
   }
-  if (input.appBaseUrl) return { text, web_app: { url: buildReviewQueueUrl(input.appBaseUrl, input.workspaceId) } };
+  if (input.appBaseUrl) {
+    return { text, web_app: { url: buildReviewQueueUrl(input.appBaseUrl, input.workspaceId, input.postId) } };
+  }
   return null;
 }
 
@@ -165,8 +175,6 @@ export async function loadReviewQueue(
   const footer = parsePostFooter(workspace.postFooter);
 
   const items = rows.map((row): ReviewQueueItem => {
-    const stored = row.caption ?? row.approvalPayload?.caption ?? '';
-    const body = stripFooter(stored, footer);
     const overflow = row.approvalPayload?.overflowMessage;
     const overflowBody = overflow ? (stripFooter(overflow, footer) ?? overflow) : null;
 
@@ -176,7 +184,7 @@ export async function loadReviewQueue(
       sourceLabel: sourceLabelOfPost(row.externalId, row.xAuthorUsername),
       url: row.xPostUrl,
       postedAt: (row.xCreatedAt ?? row.createdAt).toISOString(),
-      text: row.richDoc ? richDocumentPlainText(row.richDoc) : captionToPlainText(body ?? stored),
+      text: reviewText(row, footer),
       fullText: !row.richDoc && overflowBody ? captionToPlainText(overflowBody) : null,
       media: (row.reviewMedia ?? []).map((item) => ({
         kind: item.kind,
@@ -309,25 +317,16 @@ function offsetMs(at: Date, timeZone: string): number {
   return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(at.getTime() / 1000) * 1000;
 }
 
-/** The notification's text. Telegram HTML: the channel's name is escaped. */
-export function formatReviewDigest(input: { fresh: number; waiting: number; channel?: string | null }): string {
-  const posts = (n: number) => `${n} post${n === 1 ? '' : 's'}`;
-  return [
-    ...(input.channel ? [`📢 ${escapeHtml(input.channel)}`] : []),
-    `📥 <b>${posts(input.fresh)}</b> new for review` +
-      (input.waiting > input.fresh ? ` · ${input.waiting} waiting in all` : ''),
-    'Best Radar score first.',
-  ].join('\n');
-}
-
 export type ReviewDigestOutcome =
-  | { sent: true; fresh: number; waiting: number }
+  | { sent: true; fresh: number; waiting: number; recommended: number; shown: number }
   | { sent: false; reason: 'not-queued' | 'not-due' | 'nothing-new' | 'failed' };
 
 /**
- * Tell the reviewer about new posts in the queue, if the channel's interval
- * has passed and any have come in since the last notification. The one
- * before is then deleted, so only the latest stays in the chat.
+ * Tell the reviewer what came into the queue, if the channel's interval has
+ * passed and any post has come in since the last notification: the digest
+ * of the period (src/lib/review/digest.ts) — its stories, and the ones Radar
+ * recommends, in the channel's language, each a button to its card. Earlier
+ * digests stay in the chat: each lists its own stories.
  *
  * Run inside the tenant's sync lock, so two overlapping runs cannot both
  * decide to send. Never throws: a notification that fails is tried again on
@@ -352,28 +351,45 @@ export async function sendReviewDigest(input: {
   }
   if (!reviewDigestIsDue(workspace, now)) return { sent: false, reason: 'not-due' };
 
+  const since = workspace.reviewDigestCoveredUntil;
   try {
-    const { waiting, fresh, newestQueuedAt } = await countReviewQueue(
-      db,
-      workspace.id,
-      workspace.reviewDigestCoveredUntil,
-    );
-    if (fresh === 0) return { sent: false, reason: 'nothing-new' };
+    const { waiting, fresh, newestQueuedAt } = await countReviewQueue(db, workspace.id, since);
+    if (fresh === 0) {
+      logger.info('review_digest.skipped', { workspaceId: workspace.id, reason: 'nothing-new', since });
+      return { sent: false, reason: 'nothing-new' };
+    }
 
-    const button = reviewQueueButton({
-      appBaseUrl: input.env.APP_BASE_URL,
-      webAppUrl: input.env.WEB_APP_URL,
-      target: await reviewLinkFor(db, adminChatId),
-      workspaceId: workspace.id,
-    })!;
+    logger.info('review_digest.started', { workspaceId: workspace.id, from: since, to: newestQueuedAt });
+    const digest = await loadReviewDigest(db, { workspace, since });
+    const target = await reviewLinkFor(db, adminChatId);
+    const link = (extra: { postId?: number; text?: string }) =>
+      reviewQueueButton({
+        appBaseUrl: input.env.APP_BASE_URL,
+        webAppUrl: input.env.WEB_APP_URL,
+        target,
+        workspaceId: workspace.id,
+        ...extra,
+      })!;
+    const storyButtons = digest.top.map((story, index) => link({ postId: story.postId, text: String(index + 1) }));
+
     const message = await client.call(
       'sendMessage',
       {
         chat_id: adminChatId,
-        text: formatReviewDigest({ fresh, waiting, channel: input.channelLabel }),
+        text: formatReviewDigest(digest, {
+          language: workspace.language,
+          channel: input.channelLabel,
+          since,
+          now,
+        }),
         parse_mode: TELEGRAM_PARSE_MODE,
         link_preview_options: { is_disabled: true },
-        reply_markup: { inline_keyboard: [[button]] },
+        reply_markup: {
+          inline_keyboard: [
+            ...(storyButtons.length > 0 ? [storyButtons] : []),
+            [link({ text: digestButtonText(workspace.language) })],
+          ],
+        },
       },
       z.object({ message_id: z.number() }),
     );
@@ -386,17 +402,22 @@ export async function sendReviewDigest(input: {
         reviewDigestMessageId: message.message_id,
       })
       .where(eq(workspaces.id, workspace.id));
+    await markDigested(
+      db,
+      digest.top.map((story) => story.postId),
+      now,
+    );
 
-    // The previous one is out of date now. Best effort: Telegram lets a bot
-    // delete its own message for 48 hours, and an older one simply stays.
-    if (workspace.reviewDigestMessageId) {
-      await client.deleteMessage(adminChatId, workspace.reviewDigestMessageId).catch((error: unknown) => {
-        logger.info('review_digest.previous_not_deleted', { error: describeError(error) });
-      });
-    }
-
-    logger.info('review_digest.sent', { workspaceId: workspace.id, fresh, waiting });
-    return { sent: true, fresh, waiting };
+    logger.info('review_digest.sent', {
+      workspaceId: workspace.id,
+      fresh,
+      waiting,
+      newPosts: digest.newPosts,
+      stories: digest.stories,
+      recommended: digest.recommended,
+      shown: digest.top.map((story) => story.postId),
+    });
+    return { sent: true, fresh, waiting, recommended: digest.recommended, shown: digest.top.length };
   } catch (error) {
     logger.error('review_digest.failed', { workspaceId: workspace.id, error: describeError(error) });
     return { sent: false, reason: 'failed' };

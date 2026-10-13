@@ -10,11 +10,15 @@ import { ReviewQueue } from '@/components/review-queue';
  * (src/components/review-queue.tsx).
  */
 export default function QueuePage() {
-  // The notification's button names the channel it was for.
-  const [workspaceId] = useState(() => {
-    if (typeof window === 'undefined') return null;
-    const wanted = Number(new URLSearchParams(window.location.search).get('workspace'));
-    return Number.isSafeInteger(wanted) && wanted > 0 ? wanted : null;
+  // The notification's buttons name the channel it was for, and a story's post.
+  const [{ workspaceId, postId }] = useState(() => {
+    if (typeof window === 'undefined') return { workspaceId: null, postId: null };
+    const query = new URLSearchParams(window.location.search);
+    const id = (name: string) => {
+      const wanted = Number(query.get(name));
+      return Number.isSafeInteger(wanted) && wanted > 0 ? wanted : null;
+    };
+    return { workspaceId: id('workspace'), postId: id('post') };
   });
 
   return (
@@ -22,7 +26,7 @@ export default function QueuePage() {
       {(tools) => (
         <>
           <h1 style={{ fontSize: '1.05rem', fontWeight: 600, margin: '0 0 0.25rem' }}>Review queue</h1>
-          <ReviewQueue surface="mini-app" initialWorkspaceId={workspaceId} {...tools} />
+          <ReviewQueue surface="mini-app" initialWorkspaceId={workspaceId} initialPostId={postId} {...tools} />
         </>
       )}
     </MiniAppFrame>

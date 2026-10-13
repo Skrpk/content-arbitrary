@@ -62,6 +62,8 @@ export interface ReviewQueueProps extends PanelTools {
   surface: 'mini-app' | 'website';
   /** The workspace to open on, when it is one of theirs. */
   initialWorkspaceId: number | null;
+  /** The post whose card to open at — a digest's story — when it is still waiting. */
+  initialPostId?: number | null;
   /** Open a post in the frame's editor; without it, the Mini App's caption editor. */
   onEdit?: (postId: number, workspaceId: number) => void;
 }
@@ -254,7 +256,15 @@ function scoreColour(score: number): string {
   return '#8a8f94';
 }
 
-export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, openLink, onEdit }: ReviewQueueProps) {
+export function ReviewQueue({
+  surface,
+  request,
+  initialWorkspaceId,
+  initialPostId,
+  confirm,
+  openLink,
+  onEdit,
+}: ReviewQueueProps) {
   const [data, setData] = useState<QueueResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [channelId, setChannelId] = useState<number | null>(null);
@@ -263,6 +273,8 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   /** The card the keyboard acts on, on the website. */
   const [focused, setFocused] = useState<number | null>(null);
+  /** The card a digest's link opened the page at: scrolled to, and marked. */
+  const [openedAt, setOpenedAt] = useState<number | null>(null);
   /** For a story's card, the post picked to publish in place of its best-scored one. */
   const [chosen, setChosen] = useState<Record<number, number>>({});
   const website = surface === 'website';
@@ -276,6 +288,14 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
         setData(body);
         const match = body.channels.find((channel) => channel.id === initialWorkspaceId);
         setChannelId((match ?? body.channels.find((channel) => channel.items.length > 0) ?? body.channels[0])?.id ?? null);
+        // A digest's story: its card, wherever the post is on it.
+        const card = (match ?? body.channels[0])?.items.find(
+          (item) => item.id === initialPostId || item.alsoInStory.some((other) => other.id === initialPostId),
+        );
+        if (card) {
+          setFocused(card.id);
+          setOpenedAt(card.id);
+        }
       })
       .catch((error: unknown) => {
         if (!cancelled) setLoadError(error instanceof Error ? error.message : 'Could not load the queue.');
@@ -283,7 +303,11 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
     return () => {
       cancelled = true;
     };
-  }, [request, initialWorkspaceId]);
+  }, [request, initialWorkspaceId, initialPostId]);
+
+  useEffect(() => {
+    if (openedAt !== null) document.getElementById(`post-${openedAt}`)?.scrollIntoView({ block: 'start' });
+  }, [openedAt, data]);
 
   const setCard = useCallback((id: number, state: CardState) => setCards((all) => ({ ...all, [id]: state })), []);
   const setError = useCallback(
@@ -509,7 +533,7 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
         const long = body.length > PREVIEW_CHARS || Boolean(item.fullText);
         const shownText = fullShown || !long ? body : `${body.slice(0, PREVIEW_CHARS).trimEnd()}…`;
         const busy = state.kind === 'sending';
-        const isFocused = active === card.id;
+        const isFocused = active === card.id || (!website && openedAt === card.id);
 
         return (
           <section

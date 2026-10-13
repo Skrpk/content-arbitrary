@@ -225,6 +225,13 @@
       "when": 1791886107334,
       "tag": "0031_external_id",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1791893793915,
+      "tag": "0032_digest_sent_at",
+      "breakpoints": true
     }
   ]
 }

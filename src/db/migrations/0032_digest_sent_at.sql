@@ -1,0 +1,1 @@
+ALTER TABLE "processed_posts" ADD COLUMN "digest_sent_at" timestamp with time zone;

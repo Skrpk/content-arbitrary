@@ -23,6 +23,7 @@ import * as accountRoute from '@/app/api/account/route';
 import * as richRoute from '@/app/api/telegram/webapp/rich/route';
 import * as captionRoute from '@/app/api/telegram/webapp/caption/route';
 import { loadRadarNote } from '@/lib/radar/review-note';
+import { sendReviewDigest } from '@/lib/review/queue';
 import { syncPosts } from '@/lib/sync/sync-posts';
 import { publishDueScheduledPosts } from '@/lib/sync/publish-scheduled';
 import { schedulePost } from '@/lib/sync/repository';
@@ -347,7 +348,7 @@ describeIfDb('a sync run with the review queue on', () => {
     expect(stack.calls.map((call) => call.method)).toEqual(['sendMessage']);
     const notice = stack.calls[0]!.body;
     expect(notice.chat_id).toBe(ADMIN_CHAT);
-    expect(notice.text).toContain('1 post</b> new for review');
+    expect(notice.text).toContain('1 new post · 1 story · 0 recommended');
     expect(notice.reply_markup).toEqual({
       inline_keyboard: [
         [{ text: '📋 Open review queue', web_app: { url: 'https://example.vercel.app/queue?workspace=1' } }],
@@ -359,7 +360,7 @@ describeIfDb('a sync run with the review queue on', () => {
     expect(workspace.reviewDigestMessageId).toBe(100);
   });
 
-  it('announces again only once the interval has passed, replacing the last notification', async () => {
+  it('announces again only once the interval has passed, keeping the last notification in the chat', async () => {
     const stack = makeStack();
     const start = Date.now();
     await runSync(stack, timelinePayload('1750000000000000042', ['3_1']), start);
@@ -370,11 +371,10 @@ describeIfDb('a sync run with the review queue on', () => {
     expect(stack.calls).toEqual([]);
     expect(await db.select().from(processedPosts)).toHaveLength(2);
 
-    // An hour on, a few seconds early, as cron runs start: announced, and the old one deleted.
+    // An hour on, a few seconds early, as cron runs start: announced — the post since the last one only.
     await runSync(stack, timelinePayload('1750000000000000043', ['3_2']), start + 60 * MINUTE - 5_000);
-    expect(stack.calls.map((call) => call.method)).toEqual(['sendMessage', 'deleteMessage']);
-    expect(stack.calls[0]!.body.text).toContain('1 post</b> new for review · 2 waiting in all');
-    expect(stack.calls[1]!.body).toMatchObject({ chat_id: ADMIN_CHAT, message_id: 100 });
+    expect(stack.calls.map((call) => call.method)).toEqual(['sendMessage']);
+    expect(stack.calls[0]!.body.text).toContain('1 new post · 1 story');
     expect((await workspaceRow()).reviewDigestMessageId).toBe(101);
   });
 
@@ -435,6 +435,107 @@ describeIfDb('a sync run with the review queue on', () => {
     const row = (await db.select().from(processedPosts))[0]!;
     expect(row).toMatchObject({ status: 'published', reviewQueuedAt: null, adminMessageId: null });
     expect((await workspaceRow()).reviewDigestSentAt).toBeNull();
+  });
+});
+
+describeIfDb('the queue digest', () => {
+  const digestEnv = { REQUIRE_APPROVAL: true, APP_BASE_URL: 'https://example.vercel.app', WEB_APP_URL: undefined };
+
+  async function digest(now = new Date()) {
+    const stack = makeStack();
+    const outcome = await sendReviewDigest({
+      db,
+      env: digestEnv,
+      client: stack.client,
+      workspace: await workspaceRow(),
+      now,
+      logger: silentLogger,
+    });
+    return { outcome, calls: stack.calls };
+  }
+
+  it('lists a story once, with all its sources, and the recommended stories best first', async () => {
+    const strong = await queuedPost({ xAuthorUsername: 'nasa', caption: 'Webb traced a record radio burst\n\nMore below' });
+    const sameStory = await queuedPost({ xAuthorUsername: 'esa', caption: 'Record burst traced by Webb' });
+    const decidedEarlier = await queuedPost({ status: 'rejected', rejectionReason: 'too_minor', xAuthorUsername: 'spacenews', caption: 'Webb burst' });
+    const middling = await queuedPost({ xAuthorUsername: 'spacex', caption: 'Starship flies again' });
+    const weak = await queuedPost({ xAuthorUsername: 'trail_cams', caption: 'A bear' });
+    await score(strong.id, 91);
+    await score(sameStory.id, 60);
+    await score(middling.id, 72);
+    await score(weak.id, 20);
+    await inOneStory(decidedEarlier.id, strong.id, sameStory.id);
+
+    const { outcome, calls } = await digest();
+
+    expect(outcome).toMatchObject({ sent: true, recommended: 2, shown: 2 });
+    const text = String(calls[0]!.body.text);
+    expect(text).toContain('5 new posts · 3 stories · 2 recommended');
+    expect(text).toContain('1. <b>91%</b> — Webb traced a record radio burst\n<i>scored 91</i>\nSources: @nasa, @esa, @spacenews');
+    expect(text).toContain('2. <b>72%</b> — Starship flies again');
+    expect(text).not.toContain('Record burst traced by Webb');
+    expect(text).not.toContain('A bear');
+    expect(calls[0]!.body.reply_markup).toEqual({
+      inline_keyboard: [
+        [
+          { text: '1', web_app: { url: `https://example.vercel.app/queue?workspace=1&post=${strong.id}` } },
+          { text: '2', web_app: { url: `https://example.vercel.app/queue?workspace=1&post=${middling.id}` } },
+        ],
+        [{ text: '📋 Open review queue', web_app: { url: 'https://example.vercel.app/queue?workspace=1' } }],
+      ],
+    });
+    expect((await reload(strong.id)).digestSentAt).toBeInstanceOf(Date);
+    expect((await reload(sameStory.id)).digestSentAt).toBeNull();
+  });
+
+  it('never recommends a story twice, even when a new post of it comes in, and shows at most five', async () => {
+    const shown = await queuedPost({ caption: 'Already in a digest' });
+    await score(shown.id, 95);
+    await inOneStory(shown.id);
+    const storyId = (await db.select().from(storyPosts).where(eq(storyPosts.processedPostId, shown.id)))[0]!.storyId;
+    await digest(new Date(Date.now() - 2 * 60 * MINUTE));
+    await db.update(workspaces).set({ reviewDigestSentAt: new Date(Date.now() - 2 * 60 * MINUTE) }).where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+
+    // Later: another source on the same story, and seven new stories.
+    const another = await queuedPost({ caption: 'The same, from elsewhere', reviewQueuedAt: new Date(Date.now() + 1000) });
+    await score(another.id, 93);
+    await db.insert(storyPosts).values({ processedPostId: another.id, storyId, threshold: 0.75, embeddingModel: 'text-embedding-3-small' });
+    for (let i = 0; i < 7; i += 1) {
+      const fresh = await queuedPost({ caption: `Story ${i}`, reviewQueuedAt: new Date(Date.now() + 1000) });
+      await score(fresh.id, 80 - i);
+    }
+
+    const { outcome, calls } = await digest(new Date(Date.now() + 5000));
+    const text = String(calls[0]!.body.text);
+    expect(outcome).toMatchObject({ sent: true, recommended: 7, shown: 5 });
+    expect(text).not.toContain('The same, from elsewhere');
+    expect(text).toContain('1. <b>80%</b> — Story 0');
+    expect(text).toContain('5. <b>76%</b> — Story 4');
+    expect(text).toContain('2 more recommended in the queue.');
+  });
+
+  it('says so when nothing stands out, in the channel’s language', async () => {
+    await db.update(workspaces).set({ language: 'uk' }).where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+    const weak = await queuedPost();
+    await score(weak.id, 15);
+    await queuedPost();
+
+    const { outcome, calls } = await digest();
+
+    expect(outcome).toMatchObject({ sent: true, recommended: 0, shown: 0 });
+    expect(calls[0]!.body.text).toContain('2 нові пости · 2 історії · 0 рекомендованих');
+    expect(calls[0]!.body.text).toContain('Сильних історій за цей період немає');
+    expect(calls[0]!.body.reply_markup).toEqual({
+      inline_keyboard: [[{ text: '📋 Відкрити чергу', web_app: { url: 'https://example.vercel.app/queue?workspace=1' } }]],
+    });
+  });
+
+  it('sends nothing for a channel whose posts go to the chat one by one', async () => {
+    await db.update(workspaces).set({ reviewDigestMinutes: null }).where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+    await queuedPost();
+    const { outcome, calls } = await digest();
+    expect(outcome).toEqual({ sent: false, reason: 'not-queued' });
+    expect(calls).toEqual([]);
   });
 });
 

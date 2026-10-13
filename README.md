@@ -1007,7 +1007,7 @@ What is recorded for every post, for later analysis:
 With `APP_BASE_URL` set, posts are not sent to the chat one by one. Each is checked, scored by
 Radar and translated exactly as before, then kept in the **review queue** — a Mini App page with
 every post awaiting a decision, **best Radar score first**. Instead of the posts, the chat gets
-a notification: *"📥 7 posts new for review · 23 waiting in all"*, with a **📋 Open review
+a **digest** of what came in — see [The queue digest](#the-queue-digest) — with a **📋 Open review
 queue** button.
 
 ```
@@ -1020,9 +1020,8 @@ X ──► cron ──► review queue ──(at most once an hour)──► "�
   also pick **the hour** it comes at — in your own time zone, as your browser gives it, and kept
   through the clocks changing (`review_digest_hour`, `review_digest_timezone`). The cron runs
   every 15 minutes, so it arrives within a quarter of an hour of it. A notification goes out
-  only when a post has joined the queue since the last one, so a quiet stretch sends nothing,
-  and each one replaces the one before (Telegram lets a bot delete its own message for 48
-  hours; an older one simply stays).
+  only when a post has joined the queue since the last one, so a quiet stretch sends nothing.
+  Earlier digests stay in the chat: each lists its own stories.
 - **The page** shows each post's picture (X's own photo, or a video's still), its text as it
   will be published, Radar's score and one-line why. Radar only orders the list: every post is
   on it, whatever it scored, and the decision is yours.
@@ -1049,6 +1048,47 @@ for the chat); `processed_posts.review_queued_at` says when a post joined the qu
 Posts that were sent to the chat before the switch keep their buttons there, and also appear in
 the queue; deciding one in either place settles it in both. Without `APP_BASE_URL` there is no
 page to open, so every channel gets its posts in the chat.
+
+### The queue digest
+
+Each notification is an editorial digest of the period since the last one, in the channel's
+language (English for a language it has no words in yet):
+
+```
+📡 Zmistik — за останні 6 годин
+
+22 нові пости · 19 історій · 5 рекомендованих
+
+1. 94% — Webb відстежив найвіддаленіший радіосплеск до його галактики
+Рекордна новина від Webb — як ті, що ви публікуєте.
+Джерела: @NASA, Space.com, @spacenews
+
+2. 87% — …
+
+[1] [2] [3] [4] [5]
+[📋 Відкрити чергу]
+```
+
+- **The counts**: the posts that joined the queue in the period, the stories they make (after
+  [story clustering](#stories); a post in no story counts as its own), and the stories Radar
+  recommends. Not the posts read at the sources: X's reposts and replies are dropped before
+  anything is stored, so that number is not in the database, and the digest does not guess it.
+- **The stories**: at most five, best first, each the story's best-scored post still waiting —
+  its Radar score, the first line of its text as the channel will read it, Radar's own one-line
+  reason, and every source that reported the story. **Recommended** is Radar's own "likely
+  approve" (`radar-v3`, the score the review message shows); there is no threshold of the
+  digest's own. With none recommended it says so, with the counts and the button.
+- **The buttons** under it open the queue at each story's card (`/queue?post=…`), and the last
+  one at the top.
+- **Never twice**: when a digest goes out, the lead post of each story it showed is marked
+  (`processed_posts.digest_sent_at`), and a story with a marked post is not recommended again —
+  even when another source reports it later. The queue still shows every post.
+- **Nothing new is asked of a model**: the digest reads Radar's stored scores and reasons, the
+  stories and the sources, a few queries per channel. It is built in
+  [`src/lib/review/digest.ts`](src/lib/review/digest.ts) and sent by `sendReviewDigest` after
+  each tenant's sync, on the interval set under ⚙️ Settings; a channel that has each post sent
+  to the chat gets no digest, as before. Logged as `review_digest.started`, `.sent`, `.skipped`
+  and `.failed`, with the period and the counts.
 
 ### How it works
 
@@ -1969,6 +2009,8 @@ src/
     review/
       queue.ts                 The review queue: its page's list, the notification and when it is due
       same-story.ts            A story's card in the queue: the rest of it decided with its post
+      digest.ts                The queue notification: the period's stories, Radar's picks, in the channel's language
+      text.ts                  A post's text as it will be published, for the queue and the digest
     accounts/
       users.ts                 Users, identities, memberships; a reviewer let in on first sign-in
       sessions.ts              Website sessions: random token in a __Host- cookie, its hash stored

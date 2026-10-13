@@ -94,7 +94,7 @@ export const workspaces = pgTable('workspaces', {
    * post is new never hangs on two clocks agreeing.
    */
   reviewDigestCoveredUntil: timestamp('review_digest_covered_until', { withTimezone: true }),
-  /** That notification, taken down when the next one replaces it. */
+  /** That notification's message. Kept in the chat when the next one comes: each lists its own stories. */
   reviewDigestMessageId: bigint('review_digest_message_id', { mode: 'number' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -453,6 +453,11 @@ export const processedPosts = pgTable(
      * queue notification counts as new. Null for a post sent to the chat.
      */
     reviewQueuedAt: timestamp('review_queued_at', { withTimezone: true }),
+    /**
+     * When the queue notification recommended it, as its story's lead: a
+     * story with a post marked here is not recommended again.
+     */
+    digestSentAt: timestamp('digest_sent_at', { withTimezone: true }),
     /** Message in the admin's private chat carrying the Approve button; null for a queued post. */
     adminChatId: text('admin_chat_id'),
     adminMessageId: bigint('admin_message_id', { mode: 'number' }),

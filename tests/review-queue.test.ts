@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { formatReviewDigest, type ReviewDigest } from '@/lib/review/digest';
 import {
   buildReviewQueueUrl,
-  formatReviewDigest,
   nextDigestAt,
   reviewDigestIsDue,
   reviewQueueButton,
@@ -66,17 +66,53 @@ describe('a daily notification at a chosen hour', () => {
   });
 });
 
-describe('the queue notification', () => {
-  it('counts the new posts, and the rest waiting when there are more', () => {
-    expect(formatReviewDigest({ fresh: 1, waiting: 1 })).toBe('📥 <b>1 post</b> new for review\nBest Radar score first.');
-    expect(formatReviewDigest({ fresh: 3, waiting: 12, channel: 'A & B' })).toBe(
-      '📢 A &amp; B\n📥 <b>3 posts</b> new for review · 12 waiting in all\nBest Radar score first.',
+describe('the queue digest', () => {
+  const digest: ReviewDigest = {
+    newPosts: 22,
+    stories: 21,
+    recommended: 7,
+    top: [
+      {
+        storyId: 4,
+        postId: 41,
+        score: 94,
+        title: 'Webb <traced> a record radio burst',
+        reason: 'Рекордна новина від Webb — як ті, що ви публікуєте.',
+        sources: ['@NASA', 'Space.com', '@spacenews', 'ESA', '@esa_webb'],
+      },
+      { storyId: null, postId: 52, score: 71, title: 'Starship flies again', reason: null, sources: ['@SpaceX'] },
+    ],
+  };
+  const now = at('2026-10-13T18:00:00Z');
+
+  it('counts the period, lists the recommended stories with Radar’s reason and their sources, in the channel’s language', () => {
+    expect(formatReviewDigest(digest, { language: 'uk', since: at('2026-10-13T12:00:00Z'), now })).toBe(
+      [
+        '📡 <b>Zmistik</b> — за останні 6 годин',
+        '22 нові пости · 21 історія · 7 рекомендованих',
+        '1. <b>94%</b> — Webb &lt;traced&gt; a record radio burst\n<i>Рекордна новина від Webb — як ті, що ви публікуєте.</i>\nДжерела: @NASA, Space.com, @spacenews, ESA +1',
+        '2. <b>71%</b> — Starship flies again\nДжерела: @SpaceX',
+        'Ще 5 рекомендованих — у черзі.',
+      ].join('\n\n'),
     );
   });
 
-  it('links to the queue page on its channel', () => {
+  it('falls back to English, names the channel for a reviewer of several, and says when nothing stands out', () => {
+    const text = formatReviewDigest(
+      { newPosts: 1, stories: 1, recommended: 0, top: [] },
+      { language: 'de', channel: 'A & B', since: at('2026-10-13T17:30:00Z'), now },
+    );
+    expect(text).toBe(
+      '📡 <b>A &amp; B</b> — last 30 minutes\n\n1 new post · 1 story · 0 recommended\n\nNo strong stories in this period — Radar recommends none of them.',
+    );
+    expect(formatReviewDigest(digest, { language: 'en', since: null, now })).toContain('— since the last digest');
+    expect(formatReviewDigest(digest, { language: 'en', since: at('2026-10-11T18:00:00Z'), now })).toContain('— last 2 days');
+  });
+
+  it('links to the queue page on its channel, and to one post’s card', () => {
     expect(buildReviewQueueUrl('https://example.vercel.app/', 2)).toBe('https://example.vercel.app/queue?workspace=2');
     expect(buildReviewQueueUrl('https://example.vercel.app')).toBe('https://example.vercel.app/queue');
+    expect(buildReviewQueueUrl('https://example.vercel.app', 2, 41)).toBe('https://example.vercel.app/queue?workspace=2&post=41');
   });
 });
 
