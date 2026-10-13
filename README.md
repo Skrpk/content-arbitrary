@@ -382,6 +382,11 @@ Or push to GitHub and import the repository at <https://vercel.com/new>.
 After the first production deploy, confirm the job appears under
 **Project → Settings → Cron Jobs**. Cron jobs only run from **production** deployments.
 
+**Region.** `vercel.json` also pins every function to `fra1` (Frankfurt), next to the database
+(Neon, `eu-central-1`). Left to Vercel's default, `iad1` in the US, each query crossed the
+Atlantic — about 90 ms, and the review queue makes eight or nine in a row — so the page took
+2–3 seconds. Moving the database means moving this too.
+
 ## M. Add environment variables in Vercel
 
 **Project → Settings → Environment Variables.** Add every variable from your `.env` for the
@@ -1281,10 +1286,10 @@ help) plus the [five most similar posts the editor turned down](#similar-rejecte
 decisions](#nearest-decisions), approved and rejected together; and `radar-v7-story-sources`,
 which is `radar-v3` plus the post's [story so far](#the-story-so-far-in-radar): the other sources
 that reported the same event before it, and what the editor had done with their posts. Live,
-every post is scored with `radar-v1`, `radar-v3`, `radar-v5` and `radar-v7` (`radar-v5` since
-13 October 2026, to test on fresh posts what a backfill [suggested](#similar-rejected-posts));
-the others run on backfills only — `radar-v4` scored below `radar-v3` live, and `radar-v6` did no
-better than `radar-v5` — and backfills score all seven by default. The review message still
+every post is scored with `radar-v1`, `radar-v3` and `radar-v5` (since 13 October 2026, to test
+on fresh posts what a backfill [suggested](#similar-rejected-posts)); the others run on backfills
+only — `radar-v4` scored below `radar-v3` live, `radar-v6` did no better than `radar-v5`, and
+`radar-v7` ranked below `radar-v3` — and backfills score all seven by default. The review message still
 shows `radar-v3`'s score.
 `LIVE_RADAR_PROMPT_VERSIONS` in
 [`src/lib/radar/prompt.ts`](src/lib/radar/prompt.ts) is the live list.
@@ -1687,7 +1692,7 @@ effect would otherwise drown among text posts — with what the images cost to l
 The same event comes in from several sources: a launch from the company, the agency, two news
 accounts and a feed, within hours. Story clustering groups them — one story per event — as they
 arrive. The review queue shows [one card per story](#the-review-queue), and marks repeats (below);
-Radar's `radar-v7` reads [the story so far](#the-story-so-far-in-radar). `stories:cluster` reports
+Radar's `radar-v7`, on backfills, reads [the story so far](#the-story-so-far-in-radar). `stories:cluster` reports
 what the clustering made of a workspace.
 
 **How a post is placed.** By the vector Radar's [retrieval](#similar-past-publications) already
@@ -1740,6 +1745,13 @@ posts that arrived later and decisions made later are not, so a backfill measure
 Live, the post is placed in its story first, from the vector the retrieval just made; a backfill
 reads the placement `stories:cluster` made. A post with no vector is shown as "not known". What
 the prompt was shown is recorded in `radar_evaluations.history_retrieval.story`.
+
+**It did worse than `radar-v3`.** On the same 418 posts (58 approved): AUC 0.68 against 0.71, a
+daily hit rate of 24% against 32%, the top quarter of each day 40% against 48%, and 21 approvals
+under 50 against 15. Most of what it newly missed were repeats the editor published the second
+time round after turning the first copy down — the rule that a story turned down will be turned
+down again read them the wrong way — and with only 15 stories from more than one source in the
+week, the number of sources had little to tell. It runs on backfills only.
 
 ## Configuration reference
 

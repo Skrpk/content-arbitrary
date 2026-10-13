@@ -253,13 +253,8 @@ describe('the approved-posts prompt', () => {
     ).toContain('Similar approved posts: none to show');
   });
 
-  it('runs live as the baseline, the best so far, and the two being measured on fresh posts', () => {
-    expect(LIVE_RADAR_PROMPT_VERSIONS).toEqual([
-      RADAR_PROMPT_BASELINE,
-      RADAR_PROMPT_APPROVED,
-      RADAR_PROMPT_REJECTED,
-      RADAR_PROMPT_STORY,
-    ]);
+  it('runs live as the baseline, the best so far, and the one being measured on fresh posts', () => {
+    expect(LIVE_RADAR_PROMPT_VERSIONS).toEqual([RADAR_PROMPT_BASELINE, RADAR_PROMPT_APPROVED, RADAR_PROMPT_REJECTED]);
   });
 });
 
