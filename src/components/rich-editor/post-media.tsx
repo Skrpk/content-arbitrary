@@ -6,16 +6,20 @@ import { createContext, useContext } from 'react';
 import { theme } from '@/lib/telegram/webapp-client';
 
 /**
- * One of the post's own pictures, placed in the text: a block the editor can
- * drag between paragraphs, with a caption typed under it. It names the media
- * by position (`m0`, `m1`…) — the server sends the real file — so the editor
- * only ever shows a picture of it.
+ * One of the post's pictures, placed in the text: a block the editor can drag
+ * between paragraphs, with a caption typed under it. It names the media — the
+ * post's own by position (`m0`, `m1`…), an upload by its id (`u12`) — and the
+ * server sends the real file, so the editor only ever shows a picture of it.
  */
 
 export interface EditorMedia {
   ref: string;
   kind: 'photo' | 'video';
   previewUrl: string | null;
+  /** An uploaded video, shown by its first frame. */
+  videoUrl?: string | null;
+  /** Uploaded in the editor, rather than the post's own. */
+  uploaded?: boolean;
 }
 
 /** The post's media by ref, for the blocks to show. */
@@ -87,6 +91,14 @@ function PostMediaView({ node, updateAttributes, deleteNode, selected }: ReactNo
               referrerPolicy="no-referrer"
               draggable={false}
               style={{ display: 'block', maxWidth: '100%', maxHeight: '22rem', objectFit: 'contain' }}
+            />
+          ) : media?.videoUrl ? (
+            <video
+              src={media.videoUrl}
+              muted
+              playsInline
+              preload="metadata"
+              style={{ display: 'block', maxWidth: '100%', maxHeight: '22rem' }}
             />
           ) : (
             <div style={{ color: '#bbbbbb', padding: '3rem 1rem' }}>

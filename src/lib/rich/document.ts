@@ -13,7 +13,9 @@ import { escapeHtml } from '@/lib/telegram/format-caption';
  * might produce beyond this is refused, not passed on.
  *
  * Media are the post's own, named by position — `m0` is its first photo or
- * video — and sent with the message (src/lib/rich/publish.ts).
+ * video — or uploaded in the editor, named by their upload — `u12`
+ * (src/lib/uploads/uploads.ts) — and sent with the message
+ * (src/lib/sync/publish.ts).
  */
 
 /** Telegram's limits for a rich message (Bot API, "Rich Message Limits"). */
@@ -50,8 +52,18 @@ const inlineSchema = z.discriminatedUnion('type', [
 
 const inlineContent = z.array(inlineSchema).max(2000).optional();
 
-/** A media reference: the post's media item at that position. */
-export const MEDIA_REF = /^m([0-9]|[1-4][0-9])$/;
+/** A media reference: the post's media item at that position, or one of its uploads. */
+export const MEDIA_REF = /^(m([0-9]|[1-4][0-9])|u[1-9][0-9]{0,9})$/;
+
+/** What a reference's media is, for the HTML: the post's own by position, uploads by ref. */
+export interface MediaKinds {
+  own: ('photo' | 'video')[];
+  uploads?: ReadonlyMap<string, 'photo' | 'video'>;
+}
+
+function kindOf(ref: string, kinds: MediaKinds): 'photo' | 'video' {
+  return (ref.startsWith('u') ? kinds.uploads?.get(ref) : kinds.own[Number(ref.slice(1))]) ?? 'photo';
+}
 
 export type RichBlock =
   | { type: 'paragraph'; content?: RichInline[] }
@@ -103,11 +115,12 @@ export const richDocumentSchema: z.ZodType<RichDocument> = z
 
 /**
  * A document from the editor, checked: its shape, Telegram's limits, and that
- * every picture it places is one of the post's own `mediaCount`, at most once.
+ * every picture it places is one of the post's own `mediaCount` or one of
+ * its `uploads`, at most once.
  */
 export function parseRichDocument(
   value: unknown,
-  options: { mediaCount: number; reservedChars?: number },
+  options: { mediaCount: number; uploads?: ReadonlySet<string>; reservedChars?: number },
 ): { ok: true; doc: RichDocument } | { ok: false; error: string } {
   const parsed = richDocumentSchema.safeParse(value);
   if (!parsed.success) return { ok: false, error: 'The document has something the channel cannot show.' };
@@ -116,7 +129,9 @@ export function parseRichDocument(
   const refs = mediaRefsOf(doc);
   if (refs.length > RICH_MEDIA_MAX) return { ok: false, error: `At most ${RICH_MEDIA_MAX} pictures.` };
   if (new Set(refs).size !== refs.length) return { ok: false, error: 'A picture can appear only once.' };
-  if (refs.some((ref) => Number(ref.slice(1)) >= options.mediaCount)) {
+  const known = (ref: string) =>
+    ref.startsWith('u') ? (options.uploads?.has(ref) ?? false) : Number(ref.slice(1)) < options.mediaCount;
+  if (refs.some((ref) => !known(ref))) {
     return { ok: false, error: 'A picture that is not this post’s own.' };
   }
 
@@ -183,7 +198,7 @@ function inlineText(content: RichInline[] | undefined): string {
  */
 export function richDocumentToHtml(
   doc: RichDocument,
-  options: { mediaKinds: ('photo' | 'video')[]; footerHtml?: string | null },
+  options: { mediaKinds: MediaKinds; footerHtml?: string | null },
 ): string {
   // An empty paragraph — the editor keeps one at the end to type into — is not sent.
   const out = doc.content.map((block) => blockHtml(block, options.mediaKinds)).filter((html) => html !== '<p></p>');
@@ -191,7 +206,7 @@ export function richDocumentToHtml(
   return out.join('');
 }
 
-function blockHtml(block: RichBlock, kinds: ('photo' | 'video')[]): string {
+function blockHtml(block: RichBlock, kinds: MediaKinds): string {
   switch (block.type) {
     case 'paragraph':
       return `<p>${inlineHtml(block.content)}</p>`;
@@ -209,7 +224,7 @@ function blockHtml(block: RichBlock, kinds: ('photo' | 'video')[]): string {
     case 'horizontalRule':
       return '<hr/>';
     case 'postMedia': {
-      const kind = kinds[Number(block.attrs.ref.slice(1))] ?? 'photo';
+      const kind = kindOf(block.attrs.ref, kinds);
       const element =
         kind === 'video'
           ? `<video src="tg://video?id=${block.attrs.ref}"></video>`
@@ -233,7 +248,7 @@ function quoteLines(blocks: RichBlock[]): string[] {
 }
 
 /** A list item's paragraph is its line, not a block of its own. */
-function listItemBlockHtml(block: RichBlock, kinds: ('photo' | 'video')[]): string {
+function listItemBlockHtml(block: RichBlock, kinds: MediaKinds): string {
   return block.type === 'paragraph' ? inlineHtml(block.content) : blockHtml(block, kinds);
 }
 

@@ -11,6 +11,14 @@ import { mediaRefsOf, richDocumentToHtml, type RichDocument } from '@/lib/rich/d
 import type { PostFooter } from '@/lib/telegram/post-footer';
 import { sendRichMessage, type MediaPayload } from '@/lib/telegram/send-media';
 import { refreshChannelMedia } from '@/lib/telegram-channel/refresh-media';
+import {
+  deleteUploads,
+  loadUploads,
+  uploadAsMedia,
+  uploadRef,
+  vercelBlobStore,
+  type BlobStore,
+} from '@/lib/uploads/uploads';
 
 /**
  * Send a decided post to its channel and record it as published.
@@ -43,6 +51,8 @@ export async function publishDecidedPost(input: {
   footer?: PostFooter | null;
   /** When a person approved it now; omitted when the decision was made earlier. */
   reviewedAt?: Date;
+  /** Where the editor's uploads are, to delete once published; the env's Blob store when omitted. */
+  blobStore?: BlobStore | null;
 }): Promise<PublishResult> {
   if (input.row.richDoc) return publishRichPost({ ...input, doc: input.row.richDoc });
 
@@ -86,7 +96,9 @@ export async function publishDecidedPost(input: {
 /**
  * A rich post: only the media its document places are sent — from
  * Telegram's own copies for a post reviewed in the chat, fetched again from X
- * for a queued one, all of them before the message is sent.
+ * for a queued one, and the editor's uploads from the Blob store — all of
+ * them before the message is sent. Once it is out, the post's uploads are
+ * deleted from the store.
  */
 async function publishRichPost(
   input: Parameters<typeof publishDecidedPost>[0] & { doc: RichDocument },
@@ -95,15 +107,25 @@ async function publishRichPost(
   const logger = input.logger ?? createLogger({ app: 'content-arbitrary' });
   const kinds = payload.items.length > 0 ? payload.items.map((item) => item.kind) : (payload.sourceMedia ?? []).map((media) => media.kind);
   const refs = mediaRefsOf(input.doc);
+  const own = refs.filter((ref) => ref.startsWith('m'));
+  const uploads = refs.length > own.length ? await loadUploads(input.db, input.row.id) : [];
+  const uploadsByRef = new Map(uploads.map((upload) => [uploadRef(upload), upload]));
 
   // Looked up afresh only when some of them are fetched again, not re-sent from Telegram's copies.
   const sourceMedia =
-    payload.sourceMedia && refs.some((ref) => !payload.items[Number(ref.slice(1))])
+    payload.sourceMedia && own.some((ref) => !payload.items[Number(ref.slice(1))])
       ? await refreshChannelMedia(input.row.externalId, payload.sourceMedia, { fetchImpl: input.fetchImpl })
       : payload.sourceMedia;
 
   const media: { ref: string; payload: MediaPayload }[] = [];
   for (const ref of refs) {
+    if (ref.startsWith('u')) {
+      const upload = uploadsByRef.get(ref);
+      if (!upload) throw new Error(`rich post places upload ${ref}, which is not in the store`);
+      const [acquired] = await acquireMedia([uploadAsMedia(upload)], { env: input.env, logger, fetchImpl: input.fetchImpl });
+      media.push({ ref, payload: acquired! });
+      continue;
+    }
     const index = Number(ref.slice(1));
     const stored = payload.items[index];
     if (stored) {
@@ -125,7 +147,10 @@ async function publishRichPost(
 
   const message = await sendRichMessage(
     { client: input.client, chatId: input.destination.chatId, disableNotification: input.destination.disableNotification },
-    richDocumentToHtml(input.doc, { mediaKinds: kinds, footerHtml: input.footer?.html }),
+    richDocumentToHtml(input.doc, {
+      mediaKinds: { own: kinds, uploads: new Map(uploads.map((upload) => [uploadRef(upload), upload.kind])) },
+      footerHtml: input.footer?.html,
+    }),
     media,
   );
   const result: PublishResult = {
@@ -143,5 +168,14 @@ async function publishRichPost(
     messages: result.messages,
     reviewedAt: input.reviewedAt,
   });
+
+  // Out in the channel: the store need not hold its files, placed or not. Best effort — the sweep after each sync catches the rest.
+  const store =
+    input.blobStore !== undefined
+      ? input.blobStore
+      : input.env.BLOB_READ_WRITE_TOKEN
+        ? vercelBlobStore(input.env.BLOB_READ_WRITE_TOKEN)
+        : null;
+  if (store) await deleteUploads(input.db, store, await loadUploads(input.db, input.row.id), logger).catch(() => 0);
   return result;
 }

@@ -875,10 +875,26 @@ never opened there is published exactly as before.
 The editor's document is stored as it is (`processed_posts.rich_doc`) and turned into Telegram's
 rich HTML on the server when the post is published: only the nodes and marks above are accepted,
 every bit of text is escaped, a link must be http(s), and a picture must be one of the post's
-own (`src/lib/rich/document.ts`). Media go out the same way as for any approval: Telegram's own
-copies for a post reviewed in the chat, fetched again from X for a queued one. Uploading other
-pictures is not supported yet. The Mini App keeps its plain caption editor, and refuses to edit
-a post laid out on the website, where its layout is what will be published.
+own or one of its uploads (`src/lib/rich/document.ts`). Media go out the same way as for any
+approval: Telegram's own copies for a post reviewed in the chat, fetched again from X for a queued
+one. The Mini App keeps its plain caption editor, and refuses to edit a post laid out on the
+website, where its layout is what will be published.
+
+**Uploading photos and videos.** With a [Vercel Blob](https://vercel.com/docs/vercel-blob) store
+connected to the project (**Storage → Create → Blob → Connect to project**, which sets
+`BLOB_READ_WRITE_TOKEN`; copy it into `.env` to upload locally), the editor has **⬆ Upload photo
+or video**: JPEG, PNG and WebP photos up to Telegram's 10 MB, and MP4 videos up to
+`MAX_VIDEO_SIZE_MB`. The browser sends the file straight to the store — past the 4.5 MB a Vercel
+function may be sent — with a token this app gives only to the post's reviewer, only while the
+post waits, and only for a path under that post (`posts/<id>/…`,
+`/api/telegram/webapp/uploads`). It then registers the file
+(`/api/telegram/webapp/uploads/register`), and the app checks it in the store itself — path, type
+and size — before recording it in `post_uploads`; a file of the wrong type or size is deleted
+there and then. The editor places it as `u<id>`, beside the post's own media, and the AI
+assistant sees and keeps it. When the post is published its files are fetched from the store
+like any other media and sent with it, and then deleted from the store, placed or not; the
+uploads of a post turned down, or failed for good, are deleted by a sweep after each sync. The
+store holds a file only while its post waits. Without the token there is no upload button.
 
 ### The AI assistant
 
@@ -1837,6 +1853,7 @@ week, the number of sources had little to tell. It runs on backfills only.
 | `MAX_RETRY_ATTEMPTS` | `5` | Attempts per transient failure, including the first. |
 | `MEDIA_UPLOAD_MODE` | `multipart` | `multipart` (higher limits) or `url` (cheaper). |
 | `MAX_VIDEO_SIZE_MB` | `50` | Hard ceiling for video (1–50). Nothing larger is sent at all. |
+| `BLOB_READ_WRITE_TOKEN` | — | Vercel Blob, for photos and videos uploaded in the editor; set by Vercel when a Blob store is connected. Without it, no uploads. |
 | `PREFERRED_VIDEO_SIZE_MB` | unset | Preferred video size (1–50). A rendition at or under it wins; if none qualifies the original is sent anyway. |
 | `DRY_RUN` | `true` | Do everything except publish. |
 
@@ -2009,6 +2026,8 @@ src/
       openai.ts                One streamed turn on OpenAI: web search, edit_post
       repository.ts            Whether it is set up; assistant_requests and the daily limit
       events.ts                The stream's events, shared with the editor's panel
+    uploads/
+      uploads.ts               The editor's photos and videos in Vercel Blob: checked, recorded, sent, deleted
     review/
       queue.ts                 The review queue: its page's list, the notification and when it is due
       same-story.ts            A story's card in the queue: the rest of it decided with its post

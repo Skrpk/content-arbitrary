@@ -24,6 +24,7 @@ import { findPostAwaitingReview } from '@/lib/sync/repository';
 import { parsePostFooter } from '@/lib/telegram/post-footer';
 import { authorizeReviewer, json, reviewerWorkspaceForPost } from '@/lib/telegram/webapp-request';
 import { loadTranslationStyle } from '@/lib/translation/translate';
+import { loadUploads, uploadRef } from '@/lib/uploads/uploads';
 
 /**
  * The post editor's AI assistant: the editor's message and the post as it
@@ -95,7 +96,9 @@ export async function POST(request: Request): Promise<Response> {
   const mediaCount = payloadMediaCount(payload);
   const footer = parsePostFooter(workspace.postFooter);
   const reservedChars = footer ? footer.text.length + 2 : 0;
-  const draft = parseRichDocument(body.draft, { mediaCount, reservedChars });
+  const uploads = await loadUploads(db, post.id);
+  const uploadRefs = new Set(uploads.map(uploadRef));
+  const draft = parseRichDocument(body.draft, { mediaCount, uploads: uploadRefs, reservedChars });
   if (!draft.ok) return json({ error: draft.error }, 422);
 
   const kinds = payload.items.length > 0 ? payload.items.map((item) => item.kind) : (payload.sourceMedia ?? []).map((media) => media.kind);
@@ -111,6 +114,7 @@ export async function POST(request: Request): Promise<Response> {
     url: post.xPostUrl,
     sourceText: post.sourceText,
     media: kinds,
+    uploads: uploads.map((upload) => ({ ref: uploadRef(upload), kind: upload.kind })),
     textLimit: RICH_TEXT_MAX - reservedChars,
   });
   const message = buildTurnMessage(richDocumentToEditHtml(draft.doc), body.message);
@@ -139,7 +143,7 @@ export async function POST(request: Request): Promise<Response> {
 
           let problem = result.editError;
           if (result.edit && !problem) {
-            const checked = parseRichDocument(editHtmlToRichDocument(result.edit.html), { mediaCount, reservedChars });
+            const checked = parseRichDocument(editHtmlToRichDocument(result.edit.html), { mediaCount, uploads: uploadRefs, reservedChars });
             if (checked.ok) {
               edited = true;
               send({ type: 'edit', doc: checked.doc, summary: result.edit.summary.trim() });

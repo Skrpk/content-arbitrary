@@ -51,7 +51,7 @@ describe('a document from the editor', () => {
 
   it('becomes Telegram rich HTML with every bit of text escaped', () => {
     const parsed = parseRichDocument(editorDoc, { mediaCount: 2 }) as { ok: true; doc: RichDocument };
-    expect(richDocumentToHtml(parsed.doc, { mediaKinds: ['photo', 'video'], footerHtml: '<a href="https://t.me/x">X</a>' })).toBe(
+    expect(richDocumentToHtml(parsed.doc, { mediaKinds: { own: ['photo', 'video'] }, footerHtml: '<a href="https://t.me/x">X</a>' })).toBe(
       '<h1>Webb &amp; the &lt;planet&gt;</h1>' +
         '<figure><video src="tg://video?id=m1"></video><figcaption>Caption "quoted" &lt;b&gt;not bold&lt;/b&gt;</figcaption></figure>' +
         '<p><b>Bold</b> and <a href="https://esa.int/?a=1&amp;b=2">a link</a><br/><i><mark>marked</mark></i></p>' +
@@ -81,6 +81,28 @@ describe('a document from the editor', () => {
     expect(parseRichDocument({ type: 'doc', content: [media('m2')] }, { mediaCount: 2 })).toMatchObject({ ok: false });
     expect(parseRichDocument({ type: 'doc', content: [media('m0'), media('m0')] }, { mediaCount: 2 })).toMatchObject({ ok: false });
     expect(parseRichDocument({ type: 'doc', content: [media('../etc')] }, { mediaCount: 2 })).toMatchObject({ ok: false });
+  });
+
+  it('places the post’s own uploads too, as uploads, and no one else’s', () => {
+    const doc = {
+      type: 'doc',
+      content: [
+        { type: 'postMedia', attrs: { ref: 'u12', caption: null } },
+        { type: 'postMedia', attrs: { ref: 'm0', caption: 'Own' } },
+      ],
+    };
+    expect(parseRichDocument(doc, { mediaCount: 1, uploads: new Set(['u12']) }).ok).toBe(true);
+    expect(parseRichDocument(doc, { mediaCount: 1, uploads: new Set(['u13']) })).toEqual({
+      ok: false,
+      error: 'A picture that is not this post’s own.',
+    });
+    expect(parseRichDocument(doc, { mediaCount: 1 }).ok).toBe(false);
+    const parsed = parseRichDocument(doc, { mediaCount: 1, uploads: new Set(['u12']) });
+    expect(
+      richDocumentToHtml(parsed.ok ? parsed.doc : (doc as never), {
+        mediaKinds: { own: ['photo'], uploads: new Map([['u12', 'video']]) },
+      }),
+    ).toBe('<video src="tg://video?id=u12"></video><figure><img src="tg://photo?id=m0"/><figcaption>Own</figcaption></figure>');
   });
 
   it('holds to Telegram’s length, counting the footer it will carry', () => {

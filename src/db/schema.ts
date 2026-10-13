@@ -1240,3 +1240,39 @@ export const storyPosts = pgTable(
   },
   (table) => [index('story_posts_story_idx').on(table.storyId)],
 );
+
+export const POST_UPLOAD_KINDS = ['photo', 'video'] as const;
+export type PostUploadKind = (typeof POST_UPLOAD_KINDS)[number];
+
+/**
+ * A photo or video the reviewer uploaded in the website's editor, held in
+ * Vercel Blob until the post is published — then deleted, as it is once the
+ * post is turned down. A rich document places it as `u<id>`, beside the
+ * post's own media (`m0`…).
+ */
+export const postUploads = pgTable(
+  'post_uploads',
+  {
+    id: serial('id').primaryKey(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    processedPostId: integer('processed_post_id')
+      .notNull()
+      .references(() => processedPosts.id, { onDelete: 'cascade' }),
+    kind: text('kind', { enum: POST_UPLOAD_KINDS }).notNull(),
+    /** Where the file is in the Blob store: what publishing fetches, and what is deleted. */
+    url: text('url').notNull(),
+    pathname: text('pathname').notNull(),
+    contentType: text('content_type').notNull(),
+    sizeBytes: integer('size_bytes').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    /** When the file was deleted from the store; null while it is there. */
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex('post_uploads_url_key').on(table.url),
+    index('post_uploads_post_idx').on(table.processedPostId),
+    check('post_uploads_kind_check', sql`${table.kind} IN ('photo', 'video')`),
+  ],
+);

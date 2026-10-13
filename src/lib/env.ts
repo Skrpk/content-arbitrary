@@ -213,6 +213,12 @@ const schema = z
     RADAR_MODEL: z.string().trim().min(1).optional().or(z.literal('').transform(() => undefined)),
     OPENAI_API_KEY: z.string().min(1).optional().or(z.literal('').transform(() => undefined)),
     /**
+     * The Vercel Blob store's read-write token, which Vercel sets when a Blob
+     * store is connected to the project. Without it the editor cannot upload
+     * photos and videos, and says nothing of it.
+     */
+    BLOB_READ_WRITE_TOKEN: z.string().min(1).optional().or(z.literal('').transform(() => undefined)),
+    /**
      * The OpenAI model that embeds publication history and new posts for
      * Radar's similar-publication search. Always OpenAI, whatever
      * RADAR_PROVIDER is, and only with OPENAI_API_KEY set. Vectors are stored

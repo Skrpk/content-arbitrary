@@ -66,14 +66,19 @@ export function buildPostContext(input: {
   url: string | null;
   sourceText: string | null;
   media: ('photo' | 'video')[];
+  /** Photos and videos the editor uploaded for the post, placed like its own. */
+  uploads?: { ref: string; kind: 'photo' | 'video' }[];
   textLimit: number;
 }): string {
   const source = [input.sourceLabel, input.url].filter(Boolean).join(' · ') || 'unknown';
   const text = input.sourceText?.trim()
     ? `<source>\n${neutralise(clip(input.sourceText, SOURCE_TEXT_MAX))}\n</source>`
     : '(the source had no text)';
-  const media =
-    input.media.length > 0 ? input.media.map((kind, index) => `m${index} (${kind})`).join(', ') : 'none';
+  const all = [
+    ...input.media.map((kind, index) => `m${index} (${kind})`),
+    ...(input.uploads ?? []).map((upload) => `${upload.ref} (uploaded ${upload.kind})`),
+  ];
+  const media = all.length > 0 ? all.join(', ') : 'none';
   return `The post came from ${neutralise(source)}. What the source said, as it came in:
 ${text}
 

@@ -3,7 +3,8 @@
 import Highlight from '@tiptap/extension-highlight';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { useEffect, useMemo, useState } from 'react';
+import { upload } from '@vercel/blob/client';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { readJson, type PanelTools } from '@/components/panel-tools';
 import { ASSISTANT_CSS, AssistantPanel } from '@/components/rich-editor/assistant-panel';
 import { EditorMediaContext, PostMedia, type EditorMedia } from '@/components/rich-editor/post-media';
@@ -14,8 +15,9 @@ import { theme } from '@/lib/telegram/webapp-client';
  * headings, bold and italic, lists, quotations, and the post's own pictures
  * placed anywhere between paragraphs, each with its caption.
  *
- * Only what a rich message can show is on offer (no code, no tables, no
- * uploads yet); the server checks the document again before storing it and
+ * Only what a rich message can show is on offer (no code, no tables); photos
+ * and videos can be uploaded too, when a Blob store is set up
+ * (src/lib/uploads). The server checks the document again before storing it and
  * makes the Telegram HTML itself. Saving makes the post go out as written
  * here; "Back to the plain post" drops it.
  */
@@ -33,7 +35,17 @@ interface EditorData {
   limits: { text: number; media: number };
   /** Whether the AI assistant is set up. */
   assistant?: boolean;
+  /** Where and how large uploads may be; null when the Blob store is not set up. */
+  uploads?: { pathPrefix: string; maxBytes: { photo: number; video: number } } | null;
 }
+
+/** What the store and Telegram take, as the server says (src/lib/uploads/uploads.ts). */
+const UPLOAD_KINDS: Record<string, 'photo' | 'video'> = {
+  'image/jpeg': 'photo',
+  'image/png': 'photo',
+  'image/webp': 'photo',
+  'video/mp4': 'video',
+};
 
 export function PostEditor({
   postId,
@@ -76,7 +88,10 @@ function LoadedEditor({
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [dirty, setDirty] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
-  const mediaByRef = useMemo(() => new Map(data.media.map((media) => [media.ref, media])), [data.media]);
+  const [media, setMedia] = useState<EditorMedia[]>(data.media);
+  const [uploading, setUploading] = useState<{ name: string; percent: number } | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const mediaByRef = useMemo(() => new Map(media.map((item) => [item.ref, item])), [media]);
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -153,6 +168,55 @@ function LoadedEditor({
     }
   };
 
+  /** Upload the chosen files one by one, straight to the store, and put each in the post at the cursor. */
+  const uploadFiles = async (files: File[]) => {
+    const limits = data.uploads;
+    if (!limits || !editor) return;
+    setMessage(null);
+    for (const file of files) {
+      const kind = UPLOAD_KINDS[file.type];
+      if (!kind) {
+        setMessage({ ok: false, text: `${file.name}: only JPEG, PNG and WebP photos and MP4 videos.` });
+        continue;
+      }
+      if (file.size > limits.maxBytes[kind]) {
+        setMessage({ ok: false, text: `${file.name} is ${megabytes(file.size)}; a ${kind} can be up to ${megabytes(limits.maxBytes[kind])}.` });
+        continue;
+      }
+      setUploading({ name: file.name, percent: 0 });
+      try {
+        const blob = await upload(`${limits.pathPrefix}${safeFileName(file.name)}`, file, {
+          access: 'public',
+          handleUploadUrl: '/api/telegram/webapp/uploads',
+          clientPayload: JSON.stringify({ postId: data.postId }),
+          multipart: file.size > 8 * 1024 * 1024,
+          onUploadProgress: ({ percentage }) => setUploading({ name: file.name, percent: Math.round(percentage) }),
+        });
+        const recorded = await readJson<{ ref: string; kind: 'photo' | 'video'; url: string }>(
+          await request('/api/telegram/webapp/uploads/register', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ postId: data.postId, url: blob.url }),
+          }),
+        );
+        setMedia((all) => [
+          ...all,
+          {
+            ref: recorded.ref,
+            kind: recorded.kind,
+            previewUrl: recorded.kind === 'photo' ? recorded.url : null,
+            videoUrl: recorded.kind === 'video' ? recorded.url : null,
+            uploaded: true,
+          },
+        ]);
+        editor.chain().focus().insertContent({ type: 'postMedia', attrs: { ref: recorded.ref, caption: null } }).run();
+      } catch (reason: unknown) {
+        setMessage({ ok: false, text: `${file.name}: ${reason instanceof Error ? reason.message : 'could not upload.'}` });
+      }
+    }
+    setUploading(null);
+  };
+
   const leave = async () => {
     if (!dirty || (await confirm('Leave without saving your changes?'))) onDone();
   };
@@ -203,13 +267,15 @@ function LoadedEditor({
             ) : null}
           </div>
 
-          {data.media.length > 0 ? (
+          {media.length > 0 || data.uploads ? (
             <section style={{ marginTop: '1rem' }}>
               <div style={{ fontSize: '0.85rem', marginBottom: '0.4rem' }}>
-                The post&apos;s pictures — put one where the cursor is, or drag it in the text:
+                {media.length > 0
+                  ? 'The post’s pictures — put one where the cursor is, or drag it in the text:'
+                  : 'Add a photo or a video of your own:'}
               </div>
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                {data.media.map((media) => {
+                {media.map((media) => {
                   const placed = used.has(media.ref);
                   return (
                     <button
@@ -236,6 +302,8 @@ function LoadedEditor({
                       {media.previewUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={media.previewUrl} alt="" referrerPolicy="no-referrer" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : media.videoUrl ? (
+                        <video src={media.videoUrl} muted playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                       ) : (
                         <span style={{ color: '#bbbbbb', fontSize: '0.75rem' }}>{media.kind}</span>
                       )}
@@ -245,6 +313,38 @@ function LoadedEditor({
                     </button>
                   );
                 })}
+                {data.uploads ? (
+                  <button
+                    type="button"
+                    disabled={!editor || uploading !== null}
+                    onClick={() => fileInput.current?.click()}
+                    title="Upload a JPEG, PNG or WebP photo, or an MP4 video"
+                    style={{
+                      width: '6.5rem',
+                      height: '6.5rem',
+                      border: `1px dashed ${theme.hint}`,
+                      borderRadius: '0.45rem',
+                      background: 'transparent',
+                      color: theme.text,
+                      fontSize: '0.8rem',
+                      cursor: uploading ? 'default' : 'pointer',
+                    }}
+                  >
+                    {uploading ? `Uploading… ${uploading.percent}%` : '⬆ Upload photo or video'}
+                  </button>
+                ) : null}
+                <input
+                  ref={fileInput}
+                  type="file"
+                  accept={Object.keys(UPLOAD_KINDS).join(',')}
+                  multiple
+                  hidden
+                  onChange={(event) => {
+                    const files = Array.from(event.target.files ?? []);
+                    event.target.value = '';
+                    void uploadFiles(files);
+                  }}
+                />
               </div>
             </section>
           ) : null}
@@ -285,6 +385,16 @@ function LoadedEditor({
       </div>
     </EditorMediaContext.Provider>
   );
+}
+
+function megabytes(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** A name the store keeps as it is: letters, digits, dots and dashes; it adds its own random part. */
+function safeFileName(name: string): string {
+  const cleaned = name.normalize('NFKD').replace(/[^\w.-]+/g, '-').replace(/-+/g, '-').slice(-80);
+  return cleaned.replace(/^[-.]+/, '') || 'upload';
 }
 
 /** What the toolbar shows as on, and what the page counts — read from the editor as it changes. */

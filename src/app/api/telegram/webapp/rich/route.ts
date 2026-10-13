@@ -12,6 +12,7 @@ import { sourceLabelOfPost } from '@/lib/sources/display';
 import { findPostAwaitingReview, setRichDocument } from '@/lib/sync/repository';
 import { captionToPlainText, parsePostFooter, stripFooter } from '@/lib/telegram/post-footer';
 import { authorizeReviewer, json, reviewerWorkspaceForPost } from '@/lib/telegram/webapp-request';
+import { loadUploads, uploadMaxBytes, uploadPathPrefix, uploadRef, uploadsAvailable, type UploadRow } from '@/lib/uploads/uploads';
 
 /**
  * The website editor's API: the post as a document to edit — the one saved,
@@ -43,6 +44,7 @@ export async function GET(request: Request): Promise<Response> {
   const { post, workspace } = found;
   const payload = post.approvalPayload!;
   const footer = parsePostFooter(workspace.postFooter);
+  const uploads = await loadUploads(auth.db, post.id);
 
   return json({
     postId: post.id,
@@ -52,11 +54,18 @@ export async function GET(request: Request): Promise<Response> {
     url: post.xPostUrl,
     isRich: post.richDoc !== null,
     doc: post.richDoc ?? initialRichDocument({ text: plainTextOf(post, footer), mediaCount: payloadMediaCount(payload) }),
-    media: mediaOf(post),
+    media: [...mediaOf(post), ...uploads.map(uploadMedia)],
     footer: footer?.text ?? null,
     limits: { text: RICH_TEXT_MAX - (footer ? footer.text.length + 2 : 0), media: RICH_MEDIA_MAX },
     // Whether the editor shows the AI assistant (src/app/api/telegram/webapp/assistant).
     assistant: assistantAvailable(auth.env),
+    // Whether, where and how large photos and videos can be uploaded (src/lib/uploads).
+    uploads: uploadsAvailable(auth.env)
+      ? {
+          pathPrefix: uploadPathPrefix(post.id),
+          maxBytes: { photo: uploadMaxBytes('photo', auth.env), video: uploadMaxBytes('video', auth.env) },
+        }
+      : null,
   });
 }
 
@@ -78,6 +87,7 @@ export async function POST(request: Request): Promise<Response> {
 
   const parsed = parseRichDocument(body.doc, {
     mediaCount: payloadMediaCount(found.post.approvalPayload!),
+    uploads: new Set((await loadUploads(auth.db, body.postId)).map(uploadRef)),
     reservedChars: footer ? footer.text.length + 2 : 0,
   });
   if (!parsed.ok) return json({ error: parsed.error }, 422);
@@ -150,4 +160,15 @@ function mediaOf(post: ProcessedPost) {
       previewUrl: (shown?.kind === 'photo' ? shown.url : shown?.previewUrl) ?? null,
     };
   });
+}
+
+/** An upload as the editor shows it: placed like the post's own, seen at its address in the store. */
+function uploadMedia(upload: UploadRow) {
+  return {
+    ref: uploadRef(upload),
+    kind: upload.kind,
+    previewUrl: upload.kind === 'photo' ? upload.url : null,
+    videoUrl: upload.kind === 'video' ? upload.url : null,
+    uploaded: true,
+  };
 }
