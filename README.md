@@ -884,7 +884,9 @@ website, where its layout is what will be published.
 connected to the project (**Storage → Create → Blob → Connect to project**, which sets
 `BLOB_READ_WRITE_TOKEN`; copy it into `.env` to upload locally), the editor has **⬆ Upload photo
 or video**: JPEG, PNG and WebP photos up to Telegram's 10 MB, and MP4 videos up to
-`MAX_VIDEO_SIZE_MB`. The browser sends the file straight to the store — past the 4.5 MB a Vercel
+`MAX_VIDEO_SIZE_MB`. An image copied from another site and pasted into the text (⌘V / Ctrl+V) is
+uploaded the same way and placed at the cursor, and a file dragged in from the computer where it
+is dropped; pasted text is pasted as before. The browser sends the file straight to the store — past the 4.5 MB a Vercel
 function may be sent — with a token this app gives only to the post's reviewer, only while the
 post waits, and only for a path under that post (`posts/<id>/…`,
 `/api/telegram/webapp/uploads`). It then registers the file

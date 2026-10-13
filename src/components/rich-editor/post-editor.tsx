@@ -91,6 +91,8 @@ function LoadedEditor({
   const [media, setMedia] = useState<EditorMedia[]>(data.media);
   const [uploading, setUploading] = useState<{ name: string; percent: number } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  // The editor is set up once; pasting and dropping reach the upload as it is now through this.
+  const uploadFromEditor = useRef<((files: File[], at?: number) => void) | null>(null);
   const mediaByRef = useMemo(() => new Map(media.map((item) => [item.ref, item])), [media]);
 
   const editor = useEditor({
@@ -111,7 +113,25 @@ function LoadedEditor({
       PostMedia,
     ],
     content: data.doc as object,
-    editorProps: { attributes: { class: 'rich-editor-content' } },
+    editorProps: {
+      attributes: { class: 'rich-editor-content' },
+      // An image copied from another site, or a file from the computer: uploaded, and placed
+      // where the cursor is — or where it was dropped.
+      handlePaste: (_view, event) => {
+        const files = mediaFiles(event.clipboardData?.files);
+        if (files.length === 0 || !uploadFromEditor.current) return false;
+        event.preventDefault();
+        uploadFromEditor.current(files);
+        return true;
+      },
+      handleDrop: (view, event, _slice, moved) => {
+        const files = moved ? [] : mediaFiles(event.dataTransfer?.files);
+        if (files.length === 0 || !uploadFromEditor.current) return false;
+        event.preventDefault();
+        uploadFromEditor.current(files, view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos);
+        return true;
+      },
+    },
     // The toolbar and the counts below read the editor as it renders.
     shouldRerenderOnTransaction: true,
     onUpdate: () => setDirty(true),
@@ -169,10 +189,11 @@ function LoadedEditor({
   };
 
   /** Upload the chosen files one by one, straight to the store, and put each in the post at the cursor. */
-  const uploadFiles = async (files: File[]) => {
+  const uploadFiles = async (files: File[], at?: number) => {
     const limits = data.uploads;
-    if (!limits || !editor) return;
+    if (!limits || !editor || uploading) return;
     setMessage(null);
+    if (at !== undefined) editor.commands.setTextSelection(at);
     for (const file of files) {
       const kind = UPLOAD_KINDS[file.type];
       if (!kind) {
@@ -216,6 +237,10 @@ function LoadedEditor({
     }
     setUploading(null);
   };
+
+  useEffect(() => {
+    uploadFromEditor.current = data.uploads ? (files, at) => void uploadFiles(files, at) : null;
+  });
 
   const leave = async () => {
     if (!dirty || (await confirm('Leave without saving your changes?'))) onDone();
@@ -385,6 +410,11 @@ function LoadedEditor({
       </div>
     </EditorMediaContext.Provider>
   );
+}
+
+/** The photos and videos among pasted or dropped files; the rest are the editor's to handle as usual. */
+function mediaFiles(list: FileList | null | undefined): File[] {
+  return Array.from(list ?? []).filter((file) => file.type.startsWith('image/') || file.type.startsWith('video/'));
 }
 
 function megabytes(bytes: number): string {
