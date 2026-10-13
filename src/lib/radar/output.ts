@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { REJECTION_REASONS, type HistoricalAssessment, type RejectionReason } from '@/db/schema';
 import type { PublicationProfile } from '@/lib/history/profile/schema';
+import type { StoryContext } from '@/lib/stories/context';
 import type {
   RadarExample,
   RadarImage,
@@ -78,6 +79,8 @@ export interface RadarInput {
   nearestDecisions?: RadarNearestDecision[] | null;
   /** Media prompt only: what the post's first image shows, in place of the image. */
   media?: RadarMediaContext | null;
+  /** Story prompt only: the post's story so far; `context` null when it was never placed in one. */
+  story?: { context: StoryContext | null } | null;
 }
 
 export interface TokenUsage {

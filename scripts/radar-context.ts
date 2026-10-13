@@ -30,10 +30,12 @@ import {
   RADAR_PROMPT_APPROVED,
   usesApprovedRetrieval,
   usesNearestDecisions,
+  usesStoryContext,
   usesRejectedRetrieval,
   usesHistoryRetrieval,
 } from '../src/lib/radar/prompt';
 import { loadRadarHistory } from '../src/lib/radar/repository';
+import { loadStoryContext } from '../src/lib/stories/context';
 
 function argument(name: string): string | undefined {
   const index = process.argv.indexOf(`--${name}`);
@@ -133,6 +135,9 @@ async function main() {
     null,
     usesRejectedRetrieval(promptVersion) ? (retrieval?.rejected?.matches ?? []) : null,
     usesNearestDecisions(promptVersion) ? (retrieval?.nearest?.matches ?? []) : null,
+    usesStoryContext(promptVersion)
+      ? { context: await loadStoryContext(db, { processedPostId: post.id, before: post.createdAt }) }
+      : null,
   );
   for (const part of content) console.log(part.type === 'text' ? part.text : '[image]');
 }

@@ -12,6 +12,7 @@ import {
   usesNearestDecisions,
   usesPublicationProfile,
   usesRejectedRetrieval,
+  usesStoryContext,
   type RadarImage,
   type RadarItem,
   type RadarPromptVersion,
@@ -23,6 +24,8 @@ import type { PublicationProfile } from '@/lib/history/profile/schema';
 import type { EmbeddingProvider } from '@/lib/history/embeddings/provider';
 import { retrieveSimilarPublications, toRetrievalRecord } from '@/lib/history/embeddings/retrieval';
 import type { ImageUnderstanding, MediaUnderstandingConfig } from '@/lib/media/understanding';
+import { placeInStory } from '@/lib/stories/cluster';
+import { loadStoryContext, storyRecord, type StoryContext } from '@/lib/stories/context';
 
 /**
  * Shadow Radar: score a post and record the prediction, and nothing else.
@@ -158,6 +161,32 @@ export async function runLiveRadar(
 }
 
 /**
+ * The post's story so far, for the story prompt: live, the post is placed in
+ * its story first — it has just arrived, and its vector was just made — and a
+ * backfill reads the placement `npm run stories:cluster` made. Null, and the
+ * prompt says the story is not known, when it has no vector or anything fails.
+ */
+async function storySoFar(
+  db: Database,
+  subject: RadarSubject,
+  options: { mode: RadarMode; before: Date; embeddings?: EmbeddingProvider | null; logger: Logger },
+): Promise<StoryContext | null> {
+  try {
+    if (options.mode === 'live' && options.embeddings) {
+      await placeInStory(db, {
+        workspaceId: subject.workspaceId,
+        processedPostId: subject.processedPostId,
+        model: options.embeddings.model,
+      });
+    }
+    return await loadStoryContext(db, { processedPostId: subject.processedPostId, before: options.before });
+  } catch (error) {
+    options.logger.warn('radar.story_failed', { processedPostId: subject.processedPostId, error: describeError(error) });
+    return null;
+  }
+}
+
+/**
  * Score every prompt version and variant this post does not have yet under
  * the current setup, recording each as `ok` or `failed`.
  */
@@ -222,6 +251,11 @@ export async function scoreAndRecord(
       })
     : null;
 
+  // Once for every version that shows it, from the vector the search just made.
+  const story = pending.some(({ version }) => usesStoryContext(version))
+    ? await storySoFar(db, subject, options)
+    : null;
+
   return Promise.all(
     pending.map(async ({ version, variant }): Promise<'ok' | 'failed'> => {
       const image = variant === 'text_image' ? subject.image : undefined;
@@ -232,8 +266,12 @@ export async function scoreAndRecord(
       const withRejected = usesRejectedRetrieval(version);
       const withNearest = usesNearestDecisions(version);
       const withProfile = usesPublicationProfile(version);
+      const withStory = usesStoryContext(version);
       const historyRetrieval = shown
-        ? toRetrievalRecord(shown, { approved: withApproved, rejected: withRejected, nearest: withNearest })
+        ? {
+            ...toRetrievalRecord(shown, { approved: withApproved, rejected: withRejected, nearest: withNearest }),
+            ...(withStory ? { story: storyRecord(story) } : {}),
+          }
         : null;
       const startedAt = Date.now();
       try {
@@ -251,6 +289,7 @@ export async function scoreAndRecord(
             similarRejected: withRejected ? (shown?.rejected?.matches ?? []) : null,
             nearestDecisions: withNearest ? (shown?.nearest?.matches ?? []) : null,
             media: readsMedia ? { image: subject.media?.understanding ?? null } : null,
+            story: withStory ? { context: story } : null,
           },
           { timeoutMs: options.timeoutMs },
         );

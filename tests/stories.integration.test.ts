@@ -3,10 +3,15 @@ import { eq } from 'drizzle-orm';
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from '@/db/schema';
-import { DEFAULT_WORKSPACE_ID, processedPosts, radarCandidateEmbeddings, stories, storyPosts, workspaces } from '@/db/schema';
+import { DEFAULT_WORKSPACE_ID, processedPosts, radarCandidateEmbeddings, radarEvaluations, stories, storyPosts, workspaces } from '@/db/schema';
 import { deleteStories, loadUnplacedPosts, placeInStory } from '@/lib/stories/cluster';
 import { formatStoryReport, loadStoryReportRows } from '@/lib/stories/report';
-import { ensureTestWorkspace } from './helpers';
+import { loadStoryContext } from '@/lib/stories/context';
+import { RADAR_PROMPT_STORY } from '@/lib/radar/prompt';
+import { createRadarRun, runLiveRadar } from '@/lib/radar/shadow';
+import { fakeEmbedding, fakeEmbeddings } from './history-fakes';
+import { fakeAnthropic, messageResponse, radarOutput } from './radar-fakes';
+import { createTestLogger, ensureTestWorkspace } from './helpers';
 
 /**
  * Story clustering against a real database: a post joins the story of the
@@ -33,6 +38,7 @@ afterAll(async () => {
 beforeEach(async () => {
   if (!connectionString) return;
   await db.delete(stories);
+  await db.delete(radarEvaluations);
   await db.delete(radarCandidateEmbeddings);
   await db.delete(processedPosts);
   await ensureTestWorkspace(db);
@@ -57,8 +63,12 @@ async function post(input: {
   angle?: number | null;
   author?: string;
   status?: 'published' | 'rejected' | 'awaiting_approval';
-  rejectionReason?: 'already_covered';
+  rejectionReason?: 'already_covered' | 'too_minor';
   workspaceId?: number;
+  /** When it was decided, in hours from the start; an hour after it arrived when decided and not given. */
+  reviewedHours?: number;
+  text?: string;
+  vector?: number[];
 }) {
   nextId += 1n;
   const [row] = await db
@@ -68,9 +78,13 @@ async function post(input: {
       xPostId: String(nextId),
       xPostUrl: `https://x.com/${input.author ?? 'nasa'}/status/${nextId}`,
       xAuthorUsername: input.author ?? 'nasa',
-      sourceText: `post ${nextId}`,
+      sourceText: input.text ?? `post ${nextId}`,
       status: input.status ?? 'awaiting_approval',
       rejectionReason: input.rejectionReason ?? null,
+      reviewedAt:
+        (input.status ?? 'awaiting_approval') === 'awaiting_approval'
+          ? null
+          : new Date(START + (input.reviewedHours ?? input.hours + 1) * HOUR),
       createdAt: new Date(START + input.hours * HOUR),
     })
     .returning();
@@ -78,9 +92,9 @@ async function post(input: {
     await db.insert(radarCandidateEmbeddings).values({
       processedPostId: row!.id,
       model: MODEL,
-      dimensions: 1536,
+      dimensions: (input.vector ?? vectorAt(input.angle ?? 0)).length,
       contentFingerprint: 'f',
-      embedding: vectorAt(input.angle ?? 0),
+      embedding: input.vector ?? vectorAt(input.angle ?? 0),
     });
   }
   return row!;
@@ -176,5 +190,60 @@ describeIfDb('clustering a workspace again, and the report', () => {
     await deleteStories(db, DEFAULT_WORKSPACE_ID);
     expect(await db.select().from(storyPosts)).toHaveLength(0);
     expect(await loadUnplacedPosts(db, { workspaceId: DEFAULT_WORKSPACE_ID, model: MODEL })).toHaveLength(4);
+  });
+});
+
+describeIfDb('the story so far, for Radar', () => {
+  it('counts the other sources before the post, with what the editor had done by the time it arrived', async () => {
+    const published = await post({ hours: 0, author: 'nasa', status: 'published' });
+    const rejectedLater = await post({ hours: 1, author: 'spacex', status: 'rejected', rejectionReason: 'too_minor', reviewedHours: 9 });
+    const ownEarlier = await post({ hours: 2, author: 'esa' });
+    const target = await post({ hours: 5, author: 'esa' });
+    const after = await post({ hours: 6, author: 'latestinspace', status: 'published' });
+    for (const row of [published, rejectedLater, ownEarlier, target, after]) await place(row.id);
+
+    const context = await loadStoryContext(db, { processedPostId: target.id, before: target.createdAt });
+
+    expect(context).toMatchObject({ earlierPosts: 3, otherSources: 2 });
+    expect(context!.posts.map((entry) => [entry.processedPostId, entry.decision, entry.sameSource, entry.rejectionReason])).toEqual([
+      [ownEarlier.id, 'undecided', true, null],
+      // Turned down only after the post arrived: not yet known then.
+      [rejectedLater.id, 'undecided', false, null],
+      [published.id, 'published', false, null],
+    ]);
+    expect(context!.posts[2]!.hoursBefore).toBe(5);
+    expect(await loadStoryContext(db, { processedPostId: (await post({ hours: 7, angle: null })).id, before: new Date() })).toBeNull();
+  });
+
+  it('places a new post live and shows its story to the story prompt, recording what it showed', async () => {
+    const earlier = await post({ hours: 0, author: 'nasa', status: 'published', text: 'Webb sees a record radio burst', vector: fakeEmbedding('Webb sees a record radio burst') });
+    await placeInStory(db, { workspaceId: DEFAULT_WORKSPACE_ID, processedPostId: earlier.id, model: MODEL });
+    const candidate = await post({ hours: 3, author: 'esa', angle: null, text: 'Webb sees a record radio burst' });
+    const { provider, requests } = fakeAnthropic(() => messageResponse(radarOutput({ score: 25 })));
+
+    await runLiveRadar(
+      createRadarRun({ provider, embeddings: fakeEmbeddings().provider, promptVersions: [RADAR_PROMPT_STORY] }),
+      db,
+      {
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        processedPostId: candidate.id,
+        profile: 'Space news.',
+        item: { sourceUsername: 'esa', text: 'Webb sees a record radio burst', media: 'photo' },
+      },
+      createTestLogger(),
+    );
+
+    expect(requests).toHaveLength(1);
+    expect(JSON.stringify(requests[0]!.messages)).toContain('from 1 other source');
+    expect(JSON.stringify(requests[0]!.messages)).toContain('<story_post source=\\"@nasa\\" hours_before=\\"3\\" editor=\\"published\\">');
+    const [placed] = await db.select().from(storyPosts).where(eq(storyPosts.processedPostId, candidate.id));
+    expect(placed).toMatchObject({ nearestPostId: earlier.id });
+    const [row] = await db.select().from(radarEvaluations);
+    expect(row!.historyRetrieval?.story).toEqual({
+      storyId: placed!.storyId,
+      earlierPosts: 1,
+      otherSources: 1,
+      posts: [{ id: earlier.id, decision: 'published' }],
+    });
   });
 });

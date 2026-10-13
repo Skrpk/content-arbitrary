@@ -20,8 +20,10 @@ import {
   RADAR_PROMPT_NO_PROFILE,
   RADAR_PROMPT_REJECTED,
   RADAR_PROMPT_RETRIEVAL,
+  RADAR_PROMPT_STORY,
   RADAR_PROMPT_VERSIONS,
   usesApprovedRetrieval,
+  usesStoryContext,
   usesNearestDecisions,
   usesPublicationProfile,
   usesRejectedRetrieval,
@@ -49,6 +51,7 @@ import {
   toRetrievalRecord,
   type HistoryRetrieval,
 } from '@/lib/history/embeddings/retrieval';
+import { loadStoryContext, storyRecord } from '@/lib/stories/context';
 
 /**
  * Score posts the editor has already decided, as Radar would have scored them
@@ -119,6 +122,7 @@ const PROMPT_TAGS: Record<RadarPromptVersion, string> = {
   [RADAR_PROMPT_REJECTED]: 'v5r',
   [RADAR_PROMPT_NEAREST]: 'v6n',
   [RADAR_PROMPT_NO_PROFILE]: 'v3np',
+  [RADAR_PROMPT_STORY]: 'v7s',
 };
 
 /**
@@ -322,6 +326,11 @@ export async function submitRadarBackfill(input: {
       if (requests.length === 0) continue;
     }
 
+    // As it stood when the post arrived; a post never placed in a story is shown as unknown.
+    const story = requests.some(({ version }) => usesStoryContext(version))
+      ? await loadStoryContext(input.db, { processedPostId: post.id, before: post.createdAt })
+      : null;
+
     summary.posts += 1;
     for (const { version, variant } of requests) {
       // A version without the profile records none, so the report never pools it with v3's.
@@ -344,6 +353,7 @@ export async function submitRadarBackfill(input: {
         similarRejected: usesRejectedRetrieval(version) ? (retrieval?.rejected?.matches ?? []) : null,
         nearestDecisions: usesNearestDecisions(version) ? (retrieval?.nearest?.matches ?? []) : null,
         media: usesMediaUnderstanding(version) ? { image: media?.understanding ?? null } : null,
+        story: usesStoryContext(version) ? { context: story } : null,
       });
 
       const bytes = JSON.stringify(request).length;
@@ -497,6 +507,12 @@ export async function ingestRadarBatch(input: {
             ...(withRejected ? { rejected: { status: 'unavailable' as const, matches: [] } } : {}),
             ...(withNearest ? { nearest: { status: 'unavailable' as const, matches: [] } } : {}),
           };
+      // The story too is read again, as of the same arrival.
+      if (usesStoryContext(key.promptVersion)) {
+        historyRetrieval.story = storyRecord(
+          await loadStoryContext(input.db, { processedPostId: key.processedPostId, before: post.createdAt }),
+        );
+      }
     }
 
     const base = {

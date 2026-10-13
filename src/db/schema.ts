@@ -737,6 +737,17 @@ export interface HistoryRetrievalRecord {
   rejected?: { status: HistoryRetrievalStatus; matches: { id: number; similarity: number }[] };
   /** The nearest-decisions prompt only: the editor's nearest decisions, approved and rejected together. */
   nearest?: { status: HistoryRetrievalStatus; matches: { id: number; similarity: number }[] };
+  /**
+   * The story prompt only: the post's story so far as the prompt showed it —
+   * null when the post was never placed in one — with what the editor had
+   * done with each earlier post shown, as of the post's arrival.
+   */
+  story?: {
+    storyId: number;
+    earlierPosts: number;
+    otherSources: number;
+    posts: { id: number; decision: 'published' | 'rejected' | 'undecided' }[];
+  } | null;
   error?: string;
 }
 

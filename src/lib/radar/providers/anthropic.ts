@@ -46,6 +46,7 @@ export function createAnthropicRadar(options: {
           input.media,
           input.similarRejected,
           input.nearestDecisions,
+          input.story,
         ).map(
           toAnthropicBlock,
         ),

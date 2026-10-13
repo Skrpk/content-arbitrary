@@ -1266,7 +1266,7 @@ reads that description. (The earlier experiment — scoring the text with its ra
 the `text_image` variant — runs live only with `RADAR_LIVE_IMAGE_VARIANT=true`; backfills still
 score it.)
 
-**Prompts, side by side.** Six versions build on each other, so each addition is measured on
+**Prompts, side by side.** Seven versions build on each other, so each addition is measured on
 the same posts, not on two different sets: `radar-v1` (the baseline above);
 `radar-v2-history-retrieval`, which adds the channel's [five most similar past
 publications](#similar-past-publications) and asks what they show;
@@ -1277,11 +1277,14 @@ their [stored descriptions](#image-understanding), never the image itself; and
 `radar-v5-similar-rejected`, which is `radar-v3` (not `radar-v4`: image descriptions did not
 help) plus the [five most similar posts the editor turned down](#similar-rejected-posts); and
 `radar-v6-nearest-decisions`, which is `radar-v3` plus the [editor's ten nearest
-decisions](#nearest-decisions), approved and rejected together. Live, every post is scored with
-`radar-v1`, `radar-v3` and `radar-v5` (since 13 October 2026, to test on fresh posts what a
-backfill [suggested](#similar-rejected-posts)); the others run on backfills only — `radar-v4`
-scored below `radar-v3` live, and `radar-v6` did no better than `radar-v5` — and backfills score
-all six by default.
+decisions](#nearest-decisions), approved and rejected together; and `radar-v7-story-sources`,
+which is `radar-v3` plus the post's [story so far](#the-story-so-far-in-radar): the other sources
+that reported the same event before it, and what the editor had done with their posts. Live,
+every post is scored with `radar-v1`, `radar-v3`, `radar-v5` and `radar-v7` (`radar-v5` since
+13 October 2026, to test on fresh posts what a backfill [suggested](#similar-rejected-posts));
+the others run on backfills only — `radar-v4` scored below `radar-v3` live, and `radar-v6` did no
+better than `radar-v5` — and backfills score all seven by default. The review message still
+shows `radar-v3`'s score.
 `LIVE_RADAR_PROMPT_VERSIONS` in
 [`src/lib/radar/prompt.ts`](src/lib/radar/prompt.ts) is the live list.
 
@@ -1683,8 +1686,8 @@ effect would otherwise drown among text posts — with what the images cost to l
 The same event comes in from several sources: a launch from the company, the agency, two news
 accounts and a feed, within hours. Story clustering groups them — one story per event — as they
 arrive. The review queue shows [one card per story](#the-review-queue), and marks repeats (below);
-Radar does not read stories yet. `stories:cluster` reports what the clustering made of a
-workspace.
+Radar's `radar-v7` reads [the story so far](#the-story-so-far-in-radar). `stories:cluster` reports
+what the clustering made of a workspace.
 
 **How a post is placed.** By the vector Radar's [retrieval](#similar-past-publications) already
 made of it (text and what its image shows), so no extra embedding call. It is compared with the
@@ -1723,6 +1726,19 @@ live — and prints the report: how many stories hold more than one post and fro
 sources, the nearest similarities by band, the stories the editor published twice, and how many
 of their "already covered" rejections sit in a story they had already published. `--rebuild`
 forgets the workspace's stories first; `--dry-run` rolls everything back.
+
+### The story so far, in Radar
+
+`radar-v7-story-sources` shows Radar the post's story as it stood when the post arrived: how many
+earlier posts reported the same event and from how many other sources, and the latest eight of
+them — source, how many hours before, and what the editor had done with each by then
+(published, rejected and why, or undecided). It is asked to read the number of independent
+sources as a sign of how big the story is, a post of it already published as a likely repeat,
+and a story already turned down as likely turned down again. Only what came before is shown:
+posts that arrived later and decisions made later are not, so a backfill measures prediction.
+Live, the post is placed in its story first, from the vector the retrieval just made; a backfill
+reads the placement `stories:cluster` made. A post with no vector is shown as "not known". What
+the prompt was shown is recorded in `radar_evaluations.history_retrieval.story`.
 
 ## Configuration reference
 
@@ -1917,6 +1933,7 @@ src/
       cluster.ts               A post into the story of the nearest close post before it, or a new one
       report.ts                What the clustering made of a workspace, beside the editor's decisions
       repeats.ts               A source sending the same post again: found, and said in review
+      context.ts               A post's story as it stood when it arrived, for Radar's v7
     rich/
       document.ts              A rich post: the editor's document, checked, to Telegram rich HTML
       edit-html.ts             The document as the small HTML the AI assistant edits, and back
