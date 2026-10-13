@@ -179,6 +179,8 @@ export async function submitRadarBackfill(input: {
   mediaConfig?: MediaUnderstandingConfig | null;
   workspaceId: number;
   profile: string;
+  /** The channel's language, which the reasons are written in. */
+  language?: string | null;
   /** Fewest approvals and fewest rejections a post needs behind it to be scored. */
   minPerClass: number;
   /** Most posts to score this run — counting only posts that are sent, not ones passed over. */
@@ -337,6 +339,7 @@ export async function submitRadarBackfill(input: {
       const customId = radarCustomId(post.id, variant, usesPublicationProfile(version) ? publication?.id : null, version);
       const request = input.provider.batchEntry(customId, {
         profile: input.profile,
+        language: input.language,
         approvalRate: history.approvalRate,
         item: {
           sourceUsername: post.sourceUsername ?? 'unknown',

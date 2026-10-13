@@ -46,7 +46,7 @@ export interface CandidateContext {
   /** The tenant's channel and reviewer, resolved once per workspace. */
   destination: TelegramDestination;
   /** Set when Shadow Radar scores this tenant's posts before review. */
-  radar?: { run: RadarRun; profile: string };
+  radar?: { run: RadarRun; profile: string; language: string | null };
   /** Set when the tenant publishes in a language its posts are rewritten in. */
   translator?: Translator;
   /** The tenant's footer, added under every post. */
@@ -127,6 +127,7 @@ export async function processCandidate(
                 workspaceId: source.workspaceId,
                 processedPostId: row.id,
                 profile: context.radar!.profile,
+                language: context.radar!.language,
                 item: {
                   sourceUsername: post.authorUsername,
                   ...(post.platform === 'rss' ? { sourcePlatform: 'rss' as const } : {}),

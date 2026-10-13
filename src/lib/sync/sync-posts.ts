@@ -292,7 +292,7 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
             destination: resolved.destination,
             radar:
               radarRun && tenant.editorialProfile?.trim()
-                ? { run: radarRun, profile: tenant.editorialProfile }
+                ? { run: radarRun, profile: tenant.editorialProfile, language: tenant.language }
                 : undefined,
             translator: await translatorFor(tenant),
             footer: parsePostFooter(tenant.postFooter),

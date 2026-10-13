@@ -78,7 +78,13 @@ export function createOpenAiRadar(options: {
 
   const request = (input: RadarInput): OpenAI.Responses.ResponseCreateParamsNonStreaming => ({
     model,
-    instructions: buildSystemPrompt(input.profile, input.approvalRate, input.publicationProfile, input.promptVersion),
+    instructions: buildSystemPrompt(
+      input.profile,
+      input.approvalRate,
+      input.publicationProfile,
+      input.promptVersion,
+      input.language,
+    ),
     input: [
       {
         role: 'user',

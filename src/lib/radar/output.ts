@@ -61,6 +61,8 @@ const anyRadarOutputSchema = radarOutputSchema.extend({
 
 export interface RadarInput {
   profile: string;
+  /** The channel's language, which the reason is written in; Ukrainian when unset. */
+  language?: string | null;
   approvalRate: number | null;
   item: RadarItem;
   examples: RadarExample[];

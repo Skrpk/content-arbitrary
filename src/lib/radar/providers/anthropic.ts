@@ -33,7 +33,13 @@ export function createAnthropicRadar(options: {
   const request = (input: RadarInput): Anthropic.MessageCreateParamsNonStreaming => ({
     model,
     max_tokens: 1024,
-    system: buildSystemPrompt(input.profile, input.approvalRate, input.publicationProfile, input.promptVersion),
+    system: buildSystemPrompt(
+      input.profile,
+      input.approvalRate,
+      input.publicationProfile,
+      input.promptVersion,
+      input.language,
+    ),
     messages: [
       {
         role: 'user',

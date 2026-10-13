@@ -12,6 +12,7 @@ import {
   buildSystemPrompt,
   buildUserContent,
   LIVE_RADAR_PROMPT_VERSIONS,
+  RADAR_PROMPT_VERSIONS,
   RADAR_PROMPT_APPROVED,
   RADAR_PROMPT_NEAREST,
   RADAR_PROMPT_REJECTED,
@@ -560,5 +561,18 @@ describe('the daily ranking', () => {
     ]);
     expect(tied).toMatchObject({ approvals: 1, hits: 0.25, chance: 0.25 });
     expect(dailyRanking([post('2026-10-01', 50, false)])).toBeNull();
+  });
+});
+
+describe('the language of Radar’s reasons', () => {
+  it('follows the channel, and leaves a Ukrainian channel’s prompt word for word as it was', () => {
+    for (const version of RADAR_PROMPT_VERSIONS) {
+      expect(buildSystemPrompt('Space.', 0.3, null, version, 'uk')).toBe(buildSystemPrompt('Space.', 0.3, null, version));
+    }
+    const english = buildSystemPrompt('Space.', 0.3, null, RADAR_PROMPT_APPROVED, 'en');
+    expect(english).toContain('- reason: one short sentence in English naming what decides it.');
+    expect(english).toContain('explanation: one short sentence in English.');
+    expect(english).not.toContain('Ukrainian');
+    expect(buildSystemPrompt('Space.', 0.3, null, RADAR_PROMPT_BASELINE, 'es')).toContain('in Spanish naming');
   });
 });

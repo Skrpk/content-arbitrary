@@ -106,6 +106,7 @@ async function main() {
       mediaConfig: mediaUnderstandingConfig(env),
       workspaceId,
       profile: workspace.editorialProfile,
+      language: workspace.language,
       minPerClass: Number(argument('min-per-class') ?? 5),
       limit: argument('limit') ? Number(argument('limit')) : undefined,
       logger,

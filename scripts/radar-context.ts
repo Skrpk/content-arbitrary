@@ -120,7 +120,7 @@ async function main() {
     }
   }
   console.log('\n## Instructions (system)\n');
-  console.log(buildSystemPrompt(workspace.editorialProfile, history.approvalRate, publication?.profile, promptVersion));
+  console.log(buildSystemPrompt(workspace.editorialProfile, history.approvalRate, publication?.profile, promptVersion, workspace.language));
   console.log('\n## Message (user)\n');
   const content = buildUserContent(
     {

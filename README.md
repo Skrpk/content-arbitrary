@@ -1052,7 +1052,8 @@ page to open, so every channel gets its posts in the chat.
 ### The queue digest
 
 Each notification is an editorial digest of the period since the last one, in the channel's
-language (English for a language it has no words in yet):
+language — its frame in Ukrainian or English (English for a language it has no words in yet),
+Radar's reasons and the posts' text in the channel's own:
 
 ```
 📡 Zmistik — за останні 6 годин
@@ -1335,7 +1336,9 @@ shows `radar-v3`'s score.
 [`src/lib/radar/prompt.ts`](src/lib/radar/prompt.ts) is the live list.
 
 **What it records**, in `radar_evaluations`: a 0–100 score (the probability the editor publishes
-it), the predicted decision and rejection reason, three sub-scores, a one-sentence reason, which
+it), the predicted decision and rejection reason, three sub-scores, a one-sentence reason — in
+the channel's language, so the review message and the digest read in it (Ukrainian for a
+channel with none set; a Ukrainian channel's prompt is word for word what it was before) — which
 past decisions and which publication-history profile it was shown, the model and prompt version,
 and the tokens it cost. The retrieval prompt's rows also record which past publications it was
 shown, with their similarity (`history_retrieval`), and what the model made of them

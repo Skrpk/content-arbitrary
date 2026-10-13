@@ -94,6 +94,8 @@ export interface RadarSubject {
   workspaceId: number;
   processedPostId: number;
   profile: string;
+  /** The channel's language, which Radar's reason is written in. */
+  language?: string | null;
   item: RadarItem;
   /** The post's first image, when it has one — sent only for the raw-image experiment. */
   image?: RadarImage;
@@ -278,6 +280,7 @@ export async function scoreAndRecord(
         const prediction = await provider.score(
           {
             profile: subject.profile,
+            language: subject.language,
             approvalRate: history.approvalRate,
             item: subject.item,
             examples: history.examples,
