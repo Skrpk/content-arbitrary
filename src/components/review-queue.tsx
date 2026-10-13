@@ -38,6 +38,10 @@ export interface QueueItem {
   edited: boolean;
   /** Written in the website's editor: goes out as a rich message. */
   rich: boolean;
+  /** The other waiting posts of its story: one card, decided together. */
+  alsoInStory: QueueItem[];
+  /** What of its story the channel has already published or scheduled. */
+  storyPublished: { sourceLabel: string | null; approvedAt: string }[];
 }
 
 interface Channel {
@@ -139,6 +143,110 @@ function RepeatBadge({ repeat }: { repeat: NonNullable<QueueItem['repeat']> }) {
   );
 }
 
+/** What happened to the rest of a story's card, after the outcome of its post. */
+function restOfStoryOutcome(action: 'approve' | 'reject', count: number): string {
+  if (count === 0) return '';
+  const posts = count === 1 ? '1 more of the story' : `${count} more of the story`;
+  return action === 'approve' ? ` · ${posts} rejected as already covered` : ` · ${posts} too`;
+}
+
+/** "12 Oct", in this browser's zone. */
+function shortDay(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+/**
+ * The rest of a story on its card: what the channel already published of it,
+ * and the other waiting posts — each can be put in the card's place, and all
+ * are decided with it.
+ */
+function StoryPanel({
+  card,
+  others,
+  onShow,
+  openLink,
+  disabled,
+}: {
+  card: QueueItem;
+  others: QueueItem[];
+  onShow: (post: QueueItem) => void;
+  openLink: (url: string) => void;
+  disabled: boolean;
+}) {
+  if (others.length === 0 && card.storyPublished.length === 0) return null;
+  const published = card.storyPublished;
+
+  return (
+    <div
+      style={{
+        marginTop: '0.6rem',
+        padding: '0.5rem 0.6rem',
+        borderRadius: '0.45rem',
+        border: `1px solid ${theme.hint}`,
+        fontSize: '0.8rem',
+      }}
+    >
+      {published.length > 0 ? (
+        <div style={{ color: theme.hint, marginBottom: others.length > 0 ? '0.4rem' : 0 }}>
+          📚 Already published from{' '}
+          {published.map((entry) => `${entry.sourceLabel ?? 'unknown source'} · ${shortDay(entry.approvedAt)}`).join(', ')}
+        </div>
+      ) : null}
+      {others.length > 0 ? (
+        <>
+          <div style={{ fontWeight: 600, marginBottom: '0.15rem' }}>
+            📚 Same story · {others.length} more waiting
+          </div>
+          <div style={{ color: theme.hint, fontSize: '0.75rem', marginBottom: '0.35rem' }}>
+            Approve publishes the post above and rejects {others.length === 1 ? 'this one' : 'these'} as already
+            covered; Reject turns down the whole story.
+          </div>
+          {others.map((post) => (
+            <div key={post.id} style={{ padding: '0.35rem 0', borderTop: `1px solid ${theme.secondaryBg}` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                {post.score ? (
+                  <span
+                    style={{
+                      padding: '0 0.3rem',
+                      borderRadius: '0.3rem',
+                      background: scoreColour(post.score.score),
+                      color: '#ffffff',
+                      fontWeight: 700,
+                      fontSize: '0.75rem',
+                    }}
+                    title="Radar score"
+                  >
+                    {post.score.score}
+                  </span>
+                ) : null}
+                <span style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>
+                  {post.sourceLabel ?? 'unknown source'}
+                  <PlatformBadge platform={post.platform} />
+                  {post.repeat ? <RepeatBadge repeat={post.repeat} /> : null}
+                </span>
+                <span style={{ color: theme.hint }}>{ago(post.postedAt)}</span>
+              </div>
+              <div style={{ margin: '0.2rem 0', overflowWrap: 'anywhere', lineHeight: 1.35 }}>
+                {post.text.length > 160 ? `${post.text.slice(0, 160).trimEnd()}…` : post.text || '(no text)'}
+              </div>
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                <button type="button" disabled={disabled} onClick={() => onShow(post)} style={smallButton}>
+                  ⇅ Use this one
+                </button>
+                {post.url ? (
+                  <button type="button" onClick={() => openLink(post.url)} style={smallButton}>
+                    Original ↗
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 /** Green for a likely approval, amber for a maybe, grey for a likely no. */
 function scoreColour(score: number): string {
   if (score >= 70) return '#2e9e4f';
@@ -155,6 +263,8 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   /** The card the keyboard acts on, on the website. */
   const [focused, setFocused] = useState<number | null>(null);
+  /** For a story's card, the post picked to publish in place of its best-scored one. */
+  const [chosen, setChosen] = useState<Record<number, number>>({});
   const website = surface === 'website';
 
   useEffect(() => {
@@ -187,57 +297,80 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
     [],
   );
 
-  /** Approve or reject one post; the card settles in place, so the list does not jump. */
+  /** A card's post as it stands — the best-scored of its story, or the one picked — and the rest of the card. */
+  const shown = useCallback(
+    (card: QueueItem) => {
+      const story = [card, ...card.alsoInStory];
+      const item = story.find((post) => post.id === chosen[card.id]) ?? card;
+      return { item, others: story.filter((post) => post.id !== item.id) };
+    },
+    [chosen],
+  );
+
+  /**
+   * Approve or reject a card's post, and with it the rest of its story; the
+   * card settles in place, so the list does not jump.
+   */
   const decide = useCallback(
-    async (item: QueueItem, decision: { action: 'approve' } | { action: 'reject'; reason: string; note?: string }) => {
-      setCard(item.id, { kind: 'sending', what: decision.action });
-      setError(item.id, null);
+    async (card: QueueItem, decision: { action: 'approve' } | { action: 'reject'; reason: string; note?: string }) => {
+      const { item, others } = shown(card);
+      setCard(card.id, { kind: 'sending', what: decision.action });
+      setError(card.id, null);
       try {
-        await readJson(
+        const body = await readJson<{ alsoRejected?: number[] }>(
           await request('/api/telegram/webapp/queue', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ postId: item.id, ...decision }),
+            body: JSON.stringify({
+              postId: item.id,
+              ...decision,
+              ...(others.length > 0 ? { alsoInStory: others.map((post) => post.id) } : {}),
+            }),
           }),
         );
         const reason =
           decision.action === 'reject' ? data?.reasons.find((option) => option.value === decision.reason)?.label : null;
-        setCard(item.id, {
+        setCard(card.id, {
           kind: 'done',
-          outcome: decision.action === 'approve' ? '✅ Published' : `🚫 Rejected${reason ? ` · ${reason}` : ''}`,
+          outcome:
+            (decision.action === 'approve' ? '✅ Published' : `🚫 Rejected${reason ? ` · ${reason}` : ''}`) +
+            restOfStoryOutcome(decision.action, body.alsoRejected?.length ?? 0),
         });
       } catch (error: unknown) {
-        setCard(item.id, { kind: 'open' });
-        setError(item.id, error instanceof Error ? error.message : 'Something went wrong.');
+        setCard(card.id, { kind: 'open' });
+        setError(card.id, error instanceof Error ? error.message : 'Something went wrong.');
       }
     },
-    [data, request, setCard, setError],
+    [data, request, setCard, setError, shown],
   );
 
   const channel = data?.channels.find((candidate) => candidate.id === channelId) ?? null;
 
   const approve = useCallback(
-    async (item: QueueItem) => {
+    async (card: QueueItem) => {
       const where = channel?.name ? ` to ${channel.name}` : '';
-      if (await confirm(`Publish this post${where} now?`)) await decide(item, { action: 'approve' });
+      const rest = shown(card).others.length;
+      const also = rest > 0 ? ` The other ${rest === 1 ? 'post' : `${rest} posts`} of this story will be rejected as already covered.` : '';
+      if (await confirm(`Publish this post${where} now?${also}`)) await decide(card, { action: 'approve' });
     },
-    [channel, confirm, decide],
+    [channel, confirm, decide, shown],
   );
 
   const edit = useCallback(
-    (item: QueueItem) => {
+    (card: QueueItem) => {
       if (!channel) return;
+      const { item } = shown(card);
       if (onEdit) onEdit(item.id, channel.id);
       else window.location.assign(fromQueue(`/review?post=${item.id}`, channel.id));
     },
-    [channel, onEdit],
+    [channel, onEdit, shown],
   );
   const schedule = useCallback(
-    (item: QueueItem) => {
-      if (website) setCard(item.id, { kind: 'scheduling' });
-      else if (channel) window.location.assign(fromQueue(`/review/schedule?post=${item.id}`, channel.id));
+    (card: QueueItem) => {
+      if (website) setCard(card.id, { kind: 'scheduling' });
+      else if (channel) window.location.assign(fromQueue(`/review/schedule?post=${shown(card).item.id}`, channel.id));
     },
-    [channel, setCard, website],
+    [channel, setCard, shown, website],
   );
 
   // The website's keyboard: j / k to move, a to approve, r then 1–6 to reject,
@@ -297,7 +430,11 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
   if (loadError) return <p style={{ color: theme.hint }}>{loadError}</p>;
   if (!data) return <p style={{ color: theme.hint }}>Loading…</p>;
 
-  const settled = channel ? channel.items.filter((item) => cards[item.id]?.kind === 'done').length : 0;
+  // Counted in posts, as `waiting` is: a story's card settles all of its own.
+  const settled = channel
+    ? channel.items.filter((card) => cards[card.id]?.kind === 'done').reduce((total, card) => total + 1 + card.alsoInStory.length, 0)
+    : 0;
+  const loaded = channel ? channel.items.reduce((total, card) => total + 1 + card.alsoInStory.length, 0) : 0;
 
   return (
     <>
@@ -333,7 +470,8 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
           {channel.waiting === 0
             ? 'Nothing waiting. New posts will be announced in the chat.'
             : `${channel.waiting - settled} waiting · best Radar score first` +
-              (channel.waiting > channel.items.length ? ` · showing the newest ${channel.items.length}` : '')}
+              (channel.waiting > loaded ? ` · showing the newest ${loaded}` : '') +
+              (loaded > channel.items.length ? ` · one card per story` : '')}
           {website && channel.waiting > 0 ? (
             <span style={{ display: 'block', fontSize: '0.75rem', marginTop: '0.2rem' }}>
               Keys: j / k move · a approve · r reject, then 1–6 · e edit · s schedule · o original · Esc back
@@ -342,15 +480,16 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
         </p>
       ) : null}
 
-      {channel?.items.map((item) => {
-        const state = cards[item.id] ?? { kind: 'open' };
-        const error = errors[item.id];
+      {channel?.items.map((card) => {
+        const { item, others } = shown(card);
+        const state = cards[card.id] ?? { kind: 'open' };
+        const error = errors[card.id];
 
         if (state.kind === 'done') {
           return (
             <section
-              key={item.id}
-              id={`post-${item.id}`}
+              key={card.id}
+              id={`post-${card.id}`}
               style={{
                 background: theme.secondaryBg,
                 borderRadius: '0.6rem',
@@ -370,13 +509,13 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
         const long = body.length > PREVIEW_CHARS || Boolean(item.fullText);
         const shownText = fullShown || !long ? body : `${body.slice(0, PREVIEW_CHARS).trimEnd()}…`;
         const busy = state.kind === 'sending';
-        const isFocused = active === item.id;
+        const isFocused = active === card.id;
 
         return (
           <section
-            key={item.id}
-            id={`post-${item.id}`}
-            onClick={website ? () => setFocused(item.id) : undefined}
+            key={card.id}
+            id={`post-${card.id}`}
+            onClick={website ? () => setFocused(card.id) : undefined}
             style={{
               background: theme.secondaryBg,
               borderRadius: '0.6rem',
@@ -467,37 +606,54 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
                   </div>
                 ) : null}
 
+
                 <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.6rem' }}>
                   {item.url ? (
                     <button type="button" onClick={() => openLink(item.url)} style={smallButton}>
                       Original ↗
                     </button>
                   ) : null}
-                  <button type="button" disabled={busy} onClick={() => edit(item)} style={smallButton}>
+                  <button type="button" disabled={busy} onClick={() => edit(card)} style={smallButton}>
                     ✏️ Edit text
                   </button>
                   <button
                     type="button"
                     disabled={busy || state.kind === 'scheduling'}
-                    onClick={() => schedule(item)}
+                    onClick={() => schedule(card)}
                     style={smallButton}
                   >
                     🕒 Schedule
                   </button>
                 </div>
 
+                <StoryPanel
+                  card={card}
+                  others={others}
+                  onShow={(post) => setChosen((all) => ({ ...all, [card.id]: post.id }))}
+                  openLink={openLink}
+                  disabled={busy}
+                />
+
                 {state.kind === 'scheduling' ? (
                   <ScheduleEditor
                     postId={item.id}
+                    alsoInStory={others.map((post) => post.id)}
                     request={request}
-                    onCancel={() => setCard(item.id, { kind: 'open' })}
-                    onScheduled={(display) => setCard(item.id, { kind: 'done', outcome: `🕒 Scheduled for ${display}` })}
+                    onCancel={() => setCard(card.id, { kind: 'open' })}
+                    onScheduled={(display, alsoRejected) =>
+                      setCard(card.id, {
+                        kind: 'done',
+                        outcome: `🕒 Scheduled for ${display}${restOfStoryOutcome('approve', alsoRejected)}`,
+                      })
+                    }
                   />
                 ) : null}
 
                 {state.kind === 'choosing-reason' || state.kind === 'writing-note' ? (
                   <div style={{ marginTop: '0.6rem' }}>
-                    <div style={{ fontSize: '0.85rem', marginBottom: '0.35rem' }}>Why does it not fit?</div>
+                    <div style={{ fontSize: '0.85rem', marginBottom: '0.35rem' }}>
+                      Why does it not fit?{others.length > 0 ? ` — for all ${others.length + 1} posts of this story` : ''}
+                    </div>
                     {state.kind === 'choosing-reason' ? (
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem' }}>
                         {data.reasons.map((reason, index) => (
@@ -505,8 +661,8 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
                             key={reason.value}
                             type="button"
                             onClick={() => {
-                              if (reason.value === 'other') setCard(item.id, { kind: 'writing-note', note: '' });
-                              else void decide(item, { action: 'reject', reason: reason.value });
+                              if (reason.value === 'other') setCard(card.id, { kind: 'writing-note', note: '' });
+                              else void decide(card, { action: 'reject', reason: reason.value });
                             }}
                             style={{ ...smallButton, fontSize: '0.85rem', padding: '0.5rem 0.4rem' }}
                           >
@@ -522,14 +678,14 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
                           maxLength={data.noteLimit}
                           placeholder="In your own words (optional)"
                           autoFocus={website}
-                          onChange={(event) => setCard(item.id, { kind: 'writing-note', note: event.target.value })}
+                          onChange={(event) => setCard(card.id, { kind: 'writing-note', note: event.target.value })}
                           rows={3}
                           style={fieldStyle}
                         />
                         <button
                           type="button"
                           onClick={() => {
-                            void decide(item, { action: 'reject', reason: 'other', note: state.note });
+                            void decide(card, { action: 'reject', reason: 'other', note: state.note });
                           }}
                           style={{ ...button, width: '100%', marginTop: '0.4rem', background: '#e53935', color: '#ffffff' }}
                         >
@@ -539,7 +695,7 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
                     )}
                     <button
                       type="button"
-                      onClick={() => setCard(item.id, { kind: 'open' })}
+                      onClick={() => setCard(card.id, { kind: 'open' })}
                       style={{ ...smallButton, border: 'none', marginTop: '0.3rem', color: theme.link }}
                     >
                       ↩️ Back
@@ -551,7 +707,7 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
                       type="button"
                       disabled={busy}
                       onClick={() => {
-                        void approve(item);
+                        void approve(card);
                       }}
                       style={{ ...button, background: theme.button, color: theme.buttonText }}
                     >
@@ -560,7 +716,7 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() => setCard(item.id, { kind: 'choosing-reason' })}
+                      onClick={() => setCard(card.id, { kind: 'choosing-reason' })}
                       style={{ ...button, background: theme.bg, color: theme.text }}
                     >
                       {state.kind === 'sending' && state.what === 'reject' ? 'Rejecting…' : '🚫 Reject'}
@@ -599,14 +755,17 @@ function localInputValue(at: Date): string {
 /** Approve a post for later, on the website: a time in this browser's zone, sent as an exact moment. */
 function ScheduleEditor({
   postId,
+  alsoInStory,
   request,
   onCancel,
   onScheduled,
 }: {
   postId: number;
+  /** The rest of its story's card, rejected as already covered once it is scheduled. */
+  alsoInStory: number[];
   request: ReviewQueueProps['request'];
   onCancel: () => void;
-  onScheduled: (display: string) => void;
+  onScheduled: (display: string, alsoRejected: number) => void;
 }) {
   const [value, setValue] = useState(() => {
     const next = new Date(Date.now() + 60 * 60 * 1000);
@@ -622,7 +781,7 @@ function ScheduleEditor({
     setSaving(true);
     setError(null);
     try {
-      const body = await readJson<{ display: string }>(
+      const body = await readJson<{ display: string; alsoRejected?: number[] }>(
         await request('/api/telegram/webapp/schedule', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -630,10 +789,11 @@ function ScheduleEditor({
             postId,
             scheduledFor: at.toISOString(),
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            ...(alsoInStory.length > 0 ? { alsoInStory } : {}),
           }),
         }),
       );
-      onScheduled(body.display);
+      onScheduled(body.display, body.alsoRejected?.length ?? 0);
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : 'Could not schedule.');
       setSaving(false);

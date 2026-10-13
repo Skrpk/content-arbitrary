@@ -267,6 +267,22 @@ async function score(processedPostId: number, value: number) {
   });
 }
 
+/** Put posts in one story, as the clustering would. */
+async function inOneStory(...postIds: number[]) {
+  const [story] = await db.insert(stories).values({ workspaceId: DEFAULT_WORKSPACE_ID }).returning();
+  await db.insert(storyPosts).values(
+    postIds.map((processedPostId, index) => ({
+      processedPostId,
+      storyId: story!.id,
+      nearestPostId: index === 0 ? null : postIds[0]!,
+      similarity: index === 0 ? null : 0.8,
+      threshold: 0.75,
+      embeddingModel: 'text-embedding-3-small',
+    })),
+  );
+  return story!.id;
+}
+
 async function reload(id: number) {
   return (await db.select().from(processedPosts).where(eq(processedPosts.id, id)))[0]!;
 }
@@ -466,14 +482,38 @@ describeIfDb('GET /api/telegram/webapp/queue', () => {
       .insert(storyPosts)
       .values([placed(earlier.id, null, null), placed(repeat.id, 0.99), placed(close.id, 0.9), placed(otherSource.id, 0.99)]);
 
-    const body = (await (await loadQueue()).json()) as {
-      channels: { items: { id: number; repeat: { arrivedAt: string; outcome: string } | null }[] }[];
-    };
-    const repeatOf = (id: number) => body.channels[0]!.items.find((item) => item.id === id)!.repeat;
+    type Item = { id: number; repeat: { arrivedAt: string; outcome: string } | null; alsoInStory: Item[] };
+    const body = (await (await loadQueue()).json()) as { channels: { items: Item[] }[] };
+    // One story, so one card: the repeat may lead it or sit under it.
+    const posts = body.channels[0]!.items.flatMap((item) => [item, ...item.alsoInStory]);
+    const repeatOf = (id: number) => posts.find((item) => item.id === id)!.repeat;
     expect(repeatOf(repeat.id)).toEqual({ arrivedAt: '2026-10-10T08:00:00.000Z', outcome: 'rejected' });
     expect(repeatOf(close.id)).toBeNull();
     expect(repeatOf(otherSource.id)).toBeNull();
     expect(await loadRadarNote(db, repeat.id)).toBe('🔁 Repeat of a post from 10 Oct · rejected');
+  });
+
+  it('shows a story as one card: its best-scored post, the others under it, and what the channel already has of it', async () => {
+    const published = await queuedPost({ status: 'published', xAuthorUsername: 'esa', reviewedAt: new Date('2026-10-12T09:00:00Z') });
+    const weaker = await queuedPost({ xAuthorUsername: 'spacex' });
+    const alone = await queuedPost();
+    const stronger = await queuedPost({ xAuthorUsername: 'nasa' });
+    await score(weaker.id, 40);
+    await score(alone.id, 60);
+    await score(stronger.id, 80);
+    await inOneStory(published.id, weaker.id, stronger.id);
+
+    type Item = { id: number; alsoInStory: Item[]; storyPublished: { sourceLabel: string; approvedAt: string }[] };
+    const body = (await (await loadQueue()).json()) as { channels: { waiting: number; items: Item[] }[] };
+    const [channel] = body.channels;
+
+    expect(channel!.waiting).toBe(3);
+    expect(channel!.items.map((item) => [item.id, item.alsoInStory.map((other) => other.id)])).toEqual([
+      [stronger.id, [weaker.id]],
+      [alone.id, []],
+    ]);
+    expect(channel!.items[0]!.storyPublished).toEqual([{ sourceLabel: '@esa', approvedAt: '2026-10-12T09:00:00.000Z' }]);
+    expect(channel!.items[1]!.storyPublished).toEqual([]);
   });
 
   it('shows the text without the channel footer', async () => {
@@ -549,6 +589,47 @@ describeIfDb('POST /api/telegram/webapp/queue', () => {
 
     expect(await reload(first.id)).toMatchObject({ status: 'rejected', rejectionReason: 'wrong_topic', rejectionNote: null });
     expect(await reload(second.id)).toMatchObject({ status: 'rejected', rejectionReason: 'other', rejectionNote: 'Old news' });
+  });
+
+  it('publishes the post picked from a story’s card, and rejects the rest of the card as already covered', async () => {
+    const stack = makeStack();
+    vi.stubGlobal('fetch', stack.fetchImpl);
+    const picked = await queuedPost();
+    const sameStory = await queuedPost({ adminChatId: ADMIN_CHAT, adminMessageId: 78, xAuthorUsername: 'nasa' });
+    const decidedElsewhere = await queuedPost({ status: 'rejected', rejectionReason: 'too_minor' });
+    const otherStory = await queuedPost();
+    await inOneStory(picked.id, sameStory.id, decidedElsewhere.id);
+    await inOneStory(otherStory.id);
+
+    const response = await decide({
+      action: 'approve',
+      postId: picked.id,
+      alsoInStory: [sameStory.id, decidedElsewhere.id, otherStory.id],
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, alsoRejected: [sameStory.id] });
+    expect((await reload(picked.id)).status).toBe('published');
+    expect(await reload(sameStory.id)).toMatchObject({ status: 'rejected', rejectionReason: 'already_covered' });
+    expect(await reload(decidedElsewhere.id)).toMatchObject({ status: 'rejected', rejectionReason: 'too_minor' });
+    expect((await reload(otherStory.id)).status).toBe('awaiting_approval');
+    // Its buttons in the chat replaced by the outcome.
+    expect(stack.calls.find((call) => call.method === 'editMessageText')?.body).toMatchObject({ message_id: 78 });
+  });
+
+  it('turns down a whole story for one reason', async () => {
+    vi.stubGlobal('fetch', makeStack().fetchImpl);
+    const first = await queuedPost();
+    const second = await queuedPost();
+    await inOneStory(first.id, second.id);
+
+    const response = await decide({ action: 'reject', postId: second.id, reason: 'other', note: 'Old news', alsoInStory: [first.id] });
+
+    expect(await response.json()).toEqual({ ok: true, alsoRejected: [first.id] });
+    for (const id of [first.id, second.id]) {
+      expect(await reload(id)).toMatchObject({ status: 'rejected', rejectionReason: 'other', rejectionNote: 'Old news' });
+    }
+    expect((await decide({ action: 'reject', postId: first.id, reason: 'too_minor', alsoInStory: Array(21).fill(1) })).status).toBe(400);
   });
 
   it('answers a post already decided, or another channel’s, as no longer waiting', async () => {

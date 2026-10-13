@@ -8,6 +8,8 @@ import {
   DEFAULT_WORKSPACE_ID,
   processedPosts,
   sources,
+  stories,
+  storyPosts,
   syncState,
   telegramMessages,
   workspaces,
@@ -181,6 +183,31 @@ describeIfDb('GET /api/telegram/webapp/schedule', () => {
 });
 
 describeIfDb('POST /api/telegram/webapp/schedule', () => {
+  it('rejects the rest of a story’s card as already covered once one of it is scheduled', async () => {
+    const picked = await queuePost();
+    const rest = await queuePost();
+    const [story] = await db.insert(stories).values({ workspaceId: DEFAULT_WORKSPACE_ID }).returning();
+    await db.insert(storyPosts).values(
+      [picked.id, rest.id].map((processedPostId) => ({
+        processedPostId,
+        storyId: story!.id,
+        threshold: 0.75,
+        embeddingModel: 'text-embedding-3-small',
+      })),
+    );
+
+    const response = await schedule({
+      postId: picked.id,
+      scheduledFor: new Date(Date.now() + 2 * HOUR).toISOString(),
+      alsoInStory: [rest.id],
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, alsoRejected: [rest.id] });
+    expect((await reload(picked.id)).status).toBe('scheduled');
+    expect(await reload(rest.id)).toMatchObject({ status: 'rejected', rejectionReason: 'already_covered' });
+  });
+
   it('schedules the post and turns the review message into its schedule', async () => {
     const post = await queuePost();
     const at = new Date('2099-10-05T15:00:00Z');
@@ -196,6 +223,7 @@ describeIfDb('POST /api/telegram/webapp/schedule', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       ok: true,
+      alsoRejected: [],
       scheduledFor: at.toISOString(),
       display: 'Mon 5 Oct, 18:00',
     });

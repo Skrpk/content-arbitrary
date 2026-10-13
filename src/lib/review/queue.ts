@@ -7,6 +7,7 @@ import { describeError } from '@/lib/errors';
 import type { Logger } from '@/lib/logger';
 import { findReviewScores, type ReviewScore } from '@/lib/radar/review-note';
 import { findRepeats, repeatOutcome, type Repeat } from '@/lib/stories/repeats';
+import { publishedInStories, storiesOf } from '@/lib/review/same-story';
 import { richDocumentPlainText } from '@/lib/rich/document';
 import { platformOfPostId, sourceLabelOfPost } from '@/lib/sources/display';
 import type { TelegramClient } from '@/lib/telegram/client';
@@ -120,6 +121,14 @@ export interface ReviewQueueItem {
   edited: boolean;
   /** Written in the website's editor: published as a rich message, as written there. */
   rich: boolean;
+  /**
+   * The other waiting posts of its story, from other sources or the same:
+   * one card, decided together. Empty for a post alone in its story, and
+   * always for these others themselves.
+   */
+  alsoInStory: ReviewQueueItem[];
+  /** What of its story the channel has already published or scheduled. */
+  storyPublished: { sourceLabel: string | null; approvedAt: string }[];
 }
 
 /**
@@ -177,12 +186,45 @@ export async function loadReviewQueue(
       repeat: repeatOf(repeats.get(row.id)),
       edited: row.captionEditedAt !== null,
       rich: row.richDoc !== null,
+      alsoInStory: [],
+      storyPublished: [],
     };
   });
 
   // Newest first already; a stable sort keeps that order among equal scores.
   items.sort((a, b) => (b.score?.score ?? -1) - (a.score?.score ?? -1));
-  return { items, waiting };
+  return { items: await groupByStory(db, workspace.id, items), waiting };
+}
+
+/**
+ * One card per story: its best-scored waiting post leads, in that post's
+ * place in the list, and the others go under it.
+ */
+async function groupByStory(db: Database, workspaceId: number, items: ReviewQueueItem[]): Promise<ReviewQueueItem[]> {
+  const storyOf = await storiesOf(
+    db,
+    items.map((item) => item.id),
+  );
+  const published = await publishedInStories(db, workspaceId, [...new Set(storyOf.values())]);
+  const leads: ReviewQueueItem[] = [];
+  const leadOfStory = new Map<number, ReviewQueueItem>();
+  for (const item of items) {
+    const storyId = storyOf.get(item.id);
+    const lead = storyId === undefined ? undefined : leadOfStory.get(storyId);
+    if (lead) {
+      lead.alsoInStory.push(item);
+      continue;
+    }
+    if (storyId !== undefined) {
+      leadOfStory.set(storyId, item);
+      item.storyPublished = (published.get(storyId) ?? []).map((entry) => ({
+        sourceLabel: entry.sourceLabel,
+        approvedAt: entry.approvedAt.toISOString(),
+      }));
+    }
+    leads.push(item);
+  }
+  return leads;
 }
 
 function repeatOf(repeat: Repeat | undefined): ReviewQueueItem['repeat'] {

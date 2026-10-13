@@ -15,6 +15,7 @@ import {
 import { publishDecidedPost } from '@/lib/sync/publish';
 import { claimForDecision, rejectWithReason, releaseToApproval } from '@/lib/sync/repository';
 import { destinationFor } from '@/lib/workspace';
+import { rejectRestOfStory, SAME_STORY_MAX } from '@/lib/review/same-story';
 
 /**
  * The review queue page's API: every post awaiting review in the reviewer's
@@ -33,8 +34,11 @@ export const dynamic = 'force-dynamic';
 // Approving a queued post fetches its media again — a video can take a while.
 export const maxDuration = 300;
 
+/** The other posts of the card — the same story — decided with this one. */
+const restOfStory = z.array(z.number().int().positive()).max(SAME_STORY_MAX).optional();
+
 const decideSchema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('approve'), postId: z.number().int().positive() }).strict(),
+  z.object({ action: z.literal('approve'), postId: z.number().int().positive(), alsoInStory: restOfStory }).strict(),
   z
     .object({
       action: z.literal('reject'),
@@ -42,6 +46,7 @@ const decideSchema = z.discriminatedUnion('action', [
       reason: z.enum(REJECTION_REASONS),
       /** Plain text as typed, with the `other` reason only. */
       note: z.string().optional(),
+      alsoInStory: restOfStory,
     })
     .strict(),
 ]);
@@ -125,7 +130,18 @@ export async function POST(request: Request): Promise<Response> {
       result.row.adminMessageId,
       formatRejectionNotice({ reason: body.reason, note, xPostUrl: result.row.xPostUrl }),
     );
-    return json({ ok: true });
+    // The story turned down: the rest of its card for the same reason.
+    const alsoRejected = await rejectRestOfStory({
+      db: auth.db,
+      client,
+      logger,
+      workspaceId: workspace.id,
+      postId: body.postId,
+      others: body.alsoInStory ?? [],
+      reason: body.reason,
+      note,
+    });
+    return json({ ok: true, alsoRejected });
   }
 
   const resolved = destinationFor(workspace, auth.env);
@@ -173,5 +189,15 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   await settleReviewMessage(client, row.adminChatId, row.adminMessageId, `✅ Published\n${escapeHtml(row.xPostUrl)}`);
-  return json({ ok: true });
+  // The story is out: the rest of its card is already covered.
+  const alsoRejected = await rejectRestOfStory({
+    db: auth.db,
+    client,
+    logger,
+    workspaceId: workspace.id,
+    postId: body.postId,
+    others: body.alsoInStory ?? [],
+    reason: 'already_covered',
+  });
+  return json({ ok: true, alsoRejected });
 }

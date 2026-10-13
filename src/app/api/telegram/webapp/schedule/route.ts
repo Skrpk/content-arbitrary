@@ -15,6 +15,7 @@ import {
 } from '@/lib/sync/approval';
 import { findPostAwaitingReview, schedulePost } from '@/lib/sync/repository';
 import { channelLabelFor } from '@/lib/workspace';
+import { rejectRestOfStory, SAME_STORY_MAX } from '@/lib/review/same-story';
 
 /**
  * The Schedule Mini App's API: approve a post for a later time, or move the
@@ -38,6 +39,8 @@ const scheduleSchema = z.object({
   scheduledFor: z.string().min(1),
   /** The phone's IANA zone, used only to show the time back as it was picked. */
   timezone: z.string().max(64).optional(),
+  /** The other posts of its card in the review queue — the same story — now already covered. */
+  alsoInStory: z.array(z.number().int().positive()).max(SAME_STORY_MAX).optional(),
 });
 
 export async function GET(request: Request): Promise<Response> {
@@ -156,8 +159,19 @@ export async function POST(request: Request): Promise<Response> {
       });
   }
 
+  const alsoRejected = await rejectRestOfStory({
+    db: auth.db,
+    client: new TelegramClient({ logger: auth.logger }),
+    logger: auth.logger,
+    workspaceId: workspace.id,
+    postId: row.id,
+    others: body.alsoInStory ?? [],
+    reason: 'already_covered',
+  });
+
   return json({
     ok: true,
+    alsoRejected,
     scheduledFor: scheduledFor.toISOString(),
     display: formatScheduleTime(scheduledFor, timezone),
   });

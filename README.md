@@ -1023,6 +1023,13 @@ X ──► cron ──► review queue ──(at most once an hour)──► "�
 - **✅ Approve** publishes there and then. **🚫 Reject** asks why, with the same reasons as the
   chat, and **••• Other** takes your own words. **✏️ Edit text** and **🕒 Schedule** open their
   pages and come back to the queue.
+- **One card per story.** Waiting posts of the same [story](#stories) — the same event from
+  several sources, or a source repeating itself — share one card: the best-scored leads, the
+  others are listed under it, and **⇅ Use this one** puts any of them in its place. The card
+  also says what of the story the channel has already published (*📚 Already published from
+  @esa · 12 Oct*). A decision covers the whole card: **Approve** or **Schedule** publishes the
+  post shown and rejects the rest as *♻️ Already covered*; **Reject** turns them all down for the
+  reason you give. Only the posts you were shown are decided — one that came in since stays.
 - **`/review`** says how many posts are waiting and opens the page at any time, without waiting
   for the notification.
 
@@ -1675,9 +1682,9 @@ effect would otherwise drown among text posts — with what the images cost to l
 
 The same event comes in from several sources: a launch from the company, the agency, two news
 accounts and a feed, within hours. Story clustering groups them — one story per event — as they
-arrive. So far the stories are used for one thing, marking repeats in review (below); Radar and the
-queue's order are unchanged, and `stories:cluster` reports what the clustering made of a
-workspace, to judge it before anything more uses it.
+arrive. The review queue shows [one card per story](#the-review-queue), and marks repeats (below);
+Radar does not read stories yet. `stories:cluster` reports what the clustering made of a
+workspace.
 
 **How a post is placed.** By the vector Radar's [retrieval](#similar-past-publications) already
 made of it (text and what its image shows), so no extra embedding call. It is compared with the
@@ -1920,6 +1927,7 @@ src/
       events.ts                The stream's events, shared with the editor's panel
     review/
       queue.ts                 The review queue: its page's list, the notification and when it is due
+      same-story.ts            A story's card in the queue: the rest of it decided with its post
     accounts/
       users.ts                 Users, identities, memberships; a reviewer let in on first sign-in
       sessions.ts              Website sessions: random token in a __Host- cookie, its hash stored
