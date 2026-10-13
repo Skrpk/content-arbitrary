@@ -213,10 +213,14 @@ const schema = z
     RADAR_MODEL: z.string().trim().min(1).optional().or(z.literal('').transform(() => undefined)),
     OPENAI_API_KEY: z.string().min(1).optional().or(z.literal('').transform(() => undefined)),
     /**
-     * The Vercel Blob store's read-write token, which Vercel sets when a Blob
-     * store is connected to the project. Without it the editor cannot upload
-     * photos and videos, and says nothing of it.
+     * The Vercel Blob store the editor's uploads go to, which Vercel sets when
+     * a store is connected to the project; the app reaches it as the project
+     * (OIDC), and `BLOB_WEBHOOK_PUBLIC_KEY` checks the store's callbacks. An
+     * older store's read-write token, `BLOB_READ_WRITE_TOKEN`, works too.
+     * With neither, the editor has no upload button.
      */
+    BLOB_STORE_ID: z.string().min(1).optional().or(z.literal('').transform(() => undefined)),
+    BLOB_WEBHOOK_PUBLIC_KEY: z.string().min(1).optional().or(z.literal('').transform(() => undefined)),
     BLOB_READ_WRITE_TOKEN: z.string().min(1).optional().or(z.literal('').transform(() => undefined)),
     /**
      * The OpenAI model that embeds publication history and new posts for

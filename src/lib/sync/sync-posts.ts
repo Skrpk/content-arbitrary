@@ -33,7 +33,7 @@ import { mediaUnderstandingConfig } from '@/lib/media/understanding';
 import { sourceAdapter } from '@/lib/sync/source-adapters';
 import type { FetchChannelOptions } from '@/lib/telegram-channel/client';
 import { sendReviewDigest } from '@/lib/review/queue';
-import { sweepUploads, vercelBlobStore } from '@/lib/uploads/uploads';
+import { sweepUploads, uploadsAvailable, vercelBlobStore } from '@/lib/uploads/uploads';
 import {
   channelLabelFor,
   destinationFor,
@@ -336,7 +336,7 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
     if (skippedWorkspaces.length > 0) summary.skippedWorkspaces = skippedWorkspaces;
 
     // The editor's uploads of posts that will not be published now, out of the store.
-    if (env.BLOB_READ_WRITE_TOKEN && !env.DRY_RUN) {
+    if (uploadsAvailable(env) && !env.DRY_RUN) {
       await sweepUploads(db, vercelBlobStore(env.BLOB_READ_WRITE_TOKEN), logger).catch((error: unknown) => {
         logger.warn('uploads.sweep_failed', { error: describeError(error) });
       });

@@ -38,7 +38,7 @@ export async function POST(request: Request): Promise<Response> {
     : null;
   if (!workspace || !post) return json({ error: 'This post is no longer awaiting review.' }, 409);
 
-  const result = await recordUpload(auth.db, vercelBlobStore(auth.env.BLOB_READ_WRITE_TOKEN!), {
+  const result = await recordUpload(auth.db, vercelBlobStore(auth.env.BLOB_READ_WRITE_TOKEN), {
     workspaceId: workspace.id,
     postId: body.postId,
     url: body.url,

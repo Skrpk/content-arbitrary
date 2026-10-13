@@ -43,8 +43,8 @@ export function uploadMaxBytes(kind: PostUploadKind, env: Pick<Env, 'MAX_VIDEO_S
   return kind === 'photo' ? TELEGRAM_UPLOAD_PHOTO_MAX_BYTES : env.MAX_VIDEO_SIZE_MB * 1024 * 1024;
 }
 
-export function uploadsAvailable(env: Pick<Env, 'BLOB_READ_WRITE_TOKEN'>): boolean {
-  return Boolean(env.BLOB_READ_WRITE_TOKEN);
+export function uploadsAvailable(env: Pick<Env, 'BLOB_STORE_ID' | 'BLOB_READ_WRITE_TOKEN'>): boolean {
+  return Boolean(env.BLOB_STORE_ID || env.BLOB_READ_WRITE_TOKEN);
 }
 
 /** The store, behind what this app does with it — a test replaces it. */
@@ -53,10 +53,15 @@ export interface BlobStore {
   del(urls: string[]): Promise<void>;
 }
 
-export function vercelBlobStore(token: string): BlobStore {
+/**
+ * The project's store: reached as the project (OIDC, with `BLOB_STORE_ID`),
+ * or with an older store's read-write token when one is set.
+ */
+export function vercelBlobStore(token?: string): BlobStore {
+  const options = token ? { token } : undefined;
   return {
-    head: (url) => head(url, { token }),
-    del: (urls) => del(urls, { token }),
+    head: (url) => head(url, options),
+    del: (urls) => del(urls, options),
   };
 }
 

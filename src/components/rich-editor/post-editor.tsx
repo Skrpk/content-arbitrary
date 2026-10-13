@@ -3,7 +3,7 @@
 import Highlight from '@tiptap/extension-highlight';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { upload } from '@vercel/blob/client';
+import { uploadPresigned } from '@vercel/blob/client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { readJson, type PanelTools } from '@/components/panel-tools';
 import { ASSISTANT_CSS, AssistantPanel } from '@/components/rich-editor/assistant-panel';
@@ -206,7 +206,7 @@ function LoadedEditor({
       }
       setUploading({ name: file.name, percent: 0 });
       try {
-        const blob = await upload(`${limits.pathPrefix}${safeFileName(file.name)}`, file, {
+        const blob = await uploadPresigned(`${limits.pathPrefix}${safeFileName(file.name)}`, file, {
           access: 'public',
           handleUploadUrl: '/api/telegram/webapp/uploads',
           clientPayload: JSON.stringify({ postId: data.postId }),

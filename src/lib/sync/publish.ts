@@ -16,6 +16,7 @@ import {
   loadUploads,
   uploadAsMedia,
   uploadRef,
+  uploadsAvailable,
   vercelBlobStore,
   type BlobStore,
 } from '@/lib/uploads/uploads';
@@ -173,7 +174,7 @@ async function publishRichPost(
   const store =
     input.blobStore !== undefined
       ? input.blobStore
-      : input.env.BLOB_READ_WRITE_TOKEN
+      : uploadsAvailable(input.env)
         ? vercelBlobStore(input.env.BLOB_READ_WRITE_TOKEN)
         : null;
   if (store) await deleteUploads(input.db, store, await loadUploads(input.db, input.row.id), logger).catch(() => 0);

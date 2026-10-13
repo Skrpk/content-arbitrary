@@ -17,6 +17,7 @@ import { createTestLogger, ensureTestWorkspace, withEnv } from './helpers';
 const store = vi.hoisted(() => ({
   blobs: new Map<string, { url: string; pathname: string; contentType: string; size: number }>(),
   deleted: [] as string[],
+  signed: [] as { pathname: string; operations: string[] }[],
 }));
 
 vi.mock('@vercel/blob', () => ({
@@ -30,6 +31,15 @@ vi.mock('@vercel/blob', () => ({
       store.deleted.push(url);
       store.blobs.delete(url);
     }
+  },
+  // What the store's API signs for one path; the presigned URL is then made locally.
+  issueSignedToken: async (options: { pathname: string; operations: string[] }) => {
+    store.signed.push(options);
+    return {
+      delegationToken: `${Buffer.from(JSON.stringify({ storeId: 'store123', pathname: options.pathname, operations: options.operations, validUntil: Date.now() + 600_000 })).toString('base64url')}.sig`,
+      clientSigningToken: Buffer.from('signing-key').toString('base64url'),
+      validUntil: Date.now() + 600_000,
+    };
   },
 }));
 
@@ -55,7 +65,8 @@ const env = {
   TELEGRAM_BOT_TOKEN: BOT_TOKEN,
   TELEGRAM_WEBHOOK_SECRET: 'a'.repeat(64),
   APP_BASE_URL: 'https://example.vercel.app',
-  BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_store123_secretsecretsecret',
+  BLOB_STORE_ID: 'store_store123',
+  BLOB_WEBHOOK_PUBLIC_KEY: 'test-public-key',
   MAX_VIDEO_SIZE_MB: '20',
 };
 
@@ -80,6 +91,7 @@ beforeEach(async () => {
   if (!connectionString) return;
   store.blobs.clear();
   store.deleted.length = 0;
+  store.signed.length = 0;
   telegramCalls.length = 0;
   fetched.length = 0;
   await db.delete(processedPosts);
@@ -214,23 +226,26 @@ describeIfDb('recording an upload', () => {
     const row = await post();
     const url = stored(`posts/${row.id}/a.jpg`);
     expect((await register(row.id, url, { userId: STRANGER_ID })).status).toBe(401);
-    expect((await register(row.id, url, { env: { BLOB_READ_WRITE_TOKEN: undefined } })).status).toBe(503);
+    expect((await register(row.id, url, { env: { BLOB_STORE_ID: undefined } })).status).toBe(503);
     const done = await post({ status: 'published' });
     expect((await register(done.id, stored(`posts/${done.id}/a.jpg`))).status).toBe(409);
   });
 });
 
-describeIfDb('the upload token', () => {
+describeIfDb('the presigned upload URL', () => {
   const tokenRequest = (postId: number, pathname: string) => ({
-    type: 'blob.generate-client-token',
-    payload: { pathname, callbackUrl: 'https://example.vercel.app/api/telegram/webapp/uploads', multipart: false, clientPayload: JSON.stringify({ postId }) },
+    type: 'blob.generate-presigned-url',
+    payload: { pathname, multipart: false, clientPayload: JSON.stringify({ postId }) },
   });
 
-  it('is given to the reviewer for a path under the post, and refused for anything else', async () => {
+  it('is given to the reviewer for a path under the post, for uploading only, and refused for anything else', async () => {
     const row = await post();
     const given = await call(tokenRoute, '/api/telegram/webapp/uploads', tokenRequest(row.id, `posts/${row.id}/bear.jpg`));
     expect(given.status).toBe(200);
-    expect(await given.json()).toMatchObject({ type: 'blob.generate-client-token', clientToken: expect.any(String) });
+    expect(await given.json()).toMatchObject({ type: 'blob.generate-presigned-url', presignedUrlPayload: expect.anything() });
+    expect(store.signed).toEqual([
+      expect.objectContaining({ pathname: `posts/${row.id}/bear.jpg`, operations: ['put'], maximumSizeInBytes: 20 * 1024 * 1024 }),
+    ]);
 
     expect((await call(tokenRoute, '/api/telegram/webapp/uploads', tokenRequest(row.id, 'posts/999/bear.jpg'))).status).toBe(400);
     expect(

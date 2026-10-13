@@ -40,7 +40,7 @@
     "@tiptap/pm": "3.31.3",
     "@tiptap/react": "3.31.3",
     "@tiptap/starter-kit": "3.31.3",
-    "@vercel/blob": "^1.1.1",
+    "@vercel/blob": "2.8.0",
     "drizzle-orm": "^0.45.2",
     "fast-xml-parser": "5.11.2",
     "jose": "^6.2.12",
