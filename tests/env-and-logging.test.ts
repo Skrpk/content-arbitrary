@@ -295,7 +295,7 @@ describe('log scrubbing', () => {
       createLogger({ run: 1 }).info('test.event', {
         telegramBotToken: '123456789:AAHsecretsecretsecretsecret',
         apiKey: 'super-secret',
-        xPostId: '999',
+        externalId: '999',
       });
     } finally {
       console.log = original;
@@ -303,7 +303,7 @@ describe('log scrubbing', () => {
 
     expect(lines[0]).toContain('[REDACTED]');
     expect(lines[0]).not.toContain('super-secret');
-    expect(lines[0]).toContain('"xPostId":"999"');
+    expect(lines[0]).toContain('"externalId":"999"');
   });
 
   it('scrubs a token that leaks through an Error message', () => {

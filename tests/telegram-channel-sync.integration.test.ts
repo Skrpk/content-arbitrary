@@ -194,7 +194,7 @@ describeIfDb('a Telegram channel in the sync', () => {
     const rows = await db.select().from(processedPosts);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
-      xPostId: 'tg:spacenews/13',
+      externalId: 'tg:spacenews/13',
       xPostUrl: 'https://t.me/spacenews/13',
       xAuthorUsername: 'spacenews',
       status: 'awaiting_approval',

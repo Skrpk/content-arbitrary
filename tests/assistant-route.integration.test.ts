@@ -115,7 +115,7 @@ async function post() {
     .insert(processedPosts)
     .values({
       workspaceId: DEFAULT_WORKSPACE_ID,
-      xPostId: '1750000000000000042',
+      externalId: '1750000000000000042',
       xPostUrl: 'https://x.com/nasa/status/42',
       xAuthorUsername: 'nasa',
       sourceText: 'Curiosity captured a blue sunset on Mars.',

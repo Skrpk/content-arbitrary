@@ -143,7 +143,7 @@ export async function loadReviewQueue(
   const rows = await db
     .select({
       id: processedPosts.id,
-      xPostId: processedPosts.xPostId,
+      externalId: processedPosts.externalId,
       xPostUrl: processedPosts.xPostUrl,
       xAuthorUsername: processedPosts.xAuthorUsername,
       xCreatedAt: processedPosts.xCreatedAt,
@@ -172,8 +172,8 @@ export async function loadReviewQueue(
 
     return {
       id: row.id,
-      platform: platformOfPostId(row.xPostId),
-      sourceLabel: sourceLabelOfPost(row.xPostId, row.xAuthorUsername),
+      platform: platformOfPostId(row.externalId),
+      sourceLabel: sourceLabelOfPost(row.externalId, row.xAuthorUsername),
       url: row.xPostUrl,
       postedAt: (row.xCreatedAt ?? row.createdAt).toISOString(),
       text: row.richDoc ? richDocumentPlainText(row.richDoc) : captionToPlainText(body ?? stored),

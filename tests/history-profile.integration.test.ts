@@ -233,7 +233,7 @@ async function decidedPost(input: {
     .insert(processedPosts)
     .values({
       workspaceId: DEFAULT_WORKSPACE_ID,
-      xPostId: String(nextPostId),
+      externalId: String(nextPostId),
       xPostUrl: `https://x.com/esa/status/${nextPostId}`,
       xAuthorUsername: 'esa',
       sourceText: input.text ?? `post ${nextPostId}`,

@@ -55,7 +55,7 @@ export async function GET(request: Request): Promise<Response> {
   return json({
     postId: post.id,
     sourceUsername: post.xAuthorUsername,
-    sourceLabel: sourceLabelOfPost(post.xPostId, post.xAuthorUsername),
+    sourceLabel: sourceLabelOfPost(post.externalId, post.xAuthorUsername),
     // Shown for context only, so the reviewer can see what they are turning down.
     caption: captionToPlainText(post.caption ?? post.approvalPayload.caption),
     noteLimit: REJECTION_NOTE_MAX_LENGTH,

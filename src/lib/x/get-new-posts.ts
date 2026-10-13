@@ -96,7 +96,7 @@ export async function getNewPosts(
 
     if (unsupported.length > 0) {
       options.logger.warn('x.media_partially_unsupported', {
-        xPostId: post.id,
+        externalId: post.id,
         usable: post.media.length,
         problems: unsupported,
       });

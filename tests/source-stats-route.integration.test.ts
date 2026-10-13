@@ -115,7 +115,7 @@ async function addPost(
   await db.insert(processedPosts).values({
     workspaceId: source.workspaceId,
     sourceId: source.id,
-    xPostId: String(nextPostId),
+    externalId: String(nextPostId),
     xPostUrl: `https://x.com/someone/status/${nextPostId}`,
     status,
     rejectionReason: status === 'rejected' ? (options.reason ?? null) : null,

@@ -95,7 +95,7 @@ export async function publishedInStories(
   const rows = await db
     .select({
       storyId: storyPosts.storyId,
-      xPostId: processedPosts.xPostId,
+      externalId: processedPosts.externalId,
       author: processedPosts.xAuthorUsername,
       reviewedAt: processedPosts.reviewedAt,
       createdAt: processedPosts.createdAt,
@@ -113,7 +113,7 @@ export async function publishedInStories(
   for (const row of rows) {
     published.set(row.storyId, [
       ...(published.get(row.storyId) ?? []),
-      { sourceLabel: sourceLabelOfPost(row.xPostId, row.author), approvedAt: row.reviewedAt ?? row.createdAt },
+      { sourceLabel: sourceLabelOfPost(row.externalId, row.author), approvedAt: row.reviewedAt ?? row.createdAt },
     ]);
   }
   return published;

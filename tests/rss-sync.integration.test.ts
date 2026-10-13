@@ -227,7 +227,7 @@ describeIfDb('an RSS source in the sync', () => {
       xAuthorUsername: 'ESA Space Science',
       sourceText: 'Story number 4\n\nAll about story number 4, in a sentence or two.',
     });
-    expect(row!.xPostId).toMatch(/^rss:/);
+    expect(row!.externalId).toMatch(/^rss:/);
   });
 
   it('publishes an approved entry with its article link and preview', async () => {
@@ -314,7 +314,7 @@ describeIfDb('an RSS source in the sync', () => {
     );
     const newRows = await db.select().from(processedPosts).where(eq(processedPosts.status, 'awaiting_approval'));
     expect(newRows.map((row) => row.workspaceId).sort()).toEqual([DEFAULT_WORKSPACE_ID, OTHER_WORKSPACE]);
-    expect(new Set(newRows.map((row) => row.xPostId)).size).toBe(1);
+    expect(new Set(newRows.map((row) => row.externalId)).size).toBe(1);
   });
 
   it('does not let a broken feed stop an X account', async () => {

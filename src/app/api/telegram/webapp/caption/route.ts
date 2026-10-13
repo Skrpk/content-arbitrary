@@ -88,7 +88,7 @@ export async function GET(request: Request): Promise<Response> {
   return json({
     postId: post.id,
     sourceUsername: post.xAuthorUsername,
-    sourceLabel: sourceLabelOfPost(post.xPostId, post.xAuthorUsername),
+    sourceLabel: sourceLabelOfPost(post.externalId, post.xAuthorUsername),
     xPostUrl: post.xPostUrl,
     mediaCount: payloadMediaCount(post.approvalPayload),
     caption: body === null ? captionToPlainText(stored) : unescapeHtml(body),

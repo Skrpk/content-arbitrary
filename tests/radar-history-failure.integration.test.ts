@@ -49,7 +49,7 @@ describeIfDb('live Radar when the publication profile cannot be read', () => {
       .insert(processedPosts)
       .values({
         workspaceId: DEFAULT_WORKSPACE_ID,
-        xPostId: '1780000000000000001',
+        externalId: '1780000000000000001',
         xPostUrl: 'https://x.com/esa/status/1780000000000000001',
         xAuthorUsername: 'esa',
         sourceText: 'A new nebula image',

@@ -29,7 +29,7 @@ export async function loadStoryReportRows(db: Db, workspaceId: number): Promise<
       storyId: storyPosts.storyId,
       processedPostId: processedPosts.id,
       arrivedAt: processedPosts.createdAt,
-      xPostId: processedPosts.xPostId,
+      externalId: processedPosts.externalId,
       author: processedPosts.xAuthorUsername,
       text: processedPosts.sourceText,
       status: processedPosts.status,
@@ -42,7 +42,7 @@ export async function loadStoryReportRows(db: Db, workspaceId: number): Promise<
     .innerJoin(processedPosts, eq(processedPosts.id, storyPosts.processedPostId))
     .where(eq(stories.workspaceId, workspaceId))
     .orderBy(asc(processedPosts.createdAt), asc(processedPosts.id));
-  return rows.map(({ xPostId, author, ...row }) => ({ ...row, source: sourceLabelOfPost(xPostId, author) }));
+  return rows.map(({ externalId, author, ...row }) => ({ ...row, source: sourceLabelOfPost(externalId, author) }));
 }
 
 const BANDS = [0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6];

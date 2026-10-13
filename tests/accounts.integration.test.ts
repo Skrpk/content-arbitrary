@@ -241,7 +241,7 @@ describeIfDb('signing in to the website with Telegram', () => {
         .insert(processedPosts)
         .values({
           workspaceId: DEFAULT_WORKSPACE_ID,
-          xPostId: '1750000000000000077',
+          externalId: '1750000000000000077',
           xPostUrl: 'https://x.com/a/status/1750000000000000077',
           status: 'awaiting_approval',
           approvalPayload: { method: 'sendMessage', caption: 'Hi', items: [] },

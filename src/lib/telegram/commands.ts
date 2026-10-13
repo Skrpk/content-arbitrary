@@ -424,7 +424,7 @@ export async function handleScheduled(context: CommandContext): Promise<string> 
     const at = post.scheduledFor
       ? escapeHtml(formatScheduleTime(post.scheduledFor, post.scheduledTimezone))
       : 'no time set';
-    const label = sourceLabelOfPost(post.xPostId, post.xAuthorUsername);
+    const label = sourceLabelOfPost(post.externalId, post.xAuthorUsername);
     const who = label ? ` · ${escapeHtml(label)}` : '';
     const where = channels.length > 1 ? ` · 📢 ${escapeHtml(channel.name)}` : '';
     return `🕒 ${at}${who}${where}\n${escapeHtml(post.xPostUrl)}`;

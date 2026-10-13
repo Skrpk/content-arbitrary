@@ -289,7 +289,7 @@ export async function POST(request: Request): Promise<Response> {
       return ok();
     }
 
-    postLogger.info('webhook.rejected', { xPostId: result.row.xPostId, reason: parsed.reason });
+    postLogger.info('webhook.rejected', { externalId: result.row.externalId, reason: parsed.reason });
     await client.answerCallbackQuery(query.id, 'Rejected — not published.').catch(() => {});
     await settleReviewMessage(
       client,
@@ -310,7 +310,7 @@ export async function POST(request: Request): Promise<Response> {
       return ok();
     }
 
-    postLogger.info('webhook.unscheduled', { xPostId: result.row.xPostId });
+    postLogger.info('webhook.unscheduled', { externalId: result.row.externalId });
     await client.answerCallbackQuery(query.id, 'Unscheduled — back in review.').catch(() => {});
 
     const chatId = result.row.adminChatId ?? String(query.message?.chat.id ?? '');
@@ -321,7 +321,7 @@ export async function POST(request: Request): Promise<Response> {
           chatId,
           messageId,
           formatReviewControlText(
-            sourceLabelOfPost(result.row.xPostId, result.row.xAuthorUsername),
+            sourceLabelOfPost(result.row.externalId, result.row.xAuthorUsername),
             result.row.xPostUrl,
             channelLabelFor(workspace, reviewerWorkspaces.length),
             await loadRadarNote(db, result.row.id).catch(() => null),
@@ -370,7 +370,7 @@ export async function POST(request: Request): Promise<Response> {
   // A text-only post has no media by design; any other post without it does.
   if (!isPublishablePayload(payload)) {
     const reason = 'approval payload is missing; re-run the sync for this post';
-    postLogger.error('webhook.missing_payload', { xPostId: claim.row.xPostId });
+    postLogger.error('webhook.missing_payload', { externalId: claim.row.externalId });
     await putBack(reason);
     await client.answerCallbackQuery(query.id, 'Cannot publish: media reference lost.').catch(() => {});
     return ok();
@@ -378,7 +378,7 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     postLogger.info('webhook.publishing', {
-      xPostId: claim.row.xPostId,
+      externalId: claim.row.externalId,
       method: payload.method,
       mediaCount: payloadMediaCount(payload),
     });
@@ -397,7 +397,7 @@ export async function POST(request: Request): Promise<Response> {
     });
 
     postLogger.info('webhook.published', {
-      xPostId: claim.row.xPostId,
+      externalId: claim.row.externalId,
       telegramMessageIds: result.messages.map((message) => message.messageId),
     });
 
@@ -411,7 +411,7 @@ export async function POST(request: Request): Promise<Response> {
   } catch (error) {
     // Put it back so the reviewer can simply press the button again.
     const message = describeError(error);
-    postLogger.error('webhook.publish_failed', { xPostId: claim.row.xPostId, error: message });
+    postLogger.error('webhook.publish_failed', { externalId: claim.row.externalId, error: message });
     await putBack(message);
     await client.answerCallbackQuery(query.id, 'Publishing failed — try again.').catch(() => {});
   }

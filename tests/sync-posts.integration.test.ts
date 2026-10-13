@@ -196,7 +196,7 @@ describeIfDb('syncPosts end to end', () => {
       }),
     );
 
-    const rows = await db.select().from(processedPosts).orderBy(processedPosts.xPostId);
+    const rows = await db.select().from(processedPosts).orderBy(processedPosts.externalId);
     expect(rows[0]).toMatchObject({ xLikeCount: null, xMetricsAt: null });
     expect(rows[1]).toMatchObject({
       xLikeCount: 42,
@@ -278,7 +278,7 @@ describeIfDb('syncPosts end to end', () => {
     expect(summary.published).toBe(1);
     expect(summary.skipped).toBe(2);
     const rows = await db.select().from(processedPosts);
-    expect(rows.map((row) => row.xPostId)).toEqual(['1750000000000000003']);
+    expect(rows.map((row) => row.externalId)).toEqual(['1750000000000000003']);
     expect((await getSyncState(db, 'x:1234567890'))?.lastSeenPostId).toBe('1750000000000000003');
   });
 
@@ -358,7 +358,7 @@ describeIfDb('syncPosts end to end', () => {
     expect(summary.skipped).toBeGreaterThanOrEqual(1);
 
     const rows = await db.select().from(processedPosts);
-    const byId = new Map(rows.map((r) => [r.xPostId, r]));
+    const byId = new Map(rows.map((r) => [r.externalId, r]));
 
     expect(byId.get('1750000000000000001')?.status).toBe('published');
     expect(byId.get('1750000000000000002')?.status).toBe('skipped');
@@ -400,7 +400,7 @@ describeIfDb('syncPosts end to end', () => {
     expect(summary.timeBudgetReached).toBe(true);
     expect(summary.published).toBe(1);
     expect(summary.sources[0]).toMatchObject({ stoppedForTime: true, newPosts: 1 });
-    expect((await db.select().from(processedPosts)).map((row) => row.xPostId)).toEqual([
+    expect((await db.select().from(processedPosts)).map((row) => row.externalId)).toEqual([
       '1750000000000000001',
     ]);
     // The cursor stops at the post it finished, not at the newest one it saw.
@@ -580,7 +580,7 @@ describeIfDb('syncPosts end to end', () => {
     }
 
     const published = await db.select().from(processedPosts);
-    expect(published.map((r) => r.xPostId).sort()).toEqual([
+    expect(published.map((r) => r.externalId).sort()).toEqual([
       '1750000000000000001',
       '1750000000000000002',
       '1750000000000000003',

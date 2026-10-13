@@ -674,7 +674,7 @@ describeIfDb('caption backfill migration', () => {
     const rows = await db
       .insert(processedPosts)
       .values({
-        xPostId: String(Math.floor(Math.random() * 1e12)),
+        externalId: String(Math.floor(Math.random() * 1e12)),
         xPostUrl: 'https://x.com/a/status/1',
         status: 'awaiting_approval',
         ...values,

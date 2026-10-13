@@ -285,7 +285,7 @@ describeIfDb('DELETE /api/telegram/webapp/sources', () => {
     await db.insert(processedPosts).values({
       workspaceId: DEFAULT_WORKSPACE_ID,
       sourceId: source.id,
-      xPostId: '1',
+      externalId: '1',
       xPostUrl: 'https://x.com/alpha/status/1',
       status: 'published',
     });

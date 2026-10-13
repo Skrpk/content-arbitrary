@@ -237,7 +237,7 @@ describeIfDb('publishing across tenants', () => {
 
     // The row records the channel it actually went to, not the env default.
     const rows = await db.select().from(processedPosts);
-    const byPost = new Map(rows.map((row) => [row.xPostId, row]));
+    const byPost = new Map(rows.map((row) => [row.externalId, row]));
     expect(byPost.get('1750000000000000011')?.telegramChatId).toBe(CHANNEL_A);
     expect(byPost.get('1750000000000000022')?.telegramChatId).toBe(CHANNEL_B);
     expect(byPost.get('1750000000000000011')?.workspaceId).toBe(DEFAULT_WORKSPACE_ID);
@@ -289,7 +289,7 @@ describeIfDb('publishing across tenants', () => {
     const rows = await db
       .select()
       .from(processedPosts)
-      .where(eq(processedPosts.xPostId, '1750000000000000099'));
+      .where(eq(processedPosts.externalId, '1750000000000000099'));
     expect(rows).toHaveLength(2);
     expect(rows.map((row) => row.workspaceId).sort()).toEqual([DEFAULT_WORKSPACE_ID, TENANT_B]);
 

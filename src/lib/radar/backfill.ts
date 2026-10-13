@@ -190,7 +190,7 @@ export async function submitRadarBackfill(input: {
     .select({
       id: processedPosts.id,
       createdAt: processedPosts.createdAt,
-      xPostId: processedPosts.xPostId,
+      externalId: processedPosts.externalId,
       sourceUsername: processedPosts.xAuthorUsername,
       sourceText: processedPosts.sourceText,
       method: processedPosts.telegramMethod,
@@ -340,7 +340,7 @@ export async function submitRadarBackfill(input: {
         approvalRate: history.approvalRate,
         item: {
           sourceUsername: post.sourceUsername ?? 'unknown',
-          ...(isRssItemId(post.xPostId) ? { sourcePlatform: 'rss' as const } : {}),
+          ...(isRssItemId(post.externalId) ? { sourcePlatform: 'rss' as const } : {}),
           text: post.sourceText ?? '',
           media: describeStoredMedia(post.method, post.mediaCount),
         },

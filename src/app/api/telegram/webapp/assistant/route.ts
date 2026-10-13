@@ -107,7 +107,7 @@ export async function POST(request: Request): Promise<Response> {
     style,
   });
   const context = buildPostContext({
-    sourceLabel: sourceLabelOfPost(post.xPostId, post.xAuthorUsername),
+    sourceLabel: sourceLabelOfPost(post.externalId, post.xAuthorUsername),
     url: post.xPostUrl,
     sourceText: post.sourceText,
     media: kinds,

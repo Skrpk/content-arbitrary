@@ -72,7 +72,7 @@ export async function GET(request: Request): Promise<Response> {
   return json({
     postId: post.id,
     sourceUsername: post.xAuthorUsername,
-    sourceLabel: sourceLabelOfPost(post.xPostId, post.xAuthorUsername),
+    sourceLabel: sourceLabelOfPost(post.externalId, post.xAuthorUsername),
     caption: captionToPlainText(post.caption ?? post.approvalPayload.caption),
     scheduledFor: post.status === 'scheduled' ? post.scheduledFor?.toISOString() ?? null : null,
     timezone: post.scheduledTimezone,
@@ -146,7 +146,7 @@ export async function POST(request: Request): Promise<Response> {
         formatScheduledNotice({
           scheduledFor,
           timezone,
-          sourceLabel: sourceLabelOfPost(row.xPostId, row.xAuthorUsername),
+          sourceLabel: sourceLabelOfPost(row.externalId, row.xAuthorUsername),
           xPostUrl: row.xPostUrl,
           channel: channelLabelFor(workspace, auth.workspaces.length),
           radarNote: await loadRadarNote(auth.db, row.id).catch(() => null),

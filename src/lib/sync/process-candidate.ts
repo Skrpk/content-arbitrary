@@ -79,7 +79,7 @@ export async function processCandidate(
   const postLogger = options.logger;
 
   const claim = await claimPost(db, {
-    xPostId: post.id,
+    externalId: post.id,
     xPostUrl: post.url,
     xAuthorUsername: post.authorUsername,
     xCreatedAt: post.createdAt,

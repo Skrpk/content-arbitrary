@@ -87,7 +87,7 @@ export async function GET(request: Request): Promise<Response> {
         sources: sourceStates,
         counts,
         recentPosts: recent.map((post) => ({
-          xPostId: post.xPostId,
+          externalId: post.externalId,
           xPostUrl: post.xPostUrl,
           status: post.status,
           telegramMessageId: post.telegramMessageId,

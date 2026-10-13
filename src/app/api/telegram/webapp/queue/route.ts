@@ -159,7 +159,7 @@ export async function POST(request: Request): Promise<Response> {
 
   if (!isPublishablePayload(row.approvalPayload)) {
     const reason = 'approval payload is missing; re-run the sync for this post';
-    logger.error('webapp.queue_missing_payload', { xPostId: row.xPostId });
+    logger.error('webapp.queue_missing_payload', { externalId: row.externalId });
     await releaseToApproval(auth.db, { id: row.id, errorMessage: reason });
     return json({ error: 'Cannot publish: the post’s media are not on record.' }, 422);
   }
@@ -177,13 +177,13 @@ export async function POST(request: Request): Promise<Response> {
       reviewedAt: new Date(),
     });
     logger.info('webapp.queue_published', {
-      xPostId: row.xPostId,
+      externalId: row.externalId,
       telegramMessageIds: result.messages.map((message) => message.messageId),
     });
   } catch (error) {
     // Back in the queue, so it can simply be approved again.
     const message = describeError(error);
-    logger.error('webapp.queue_publish_failed', { xPostId: row.xPostId, error: message });
+    logger.error('webapp.queue_publish_failed', { externalId: row.externalId, error: message });
     await releaseToApproval(auth.db, { id: row.id, errorMessage: message });
     return json({ error: `Publishing failed: ${message.slice(0, 300)}` }, 502);
   }

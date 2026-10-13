@@ -75,7 +75,7 @@ async function post(input: {
     .insert(processedPosts)
     .values({
       workspaceId: input.workspaceId ?? DEFAULT_WORKSPACE_ID,
-      xPostId: String(nextId),
+      externalId: String(nextId),
       xPostUrl: `https://x.com/${input.author ?? 'nasa'}/status/${nextId}`,
       xAuthorUsername: input.author ?? 'nasa',
       sourceText: input.text ?? `post ${nextId}`,

@@ -283,7 +283,7 @@ export async function findSimilarApprovedPosts(
       similarity: sql<number>`1 - (${distance})`.mapWith(Number),
       text: processedPosts.sourceText,
       sourceUsername: processedPosts.xAuthorUsername,
-      xPostId: processedPosts.xPostId,
+      externalId: processedPosts.externalId,
       approvedAt: processedPosts.reviewedAt,
       imageFingerprint: processedPosts.imageFingerprint,
     })
@@ -294,9 +294,9 @@ export async function findSimilarApprovedPosts(
     .limit(input.limit);
 
   // reviewed_at is non-null by the filter.
-  return rows.map(({ xPostId, ...row }) => ({
+  return rows.map(({ externalId, ...row }) => ({
     ...row,
-    ...(isRssItemId(xPostId) ? { sourcePlatform: 'rss' as const } : {}),
+    ...(isRssItemId(externalId) ? { sourcePlatform: 'rss' as const } : {}),
     approvedAt: row.approvedAt!,
   }));
 }
@@ -358,7 +358,7 @@ export async function findSimilarRejectedPosts(
       similarity: sql<number>`1 - (${distance})`.mapWith(Number),
       text: processedPosts.sourceText,
       sourceUsername: processedPosts.xAuthorUsername,
-      xPostId: processedPosts.xPostId,
+      externalId: processedPosts.externalId,
       rejectedAt: processedPosts.reviewedAt,
       rejectionReason: processedPosts.rejectionReason,
       rejectionNote: processedPosts.rejectionNote,
@@ -371,9 +371,9 @@ export async function findSimilarRejectedPosts(
     .limit(input.limit);
 
   // reviewed_at is non-null by the filter.
-  return rows.map(({ xPostId, ...row }) => ({
+  return rows.map(({ externalId, ...row }) => ({
     ...row,
-    ...(isRssItemId(xPostId) ? { sourcePlatform: 'rss' as const } : {}),
+    ...(isRssItemId(externalId) ? { sourcePlatform: 'rss' as const } : {}),
     rejectedAt: row.rejectedAt!,
   }));
 }

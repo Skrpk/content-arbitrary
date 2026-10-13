@@ -1,45 +1,70 @@
 import type { SourcePlatform } from '@/db/schema';
 
 /**
- * How a source, or a post from one, is named to people — and to Radar.
+ * Each platform's identity: how its posts' ids are told apart in
+ * `processed_posts.external_id`, and how a source of it is named to people —
+ * and to Radar.
  *
  * An X account is `@NASA`; a feed is its title, `NASA Breaking News`, never
  * `@NASA Breaking News`; a Telegram channel is its username, `@durov`, as
  * Telegram itself names it. Everything shown about a source goes through here
  * rather than writing `@${username}` itself.
+ *
+ * One entry per platform, and the type insists on it: a new platform is not
+ * done until it is named here and has an adapter in
+ * src/lib/sync/source-adapters.ts.
  */
 
-/**
- * Where a feed item's id starts in `processed_posts.x_post_id`. X ids are
- * digits, so the prefix alone tells a feed item apart — which is how a row is
- * named correctly where only the post is at hand. See src/lib/rss/identity.ts.
- */
-export const RSS_ITEM_ID_PREFIX = 'rss:';
-
-export function isRssItemId(xPostId: string): boolean {
-  return xPostId.startsWith(RSS_ITEM_ID_PREFIX);
+interface PlatformIdentity {
+  /**
+   * Where its posts' ids start in `processed_posts.external_id`, so a stored
+   * post is named correctly where only the post is at hand. X's have none:
+   * its ids are digits, which no prefix starts with.
+   */
+  postIdPrefix: string | null;
+  /** A source's name as people see it, from its stored username or title. */
+  label: (name: string) => string;
 }
 
-/**
- * Where a Telegram channel post's id starts in `processed_posts.x_post_id`:
- * `tg:<channel>/<message id>`. See src/lib/telegram-channel/normalize.ts.
- */
-export const TELEGRAM_POST_ID_PREFIX = 'tg:';
+const handle = (name: string) => `@${name.replace(/^@/, '')}`;
 
-export function isTelegramPostId(xPostId: string): boolean {
-  return xPostId.startsWith(TELEGRAM_POST_ID_PREFIX);
+const PLATFORM_IDENTITY: { readonly [P in SourcePlatform]: PlatformIdentity } = {
+  x: { postIdPrefix: null, label: handle },
+  // `rss:<feed>:<entry>` — see src/lib/rss/identity.ts.
+  rss: { postIdPrefix: 'rss:', label: (name) => name },
+  // `tg:<channel>/<message id>` — see src/lib/telegram-channel/normalize.ts.
+  telegram: { postIdPrefix: 'tg:', label: handle },
+};
+
+/** Where a feed item's id starts in `processed_posts.external_id`. */
+export const RSS_ITEM_ID_PREFIX = PLATFORM_IDENTITY.rss.postIdPrefix!;
+
+export function isRssItemId(externalId: string): boolean {
+  return externalId.startsWith(RSS_ITEM_ID_PREFIX);
 }
+
+/** Where a Telegram channel post's id starts in `processed_posts.external_id`. */
+export const TELEGRAM_POST_ID_PREFIX = PLATFORM_IDENTITY.telegram.postIdPrefix!;
+
+export function isTelegramPostId(externalId: string): boolean {
+  return externalId.startsWith(TELEGRAM_POST_ID_PREFIX);
+}
+
+const PREFIXED = (Object.entries(PLATFORM_IDENTITY) as [SourcePlatform, PlatformIdentity][]).filter(
+  ([, identity]) => identity.postIdPrefix !== null,
+);
+const UNPREFIXED = (Object.keys(PLATFORM_IDENTITY) as SourcePlatform[]).find(
+  (platform) => PLATFORM_IDENTITY[platform].postIdPrefix === null,
+)!;
 
 /** Which platform a stored post came from, told by its id alone. */
-export function platformOfPostId(xPostId: string): SourcePlatform {
-  if (isRssItemId(xPostId)) return 'rss';
-  if (isTelegramPostId(xPostId)) return 'telegram';
-  return 'x';
+export function platformOfPostId(externalId: string): SourcePlatform {
+  return PREFIXED.find(([, identity]) => externalId.startsWith(identity.postIdPrefix!))?.[0] ?? UNPREFIXED;
 }
 
 /** A source's name: `@handle` on X, `@username` for a Telegram channel, the feed's title for RSS. */
 export function formatSourceLabel(platform: SourcePlatform, name: string): string {
-  return platform === 'rss' ? name : `@${name.replace(/^@/, '')}`;
+  return PLATFORM_IDENTITY[platform].label(name);
 }
 
 /**
@@ -47,7 +72,7 @@ export function formatSourceLabel(platform: SourcePlatform, name: string): strin
  * recorded. Its `x_author_username` holds an X handle, a channel's username
  * or a feed's title.
  */
-export function sourceLabelOfPost(xPostId: string, author: string | null): string | null {
+export function sourceLabelOfPost(externalId: string, author: string | null): string | null {
   if (!author) return null;
-  return formatSourceLabel(platformOfPostId(xPostId), author);
+  return formatSourceLabel(platformOfPostId(externalId), author);
 }

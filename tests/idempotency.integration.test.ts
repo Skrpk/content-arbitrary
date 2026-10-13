@@ -50,7 +50,7 @@ let sql: postgres.Sql;
 let db: PostgresJsDatabase<typeof schema>;
 
 const basePost = {
-  xPostId: '1750000000000000001',
+  externalId: '1750000000000000001',
   xPostUrl: 'https://x.com/testaccount/status/1750000000000000001',
   xAuthorUsername: 'testaccount',
   xCreatedAt: new Date('2026-01-01T00:00:00Z'),
@@ -200,9 +200,9 @@ describeIfDb('duplicate protection', () => {
     expect(retry.row?.xMetricsAt).toBeInstanceOf(Date);
   });
 
-  it('enforces uniqueness of x_post_id per workspace at the database level', async () => {
+  it('enforces uniqueness of external_id per workspace at the database level', async () => {
     await db.insert(processedPosts).values({
-      xPostId: basePost.xPostId,
+      externalId: basePost.externalId,
       xPostUrl: basePost.xPostUrl,
       status: 'published',
     });
@@ -212,7 +212,7 @@ describeIfDb('duplicate protection', () => {
     const error = await db
       .insert(processedPosts)
       .values({
-        xPostId: basePost.xPostId,
+        externalId: basePost.externalId,
         xPostUrl: basePost.xPostUrl,
         status: 'pending',
       })
@@ -223,14 +223,14 @@ describeIfDb('duplicate protection', () => {
     const cause = (error as { cause?: { code?: string; constraint_name?: string } }).cause;
     expect(cause?.code).toBe('23505');
     // Scoped to the workspace now: the same post may exist once per tenant.
-    expect(cause?.constraint_name).toBe('processed_posts_workspace_x_post_id_key');
+    expect(cause?.constraint_name).toBe('processed_posts_workspace_external_id_key');
   });
 
   it('allows the same post in a second workspace', async () => {
     /**
      * The whole point of scoping the unique index: two tenants publishing the
      * same X post to their own channels are not duplicates of each other. This
-     * fails against the old global UNIQUE (x_post_id).
+     * fails against the old global UNIQUE (external_id).
      */
     const [other] = await db
       .insert(workspaces)
@@ -247,7 +247,7 @@ describeIfDb('duplicate protection', () => {
     const rows = await db
       .select()
       .from(processedPosts)
-      .where(eq(processedPosts.xPostId, basePost.xPostId));
+      .where(eq(processedPosts.externalId, basePost.externalId));
     expect(rows).toHaveLength(2);
 
     // Duplicate protection still holds inside each workspace.
@@ -291,7 +291,7 @@ describeIfDb('duplicate protection', () => {
     expect(results.filter((r) => r.claimed)).toHaveLength(1);
     expect(results.filter((r) => !r.claimed)).toHaveLength(9);
 
-    const rows = await db.select().from(processedPosts).where(eq(processedPosts.xPostId, basePost.xPostId));
+    const rows = await db.select().from(processedPosts).where(eq(processedPosts.externalId, basePost.externalId));
     expect(rows).toHaveLength(1);
   });
 
@@ -299,9 +299,9 @@ describeIfDb('duplicate protection', () => {
     const ids = ['1750000000000000001', '1750000000000000002', '1750000000000000003'];
 
     const results = await Promise.all(
-      ids.flatMap((xPostId) =>
+      ids.flatMap((externalId) =>
         Array.from({ length: 5 }, () =>
-          claimPost(db, { ...basePost, xPostId, xPostUrl: `https://x.com/a/status/${xPostId}` }),
+          claimPost(db, { ...basePost, externalId, xPostUrl: `https://x.com/a/status/${externalId}` }),
         ),
       ),
     );
@@ -341,7 +341,7 @@ describeIfDb('retry eligibility', () => {
 
     expect(claim.claimed).toBe(false);
 
-    const row = (await db.select().from(processedPosts).where(eq(processedPosts.xPostId, basePost.xPostId)))[0];
+    const row = (await db.select().from(processedPosts).where(eq(processedPosts.externalId, basePost.externalId)))[0];
     expect(row?.status).toBe('skipped');
     expect(row?.retryCount).toBe(5);
   });
@@ -433,10 +433,10 @@ describeIfDb('published records', () => {
       messages: [],
     });
 
-    const skipped = await claimPost(db, { ...basePost, xPostId: '1750000000000000002' });
+    const skipped = await claimPost(db, { ...basePost, externalId: '1750000000000000002' });
     await markSkipped(db, { id: skipped.row!.id, reason: 'too large' });
 
-    const pending = await claimPost(db, { ...basePost, xPostId: '1750000000000000003' });
+    const pending = await claimPost(db, { ...basePost, externalId: '1750000000000000003' });
     expect(pending.claimed).toBe(true);
 
     const terminal = await findTerminalPostIds(db, [
@@ -461,7 +461,7 @@ describeIfDb('published records', () => {
       messages: [],
     });
 
-    const b = await claimPost(db, { ...basePost, xPostId: '1750000000000000002' });
+    const b = await claimPost(db, { ...basePost, externalId: '1750000000000000002' });
     await markSkipped(db, { id: b.row!.id, reason: 'no media' });
 
     const counts = await getStatusCounts(db);
@@ -572,8 +572,8 @@ describeIfDb('approval workflow', () => {
     expect(again.claimed).toBe(false);
     expect(again.reason).toBe('rejected');
 
-    const terminal = await findTerminalPostIds(db, [basePost.xPostId]);
-    expect(terminal.has(basePost.xPostId)).toBe(true);
+    const terminal = await findTerminalPostIds(db, [basePost.externalId]);
+    expect(terminal.has(basePost.externalId)).toBe(true);
     void id;
   });
 

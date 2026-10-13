@@ -123,7 +123,7 @@ export async function processPost(
   const media = post.media.slice(0, TELEGRAM_MEDIA_GROUP_MAX);
   if (post.media.length > media.length) {
     logger.warn('post.media_truncated', {
-      xPostId: post.id,
+      externalId: post.id,
       total: post.media.length,
       kept: media.length,
       limit: TELEGRAM_MEDIA_GROUP_MAX,
@@ -199,7 +199,7 @@ export async function processPost(
   } catch (error) {
     const permanent = error instanceof MediaUnsupportedError;
     logger.error('post.media_failed', {
-      xPostId: post.id,
+      externalId: post.id,
       permanent,
       error: describeError(error),
     });
@@ -243,7 +243,7 @@ export async function processPost(
     if (translated) ({ caption, overflowMessage } = captionFor(translated));
 
     if (options.queueForReview) {
-      logger.info('approval.queued', { xPostId: post.id, method, mediaCount: payloads.length });
+      logger.info('approval.queued', { externalId: post.id, method, mediaCount: payloads.length });
       return {
         status: 'awaiting-approval',
         method,
@@ -265,7 +265,7 @@ export async function processPost(
     }
 
     logger.info('approval.review_send_start', {
-      xPostId: post.id,
+      externalId: post.id,
       method,
       mediaCount: payloads.length,
     });
@@ -289,7 +289,7 @@ export async function processPost(
       );
 
       logger.info('approval.awaiting_decision', {
-        xPostId: post.id,
+        externalId: post.id,
         adminMessageId: review.adminMessageId,
         capturedFileIds: review.payload.items.length,
       });
@@ -306,7 +306,7 @@ export async function processPost(
     } catch (error) {
       const permanent = isPermanentTelegramError(error);
       logger.error('approval.review_send_failed', {
-        xPostId: post.id,
+        externalId: post.id,
         permanent,
         error: describeError(error),
       });
@@ -333,7 +333,7 @@ export async function processPost(
   };
 
   logger.info('telegram.upload_start', {
-    xPostId: post.id,
+    externalId: post.id,
     method,
     mediaCount: payloads.length,
     uploadMode: env.MEDIA_UPLOAD_MODE,
@@ -358,7 +358,7 @@ export async function processPost(
   } catch (error) {
     const permanent = error instanceof MediaUnsupportedError || isPermanentTelegramError(error);
     logger.error('telegram.upload_failed', {
-      xPostId: post.id,
+      externalId: post.id,
       method,
       permanent,
       error: describeError(error),
@@ -378,7 +378,7 @@ export async function processPost(
   const primaryMessageId = messages[0]?.messageId ?? null;
 
   logger.info('telegram.published', {
-    xPostId: post.id,
+    externalId: post.id,
     method,
     telegramMessageIds: messages.map((message) => message.messageId),
   });
@@ -398,7 +398,7 @@ export async function processPost(
       messages.push({ messageId: followUp.message_id, mediaIndex: null, kind: 'text' });
 
       logger.info('telegram.overflow_text_sent', {
-        xPostId: post.id,
+        externalId: post.id,
         telegramMessageId: followUp.message_id,
       });
     } catch (error) {
@@ -406,7 +406,7 @@ export async function processPost(
       // the tail of a long caption must not mark the post failed and cause a
       // retry that would duplicate the album.
       logger.warn('telegram.overflow_text_failed', {
-        xPostId: post.id,
+        externalId: post.id,
         error: describeError(error),
       });
     }
@@ -475,7 +475,7 @@ async function processTextPost(
       if (translated) base.caption = text = textFor(translated);
 
       if (options.queueForReview) {
-        logger.info('approval.queued', { xPostId: post.id, method, textOnly: true });
+        logger.info('approval.queued', { externalId: post.id, method, textOnly: true });
         const linkPreviewUrl = linkPreviewOf(post);
         return {
           ...base,
@@ -510,7 +510,7 @@ async function processTextPost(
       );
 
       logger.info('approval.awaiting_decision', {
-        xPostId: post.id,
+        externalId: post.id,
         adminMessageId: review.adminMessageId,
         textOnly: true,
       });
@@ -530,7 +530,7 @@ async function processTextPost(
       { linkPreviewUrl: linkPreviewOf(post) },
     );
 
-    logger.info('telegram.published', { xPostId: post.id, method, telegramMessageIds: [sent.message_id] });
+    logger.info('telegram.published', { externalId: post.id, method, telegramMessageIds: [sent.message_id] });
     return {
       ...base,
       status: 'published',
@@ -540,7 +540,7 @@ async function processTextPost(
   } catch (error) {
     const permanent = isPermanentTelegramError(error);
     logger.error(review ? 'approval.review_send_failed' : 'telegram.upload_failed', {
-      xPostId: post.id,
+      externalId: post.id,
       method,
       permanent,
       error: describeError(error),
@@ -653,7 +653,7 @@ function logDryRun(
 
   logger.info('dry_run.post', {
     dryRun: true,
-    xPostId: post.id,
+    externalId: post.id,
     xPostUrl: post.url,
     media: description,
     telegramMethod: method,

@@ -30,9 +30,7 @@ import {
 import { createRadarRun, type RadarRun } from '@/lib/radar/shadow';
 import { createImageUnderstander, type ImageUnderstander } from '@/lib/media/provider';
 import { mediaUnderstandingConfig } from '@/lib/media/understanding';
-import { syncXSource } from '@/lib/sync/sync-x-source';
-import { syncRssSource } from '@/lib/sync/sync-rss-source';
-import { syncTelegramSource } from '@/lib/sync/sync-telegram-source';
+import { sourceAdapter } from '@/lib/sync/source-adapters';
 import type { FetchChannelOptions } from '@/lib/telegram-channel/client';
 import { sendReviewDigest } from '@/lib/review/queue';
 import {
@@ -52,7 +50,7 @@ import type { SyncSummary } from '@/types';
  *   1. A Postgres advisory lock per tenant means only one invocation syncs a
  *      given tenant at a time. Per tenant rather than global, so one slow
  *      account cannot hold up every other tenant's run.
- *   2. An atomic claim on the UNIQUE (workspace_id, x_post_id) means that even
+ *   2. An atomic claim on the UNIQUE (workspace_id, external_id) means that even
  *      if the lock were bypassed, a post can only ever be claimed by one runner.
  *   3. Each post is processed in isolation, so one bad post cannot abort a
  *      source; sources and tenants are isolated too, so neither an unreachable
@@ -138,6 +136,7 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
   try {
     const xClient = options.xClient ?? new XClient({ logger });
     const telegramClient = options.telegramClient ?? new TelegramClient({ logger });
+    const clients = { xClient, feedFetch: options.feedFetch, channelFetch: options.channelFetch };
 
     // Shadow Radar only ever scores posts on their way to a reviewer, and only
     // with the configured provider's key set.
@@ -304,12 +303,7 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
 
           // None ever throws; a failure is reported in its summary so the
           // remaining sources — of any platform — and tenants get their turn.
-          const sourceSummary =
-            source.platform === 'rss'
-              ? await syncRssSource(source, { ...shared, feedFetch: options.feedFetch })
-              : source.platform === 'telegram'
-                ? await syncTelegramSource(source, { ...shared, channelFetch: options.channelFetch })
-                : await syncXSource(source, { ...shared, xClient });
+          const sourceSummary = await sourceAdapter(source.platform).sync(source, { ...shared, clients });
           if (sourceSummary.stoppedForTime) summary.timeBudgetReached = true;
 
           summary.sources.push(sourceSummary);

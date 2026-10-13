@@ -7,7 +7,7 @@ import type postgres from 'postgres';
  * Vercel explicitly warns that a cron job may be invoked again while the previous
  * run is still in flight, and that delivery can occasionally be duplicated. This
  * lock is the first of our two defences; the UNIQUE constraint on
- * `processed_posts.x_post_id` is the second, and is the one that actually makes
+ * `processed_posts.external_id` is the second, and is the one that actually makes
  * double-publishing impossible.
  */
 

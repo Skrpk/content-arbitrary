@@ -36,14 +36,14 @@ export function entryStableKey(entry: {
 }
 
 /**
- * The entry's id in `processed_posts.x_post_id`: `rss:<feed>:<entry>`, each a
+ * The entry's id in `processed_posts.external_id`: `rss:<feed>:<entry>`, each a
  * hash.
  *
  * Compatibility debt, on purpose: `processed_posts` still has X's column
  * names, and an RSS item borrows them rather than the table being renamed for
  * a second platform. The prefix keeps it clear of X's numeric ids, the feed
  * part keeps two feeds apart, and both survive the source being removed and
- * added back — so the UNIQUE (workspace_id, x_post_id) goes on guarding
+ * added back — so the UNIQUE (workspace_id, external_id) goes on guarding
  * against duplicates for feeds too.
  */
 export function rssItemId(feedUrl: string, stableKey: string): string {

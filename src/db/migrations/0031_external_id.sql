@@ -1,0 +1,2 @@
+ALTER TABLE "processed_posts" RENAME COLUMN "x_post_id" TO "external_id";--> statement-breakpoint
+ALTER INDEX "processed_posts_workspace_x_post_id_key" RENAME TO "processed_posts_workspace_external_id_key";

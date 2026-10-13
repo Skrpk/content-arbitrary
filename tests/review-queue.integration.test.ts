@@ -237,7 +237,7 @@ async function queuedPost(overrides: Partial<typeof processedPosts.$inferInsert>
     .insert(processedPosts)
     .values({
       workspaceId: DEFAULT_WORKSPACE_ID,
-      xPostId: String(1_750_000_000_000_000_000n + BigInt(postSeq)),
+      externalId: String(1_750_000_000_000_000_000n + BigInt(postSeq)),
       xPostUrl: `https://x.com/trail_cams/status/${postSeq}`,
       xAuthorUsername: 'trail_cams',
       status: 'awaiting_approval',

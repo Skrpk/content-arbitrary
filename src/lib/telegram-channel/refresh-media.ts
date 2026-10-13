@@ -14,11 +14,11 @@ import type { NormalizedMedia } from '@/types';
  * platform are returned as they are.
  */
 export async function refreshChannelMedia(
-  xPostId: string,
+  externalId: string,
   media: NormalizedMedia[],
   options: { fetchImpl?: typeof fetch } = {},
 ): Promise<NormalizedMedia[]> {
-  const id = parseChannelPostId(xPostId);
+  const id = parseChannelPostId(externalId);
   if (!id || media.length === 0) return media;
 
   const page = await fetchChannelPost(id.channel, id.messageId, { fetchImpl: options.fetchImpl });

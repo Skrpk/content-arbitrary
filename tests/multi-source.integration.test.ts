@@ -410,13 +410,13 @@ describeIfDb('legacy env bootstrap', () => {
     // the 0003 back-fill could not match a source that did not exist yet.
     await db.insert(processedPosts).values([
       {
-        xPostId: '1700000000000000001',
+        externalId: '1700000000000000001',
         xPostUrl: 'https://x.com/legacy/status/1700000000000000001',
         xAuthorUsername: 'legacy',
         status: 'published',
       },
       {
-        xPostId: '1700000000000000002',
+        externalId: '1700000000000000002',
         xPostUrl: 'https://x.com/other/status/1700000000000000002',
         xAuthorUsername: 'someoneelse',
         status: 'published',

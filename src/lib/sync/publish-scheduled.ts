@@ -93,13 +93,13 @@ export async function publishDueScheduledPosts(input: {
     const fail = async (error: string) => {
       summary.failed += 1;
       const attempts = await returnToSchedule(db, { id, errorMessage: error, countAttempt: true });
-      logger.error('scheduled.publish_failed', { xPostId: row.xPostId, attempts, error });
+      logger.error('scheduled.publish_failed', { externalId: row.externalId, attempts, error });
 
       if (attempts < env.MAX_RETRY_ATTEMPTS) return;
 
       await abandonSchedule(db, { id, errorMessage: error });
       summary.returnedToReview += 1;
-      logger.error('scheduled.abandoned', { xPostId: row.xPostId, attempts });
+      logger.error('scheduled.abandoned', { externalId: row.externalId, attempts });
 
       // Tell the reviewer, and give them the decision back.
       if (row.adminChatId && row.adminMessageId) {
@@ -113,7 +113,7 @@ export async function publishDueScheduledPosts(input: {
               `⚠️ Scheduled publishing failed ${attempts} times: ${escapeHtml(error.slice(0, 300))}`,
               'Back in review — approve or schedule it again.',
               formatReviewControlText(
-                sourceLabelOfPost(row.xPostId, row.xAuthorUsername),
+                sourceLabelOfPost(row.externalId, row.xAuthorUsername),
                 row.xPostUrl,
                 channel ? channelLabelFor(channel, reviewerWorkspaces.length) : null,
                 await loadRadarNote(db, row.id).catch(() => null),
@@ -155,7 +155,7 @@ export async function publishDueScheduledPosts(input: {
       });
       summary.published += 1;
       logger.info('scheduled.published', {
-        xPostId: row.xPostId,
+        externalId: row.externalId,
         scheduledFor: row.scheduledFor?.toISOString(),
         telegramMessageIds: result.messages.map((message) => message.messageId),
       });

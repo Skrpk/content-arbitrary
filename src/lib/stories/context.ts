@@ -58,7 +58,7 @@ export async function loadStoryContext(
   const rows = await db
     .select({
       processedPostId: processedPosts.id,
-      xPostId: processedPosts.xPostId,
+      externalId: processedPosts.externalId,
       sourceUsername: processedPosts.xAuthorUsername,
       arrivedAt: processedPosts.createdAt,
       status: processedPosts.status,
@@ -84,7 +84,7 @@ export async function loadStoryContext(
     return {
       processedPostId: row.processedPostId,
       sourceUsername: row.sourceUsername,
-      ...(isRssItemId(row.xPostId) ? { sourcePlatform: 'rss' as const } : {}),
+      ...(isRssItemId(row.externalId) ? { sourcePlatform: 'rss' as const } : {}),
       hoursBefore: (own.arrivedAt.getTime() - row.arrivedAt.getTime()) / 3_600_000,
       decision: published ? 'published' : rejected ? 'rejected' : 'undecided',
       rejectionReason: rejected ? row.rejectionReason : null,

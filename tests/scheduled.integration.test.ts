@@ -89,7 +89,7 @@ async function queuePost(options?: { caption?: string; payload?: ApprovalPayload
     .insert(processedPosts)
     .values({
       workspaceId: DEFAULT_WORKSPACE_ID,
-      xPostId: String(1_750_000_000_000_000_000n + BigInt(Math.floor(Math.random() * 1e6))),
+      externalId: String(1_750_000_000_000_000_000n + BigInt(Math.floor(Math.random() * 1e6))),
       xPostUrl: 'https://x.com/someone/status/1750000000000000001',
       xAuthorUsername: 'someone',
       status: 'awaiting_approval',

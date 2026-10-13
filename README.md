@@ -263,7 +263,7 @@ This creates three tables:
 | --- | --- |
 | `workspaces` | The tenant a channel and its sources belong to. One row today, seeded from the environment. |
 | `sources` | Accounts being watched. `(workspace_id, platform, external_id)` is **UNIQUE**, so the same account cannot be added twice. |
-| `processed_posts` | One row per X post ever seen. `(workspace_id, x_post_id)` is **UNIQUE** — the guarantee against double-posting. |
+| `processed_posts` | One row per X post ever seen. `(workspace_id, external_id)` is **UNIQUE** — the guarantee against double-posting. |
 | `telegram_messages` | Every Telegram message id produced, including each item of an album. |
 | `sync_state` | The `since_id` cursor and last-run health per source. |
 
@@ -701,7 +701,7 @@ a feed costs nothing, so `/sourcestats` shows no X read cost for one, and leaves
 the counts.
 
 **Under the hood.** `processed_posts` still has X's column names, and a feed entry borrows them:
-`x_post_id` holds `rss:<feed hash>:<entry hash>` (clear of X's numeric ids and of other feeds),
+`external_id` holds `rss:<feed hash>:<entry hash>` (clear of X's numeric ids and of other feeds),
 `x_post_url` the article, `x_author_username` the feed's title, `x_created_at` the entry's date.
 TODO: when the next platform connector lands (Reddit, YouTube…), rename these to
 `external_item_id`, `source_item_url`, `source_author` and `source_published_at`, and move X's
@@ -756,7 +756,7 @@ redirects are not followed. Media are fetched only from Telegram's own content h
 page says.
 
 **Under the hood.** `sources.external_id` holds the lower-cased username — the only identity the
-public page offers, so a renamed channel is a new source. A post's `x_post_id` is
+public page offers, so a renamed channel is a new source. A post's `external_id` is
 `tg:<channel>/<message id>`, `x_post_url` its t.me link, `x_author_username` the channel's username.
 In stats and settings a channel is `@username` with a **Telegram** badge and its link; reading it
 costs nothing.
@@ -1827,6 +1827,16 @@ published.
 
 ## Architecture decisions
 
+**One adapter per platform.** The sync run knows nothing of X, feeds or channels: it hands each
+source to its platform's `SourceAdapter` ([`src/lib/sync/source-adapters.ts`](src/lib/sync/source-adapters.ts)),
+which reads what is new in its own way — a cursor on X and Telegram, identity on a feed — and
+passes each post, normalised, to the path every platform shares from claim to review
+(`processCandidate`). A platform's identity — the prefix of its posts' ids in
+`processed_posts.external_id` (none for X, `rss:`, `tg:`) and how a source is named — is in
+[`src/lib/sources/display.ts`](src/lib/sources/display.ts). Both are typed by `source_platform`,
+so a new platform (a newsletter, say) does not compile until it has both. The column was
+`x_post_id` until every platform used it (migration `0031_external_id`).
+
 **Drizzle ORM, not Prisma.** Prisma ships a query-engine binary that inflates the serverless
 bundle and cold-start time. Drizzle is plain TypeScript with generated SQL migrations.
 
@@ -1843,7 +1853,7 @@ appear, and one missed character makes Telegram reject the entire message with
 author-written text.
 
 **Workspace scoping, ahead of multi-tenancy.** `sources` and `processed_posts` carry a
-`workspace_id`, and duplicate protection is `UNIQUE (workspace_id, x_post_id)` rather than
+`workspace_id`, and duplicate protection is `UNIQUE (workspace_id, external_id)` rather than
 global. Only one workspace exists and the runtime still reads the channel and reviewer from the
 environment — but the columns are in place now because they are cheap to add to small tables
 and expensive later: once a second tenant exists, the same X post legitimately belongs to two
@@ -1859,7 +1869,7 @@ on scheduling:
 1. A **PostgreSQL advisory lock** means only one sync runs at a time; an overlapping
    invocation exits immediately with `lockBusy` rather than queueing.
 2. An **atomic claim** — a single `INSERT … ON CONFLICT DO UPDATE … WHERE` against the UNIQUE
-   `x_post_id` — decides ownership of each post in one statement. Ten simultaneous runners
+   `external_id` — decides ownership of each post in one statement. Ten simultaneous runners
    produce exactly one winner. This is the guarantee that actually prevents double-posting;
    the lock is only an optimisation.
 3. A **processing lease**: a row claimed by a function that was then killed is reclaimed after
@@ -1921,11 +1931,12 @@ src/
       normalize.ts             Channel post → candidate post, tg:<channel>/<id> ids
       refresh-media.ts         Fresh media links for a queued post, before it is published
     sources/
-      display.ts               @handle vs feed title, everywhere a source is named
+      display.ts               Each platform's identity: its post ids' prefix, and how a source is named
       add-rss.ts               Check-then-store for /addrss and Settings
       add-telegram.ts          Check-then-store for /addtelegram and Settings
     sync/
       sync-posts.ts            Orchestration, X, RSS and Telegram sources alike
+      source-adapters.ts       One adapter per platform: the orchestrator hands each source to its own
       sync-x-source.ts         One X account: cursor, candidates
       sync-rss-source.ts       One feed: backlog on follow, known-id dedup, candidates
       sync-telegram-source.ts  One public channel: message-id cursor, pages back to it

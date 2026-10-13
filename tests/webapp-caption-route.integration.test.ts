@@ -97,7 +97,7 @@ async function insertAwaitingPost(options?: {
     .insert(processedPosts)
     .values({
       workspaceId: options?.workspaceId ?? DEFAULT_WORKSPACE_ID,
-      xPostId: `17500000000000${Math.floor(Math.random() * 90000) + 10000}`,
+      externalId: `17500000000000${Math.floor(Math.random() * 90000) + 10000}`,
       xPostUrl: 'https://x.com/someone/status/1750000000000000001',
       xAuthorUsername: 'someone',
       status: 'awaiting_approval',

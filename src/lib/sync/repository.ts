@@ -43,7 +43,7 @@ export interface ClaimResult {
  * Atomically take ownership of a post.
  *
  * This is the core of the duplicate protection. The INSERT relies on the UNIQUE
- * index on `x_post_id`:
+ * index on `external_id`:
  *
  *   - if no row exists, we insert one directly in `processing` state and win;
  *   - if a row already exists, `ON CONFLICT ... DO UPDATE` only flips it to
@@ -57,7 +57,7 @@ export interface ClaimResult {
 export async function claimPost(
   db: Database,
   input: {
-    xPostId: string;
+    externalId: string;
     xPostUrl: string;
     xAuthorUsername: string | null;
     xCreatedAt: Date | null;
@@ -95,7 +95,7 @@ export async function claimPost(
     .values({
       workspaceId,
       sourceId: input.sourceId ?? null,
-      xPostId: input.xPostId,
+      externalId: input.externalId,
       xPostUrl: input.xPostUrl,
       xAuthorUsername: input.xAuthorUsername,
       xCreatedAt: input.xCreatedAt,
@@ -108,7 +108,7 @@ export async function claimPost(
     .onConflictDoUpdate({
       // Scoped to the workspace, matching the UNIQUE index: the same post may
       // legitimately exist once per tenant.
-      target: [processedPosts.workspaceId, processedPosts.xPostId],
+      target: [processedPosts.workspaceId, processedPosts.externalId],
       set: {
         status: 'processing',
         sourceId: input.sourceId ?? null,
@@ -153,7 +153,7 @@ export async function claimPost(
     .where(
       and(
         eq(processedPosts.workspaceId, workspaceId),
-        eq(processedPosts.xPostId, input.xPostId),
+        eq(processedPosts.externalId, input.externalId),
       ),
     )
     .limit(1);
@@ -763,7 +763,7 @@ export async function recordFeedBacklog(
   input: {
     workspaceId: number;
     sourceId: number;
-    items: { xPostId: string; xPostUrl: string; xAuthorUsername: string | null; xCreatedAt: Date | null }[];
+    items: { externalId: string; xPostUrl: string; xAuthorUsername: string | null; xCreatedAt: Date | null }[];
   },
 ): Promise<void> {
   const now = new Date();
@@ -781,7 +781,7 @@ export async function recordFeedBacklog(
           processedAt: now,
         })),
       )
-      .onConflictDoNothing({ target: [processedPosts.workspaceId, processedPosts.xPostId] });
+      .onConflictDoNothing({ target: [processedPosts.workspaceId, processedPosts.externalId] });
   }
 }
 
@@ -792,23 +792,23 @@ export async function recordFeedBacklog(
  */
 export async function findKnownPostIds(
   db: Database,
-  xPostIds: string[],
+  externalIds: string[],
   workspaceId: number,
 ): Promise<Set<string>> {
-  if (xPostIds.length === 0) return new Set();
+  if (externalIds.length === 0) return new Set();
 
   const rows = await db
-    .select({ xPostId: processedPosts.xPostId })
+    .select({ externalId: processedPosts.externalId })
     .from(processedPosts)
     .where(
       and(
         eq(processedPosts.workspaceId, workspaceId),
-        inArray(processedPosts.xPostId, xPostIds),
+        inArray(processedPosts.externalId, externalIds),
         inArray(processedPosts.status, ['published', 'skipped', 'rejected', 'awaiting_approval', 'scheduled']),
       ),
     );
 
-  return new Set(rows.map((row) => row.xPostId));
+  return new Set(rows.map((row) => row.externalId));
 }
 
 /** Record which image a post's first image is, by its bytes' fingerprint. */
@@ -822,23 +822,23 @@ export async function setPostImageFingerprint(db: Database, input: { id: number;
 /** Post ids we have already reached a terminal decision on. */
 export async function findTerminalPostIds(
   db: Database,
-  xPostIds: string[],
+  externalIds: string[],
   workspaceId: number = DEFAULT_WORKSPACE_ID,
 ): Promise<Set<string>> {
-  if (xPostIds.length === 0) return new Set();
+  if (externalIds.length === 0) return new Set();
 
   const rows = await db
-    .select({ xPostId: processedPosts.xPostId })
+    .select({ externalId: processedPosts.externalId })
     .from(processedPosts)
     .where(
       and(
         eq(processedPosts.workspaceId, workspaceId),
-        inArray(processedPosts.xPostId, xPostIds),
+        inArray(processedPosts.externalId, externalIds),
         inArray(processedPosts.status, ['published', 'skipped', 'rejected']),
       ),
     );
 
-  return new Set(rows.map((row) => row.xPostId));
+  return new Set(rows.map((row) => row.externalId));
 }
 
 /**
@@ -917,7 +917,7 @@ export async function upsertSyncState(
 export async function getRecentPosts(db: Database, limit = 10) {
   return db
     .select({
-      xPostId: processedPosts.xPostId,
+      externalId: processedPosts.externalId,
       xPostUrl: processedPosts.xPostUrl,
       status: processedPosts.status,
       telegramMessageId: processedPosts.telegramMessageId,

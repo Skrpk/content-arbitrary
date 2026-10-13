@@ -362,7 +362,7 @@ export function isRejectionReason(value: string): value is RejectionReason {
 /**
  * One row per X post we have ever seen.
  *
- * `xPostId` is UNIQUE — this is the hard guarantee against double-publishing.
+ * `externalId` is UNIQUE — this is the hard guarantee against double-publishing.
  * Two concurrent cron invocations both try to INSERT the same post id; exactly
  * one wins and proceeds, the other sees the conflict and backs off.
  */
@@ -381,7 +381,7 @@ export const processedPosts = pgTable(
      */
     sourceId: integer('source_id').references(() => sources.id, { onDelete: 'set null' }),
     /** X post ("tweet") snowflake id, stored as text to avoid 64-bit issues. */
-    xPostId: text('x_post_id').notNull(),
+    externalId: text('external_id').notNull(),
     xPostUrl: text('x_post_url').notNull(),
     /** Author handle at the time of processing, for building source links. */
     xAuthorUsername: text('x_author_username'),
@@ -527,7 +527,7 @@ export const processedPosts = pgTable(
      * same X post to their own channels are not duplicates of each other, so
      * the guarantee is per workspace rather than global.
      */
-    uniqueIndex('processed_posts_workspace_x_post_id_key').on(table.workspaceId, table.xPostId),
+    uniqueIndex('processed_posts_workspace_external_id_key').on(table.workspaceId, table.externalId),
     index('processed_posts_status_idx').on(table.status),
     index('processed_posts_source_idx').on(table.sourceId),
     index('processed_posts_processed_at_idx').on(table.processedAt),

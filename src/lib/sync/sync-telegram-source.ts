@@ -78,13 +78,13 @@ export async function syncTelegramSource(source: Source, context: TelegramSyncCo
       const reason = skipReason(page, { includeTextOnly: source.includeTextOnly, includeReposts: env.INCLUDE_REPOSTS });
       const post = channelPostToPost(page);
       if (reason) {
-        logger.info('sync.post_skipped', { xPostId: post.id, reason });
+        logger.info('sync.post_skipped', { externalId: post.id, reason });
         summary.skipped += 1;
         continue;
       }
       if (page.unsupported.length > 0) {
         logger.warn('telegram_channel.media_partially_unsupported', {
-          xPostId: post.id,
+          externalId: post.id,
           usable: page.media.length,
           problems: page.unsupported,
         });
@@ -92,7 +92,7 @@ export async function syncTelegramSource(source: Source, context: TelegramSyncCo
 
       // From when the source was added or resumed, as on X: what was there before is backlog.
       if (post.createdAt && post.createdAt < source.followingSince) {
-        logger.info('sync.post_skipped', { xPostId: post.id, reason: 'posted before the source was followed' });
+        logger.info('sync.post_skipped', { externalId: post.id, reason: 'posted before the source was followed' });
         summary.skipped += 1;
         continue;
       }
@@ -106,7 +106,7 @@ export async function syncTelegramSource(source: Source, context: TelegramSyncCo
     );
     const candidates = posts.filter((post) => {
       if (!terminal.has(post.id)) return true;
-      logger.info('sync.post_skipped', { xPostId: post.id, reason: 'already processed' });
+      logger.info('sync.post_skipped', { externalId: post.id, reason: 'already processed' });
       summary.skipped += 1;
       return false;
     });
@@ -134,7 +134,7 @@ export async function syncTelegramSource(source: Source, context: TelegramSyncCo
       }
 
       const result = await processCandidate(post, source, context, summary, {
-        logger: logger.child({ xPostId: post.id }),
+        logger: logger.child({ externalId: post.id }),
         textOnly: source.includeTextOnly,
         spaceOut: index > 0,
       });

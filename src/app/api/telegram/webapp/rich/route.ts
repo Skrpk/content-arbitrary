@@ -48,7 +48,7 @@ export async function GET(request: Request): Promise<Response> {
     postId: post.id,
     status: post.status,
     channel: workspace.name,
-    sourceLabel: sourceLabelOfPost(post.xPostId, post.xAuthorUsername),
+    sourceLabel: sourceLabelOfPost(post.externalId, post.xAuthorUsername),
     url: post.xPostUrl,
     isRich: post.richDoc !== null,
     doc: post.richDoc ?? initialRichDocument({ text: plainTextOf(post, footer), mediaCount: payloadMediaCount(payload) }),

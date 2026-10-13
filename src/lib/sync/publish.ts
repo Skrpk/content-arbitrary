@@ -53,7 +53,7 @@ export async function publishDecidedPost(input: {
 
   const media =
     payload.items.length === 0 && payload.sourceMedia?.length
-      ? await acquireMedia(await refreshChannelMedia(input.row.xPostId, payload.sourceMedia, { fetchImpl: input.fetchImpl }), {
+      ? await acquireMedia(await refreshChannelMedia(input.row.externalId, payload.sourceMedia, { fetchImpl: input.fetchImpl }), {
           env: input.env,
           logger: input.logger ?? createLogger({ app: 'content-arbitrary' }),
           fetchImpl: input.fetchImpl,
@@ -99,7 +99,7 @@ async function publishRichPost(
   // Looked up afresh only when some of them are fetched again, not re-sent from Telegram's copies.
   const sourceMedia =
     payload.sourceMedia && refs.some((ref) => !payload.items[Number(ref.slice(1))])
-      ? await refreshChannelMedia(input.row.xPostId, payload.sourceMedia, { fetchImpl: input.fetchImpl })
+      ? await refreshChannelMedia(input.row.externalId, payload.sourceMedia, { fetchImpl: input.fetchImpl })
       : payload.sourceMedia;
 
   const media: { ref: string; payload: MediaPayload }[] = [];

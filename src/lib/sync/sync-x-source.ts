@@ -17,7 +17,7 @@ import type { SourceSyncSummary } from '@/types';
  * orchestrator can carry on with the next one.
  */
 
-export interface SourceSyncContext extends CandidateContext {
+export interface XSyncContext extends CandidateContext {
   logger: Logger;
   xClient: XClient;
   /** When to stop taking new posts (epoch ms); unset, there is no limit. */
@@ -27,7 +27,7 @@ export interface SourceSyncContext extends CandidateContext {
 
 export async function syncXSource(
   source: Source,
-  context: SourceSyncContext,
+  context: XSyncContext,
 ): Promise<SourceSyncSummary> {
   const { db, env, xClient } = context;
   const stateKey = syncStateKey(source);
@@ -87,7 +87,7 @@ export async function syncXSource(
     }
 
     for (const entry of result.skipped) {
-      logger.info('sync.post_skipped', { xPostId: entry.id, reason: entry.reason });
+      logger.info('sync.post_skipped', { externalId: entry.id, reason: entry.reason });
       summary.skipped += 1;
     }
 
@@ -101,7 +101,7 @@ export async function syncXSource(
      */
     const fresh = result.posts.filter((post) => {
       if (!post.createdAt || post.createdAt >= source.followingSince) return true;
-      logger.info('sync.post_skipped', { xPostId: post.id, reason: 'posted before the source was followed' });
+      logger.info('sync.post_skipped', { externalId: post.id, reason: 'posted before the source was followed' });
       summary.skipped += 1;
       return false;
     });
@@ -114,7 +114,7 @@ export async function syncXSource(
     );
     const candidates = fresh.filter((post) => {
       if (!terminal.has(post.id)) return true;
-      logger.info('sync.post_skipped', { xPostId: post.id, reason: 'already processed' });
+      logger.info('sync.post_skipped', { externalId: post.id, reason: 'already processed' });
       summary.skipped += 1;
       return false;
     });
@@ -155,7 +155,7 @@ export async function syncXSource(
       }
 
       const result = await processCandidate(post, source, context, summary, {
-        logger: logger.child({ xPostId: post.id }),
+        logger: logger.child({ externalId: post.id }),
         textOnly: source.includeTextOnly,
         spaceOut: index > 0,
       });

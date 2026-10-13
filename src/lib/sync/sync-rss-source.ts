@@ -103,7 +103,7 @@ export async function syncRssSource(source: Source, context: RssSyncContext): Pr
           workspaceId: source.workspaceId,
           sourceId: source.id,
           items: posts.map((post) => ({
-            xPostId: post.id,
+            externalId: post.id,
             xPostUrl: post.url,
             xAuthorUsername: post.authorUsername,
             xCreatedAt: post.createdAt,
@@ -145,12 +145,12 @@ export async function syncRssSource(source: Source, context: RssSyncContext): Pr
       }
 
       const result = await processCandidate(post, source, context, summary, {
-        logger: logger.child({ xPostId: post.id }),
+        logger: logger.child({ externalId: post.id }),
         // Every feed entry is text; the X-only "posts without media" switch has no say.
         textOnly: true,
         spaceOut: index > 0,
       });
-      if (result.kind === 'skipped') logger.info('rss.entry_skipped', { xPostId: post.id });
+      if (result.kind === 'skipped') logger.info('rss.entry_skipped', { externalId: post.id });
     }
 
     await markSynced(context, source, stateKey);
