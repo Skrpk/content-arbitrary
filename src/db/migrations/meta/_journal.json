@@ -204,6 +204,13 @@
       "when": 1791824285014,
       "tag": "0028_workspace_auto_publish",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1791851108789,
+      "tag": "0029_assistant_requests",
+      "breakpoints": true
     }
   ]
 }

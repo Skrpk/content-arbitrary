@@ -873,6 +873,32 @@ copies for a post reviewed in the chat, fetched again from X for a queued one. U
 pictures is not supported yet. The Mini App keeps its plain caption editor, and refuses to edit
 a post laid out on the website, where its layout is what will be published.
 
+### The AI assistant
+
+**✨ AI assistant** opens a chat beside the post (under it on a narrow screen). Ask it to change
+the post — "make it shorter", "add a headline", "fix the grammar", "translate into Ukrainian" —
+and the change lands in the editor at once, with **Undo** (and **Redo**) under the reply; ask it
+to check the facts and it searches the web and answers with the pages it cites. Nothing is saved:
+the editor's own **Save** does that, as for any change.
+
+It knows the channel's editorial profile, its voice and two of its posts (from the
+[publication-history profile](#publication-history)), the post's source and pictures, and the
+post as it reads in the editor right now — the unsaved draft, sent with each message. The post
+travels as a small HTML of exactly what a rich message holds (`src/lib/rich/edit-html.ts`); the
+model rewrites it through one function, `edit_post`, and its version is checked on the server
+exactly as a save is checked before the editor ever sees it. One that does not pass — a picture
+that is not the post's, a tag the channel cannot show — is sent back once with the reason, then
+reported. The conversation stays in the editor while it is open; the latest twelve messages go
+back with each new one.
+
+**Cost.** OpenAI only for now (`ASSISTANT_MODEL`, GPT-6 Luna by default), through the Responses
+API: little reasoning, web search with little context and only when the request needs it, a
+bounded answer, and nothing stored on OpenAI's side. A rewrite costs a few hundredths of a cent;
+a fact check about twice that in tokens, plus OpenAI's own fee per web search. Every request is
+recorded in `assistant_requests` — tokens, searches, cost estimate, whether it changed the post —
+and a reviewer gets `ASSISTANT_DAILY_LIMIT` requests (100) in 24 hours; `0` turns the assistant
+off, and so does a missing `OPENAI_API_KEY`.
+
 Where the bot's **📋 Open review queue** buttons — the queue notification and `/review` — take
 you is yours to choose under Settings: the Mini App, inside Telegram (the default), or the
 website, in the browser (`users.review_link`).
@@ -1361,6 +1387,11 @@ npm run radar:backfill -- --workspace 2 --prompt radar-v3-retrieval-approved,rad
 npm run radar:report -- --workspace 2 --compare radar-v3-retrieval-approved,radar-v3-without-history-profile
 ```
 
+On VECTOR's first 351 decided posts after its profile was made (41 approved) the profile paid its
+way: with it AUC 0.71 against 0.67 without, 18 of the 41 approvals in each day's top quarter
+against 12, precision at 80 26% against 15%, and 9 approvals scored under 50 against 13 — for
+about a fifth more input tokens.
+
 A prompt change gets a new version in [`src/lib/radar/prompt.ts`](src/lib/radar/prompt.ts):
 results of different prompts are reported separately and never mixed — and so are scores made
 with different history profiles, or none. `radar-v0` is the prompt before publication history;
@@ -1657,6 +1688,8 @@ effect would otherwise drown among text posts — with what the images cost to l
 | `RADAR_MODEL` | provider's default | Overrides the chosen provider's model id. |
 | `OPENAI_API_KEY` | — | Needed for Radar with `RADAR_PROVIDER=openai`. Without the chosen provider's key, Radar is off. Also used for history embeddings, whatever the provider. |
 | `HISTORY_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI model for [similar past publications](#similar-past-publications). Vectors are kept per model; after changing it, run `npm run history:embed` again. |
+| `ASSISTANT_MODEL` | `gpt-6-luna` | OpenAI model behind the post editor's [AI assistant](#the-ai-assistant). Needs `OPENAI_API_KEY`. |
+| `ASSISTANT_DAILY_LIMIT` | `100` | Assistant requests one reviewer may make in 24 hours; `0` turns the assistant off. |
 | `MEDIA_UNDERSTANDING_MODEL` | `gpt-6-luna` | OpenAI model that looks at a post's first photo once ([image understanding](#image-understanding)). Needs `OPENAI_API_KEY`. Understandings are kept per model; a new one means looking again. |
 | `RADAR_LIVE_IMAGE_VARIANT` | `false` | Also score every live post with its raw first photo, once per prompt version — the earlier `text_image` experiment. |
 | `ANTHROPIC_API_KEY` | — | Needed for Radar with `RADAR_PROVIDER=anthropic`. |
@@ -1821,6 +1854,12 @@ src/
       embeddings/              Embedded text and fingerprint, OpenAI embeddings, backfill, search
     rich/
       document.ts              A rich post: the editor's document, checked, to Telegram rich HTML
+      edit-html.ts             The document as the small HTML the AI assistant edits, and back
+    assistant/
+      prompt.ts                What the post editor's assistant is told: channel, source, draft
+      openai.ts                One streamed turn on OpenAI: web search, edit_post
+      repository.ts            Whether it is set up; assistant_requests and the daily limit
+      events.ts                The stream's events, shared with the editor's panel
     review/
       queue.ts                 The review queue: its page's list, the notification and when it is due
     accounts/
@@ -1835,7 +1874,7 @@ src/
     source-stats-panel.tsx     The Sources page — adding and stats — likewise
     add-source-form.tsx        ➕ Add a source: X, Telegram or RSS, on the Sources page
     mini-app-frame.tsx         The Mini App frame: Telegram's script, initData-signed requests
-    rich-editor/               The website's post editor (Tiptap) and its picture block
+    rich-editor/               The website's post editor (Tiptap), its picture block and AI assistant panel
     media/
       understanding.ts         ImageUnderstanding, its prompt, schema and config
       provider.ts              The vision call: one low-detail image, no reasoning

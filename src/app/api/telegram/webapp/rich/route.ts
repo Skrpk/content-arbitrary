@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { payloadMediaCount, type ProcessedPost } from '@/db/schema';
+import { assistantAvailable } from '@/lib/assistant/repository';
 import { describeError } from '@/lib/errors';
 import {
   initialRichDocument,
@@ -54,6 +55,8 @@ export async function GET(request: Request): Promise<Response> {
     media: mediaOf(post),
     footer: footer?.text ?? null,
     limits: { text: RICH_TEXT_MAX - (footer ? footer.text.length + 2 : 0), media: RICH_MEDIA_MAX },
+    // Whether the editor shows the AI assistant (src/app/api/telegram/webapp/assistant).
+    assistant: assistantAvailable(auth.env),
   });
 }
 

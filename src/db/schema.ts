@@ -1142,3 +1142,39 @@ export type ProcessedPost = typeof processedPosts.$inferSelect;
 export type NewProcessedPost = typeof processedPosts.$inferInsert;
 export type TelegramMessageRow = typeof telegramMessages.$inferSelect;
 export type SyncStateRow = typeof syncState.$inferSelect;
+
+export const ASSISTANT_REQUEST_STATUSES = ['ok', 'failed'] as const;
+
+/**
+ * One message to the post editor's AI assistant and what answering it cost —
+ * the record the daily limit counts, and where the bill can be read from.
+ * The conversation itself is not kept: it lives in the editor while it is open.
+ */
+export const assistantRequests = pgTable(
+  'assistant_requests',
+  {
+    id: serial('id').primaryKey(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    processedPostId: integer('processed_post_id').references(() => processedPosts.id, { onDelete: 'set null' }),
+    userId: integer('user_id').references(() => users.id, { onDelete: 'set null' }),
+    model: text('model').notNull(),
+    promptVersion: text('prompt_version').notNull(),
+    status: text('status', { enum: ASSISTANT_REQUEST_STATUSES }).notNull(),
+    /** Whether the answer changed the post. */
+    edited: boolean('edited').notNull().default(false),
+    webSearches: integer('web_searches').notNull().default(0),
+    inputTokens: integer('input_tokens'),
+    outputTokens: integer('output_tokens'),
+    /** List-price estimate of the tokens; web searches are billed apart and not in it. */
+    costUsd: doublePrecision('cost_usd'),
+    latencyMs: integer('latency_ms'),
+    error: text('error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('assistant_requests_user_created_idx').on(table.userId, table.createdAt),
+    check('assistant_requests_status_check', sql`${table.status} IN ('ok', 'failed')`),
+  ],
+);

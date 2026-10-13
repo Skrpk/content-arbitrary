@@ -242,6 +242,18 @@ const schema = z
      * image is understood once and every version reads that description.
      */
     RADAR_LIVE_IMAGE_VARIANT: booleanish(false),
+    /**
+     * The OpenAI model behind the post editor's AI assistant — it rewrites the
+     * post on request and searches the web to check facts. Only with
+     * OPENAI_API_KEY set; without it the editor has no assistant.
+     */
+    ASSISTANT_MODEL: z
+      .string()
+      .trim()
+      .optional()
+      .transform((value) => (value ? value : 'gpt-6-luna')),
+    /** Assistant requests one reviewer may make in 24 hours: a ceiling on what it can cost. */
+    ASSISTANT_DAILY_LIMIT: intInRange(0, 10_000, 100),
 
     CRON_SECRET: z.string().min(16, 'CRON_SECRET must be at least 16 characters'),
     ADMIN_SECRET: z.string().min(16).optional().or(z.literal('').transform(() => undefined)),

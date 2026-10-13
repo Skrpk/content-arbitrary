@@ -5,6 +5,7 @@ import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { useEffect, useMemo, useState } from 'react';
 import { readJson, type PanelTools } from '@/components/panel-tools';
+import { ASSISTANT_CSS, AssistantPanel } from '@/components/rich-editor/assistant-panel';
 import { EditorMediaContext, PostMedia, type EditorMedia } from '@/components/rich-editor/post-media';
 import { theme } from '@/lib/telegram/webapp-client';
 
@@ -30,6 +31,8 @@ interface EditorData {
   media: EditorMedia[];
   footer: string | null;
   limits: { text: number; media: number };
+  /** Whether the AI assistant is set up. */
+  assistant?: boolean;
 }
 
 export function PostEditor({
@@ -72,6 +75,7 @@ function LoadedEditor({
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const mediaByRef = useMemo(() => new Map(data.media.map((media) => [media.ref, media])), [data.media]);
 
   const editor = useEditor({
@@ -158,107 +162,127 @@ function LoadedEditor({
 
   return (
     <EditorMediaContext.Provider value={mediaByRef}>
-      <style>{EDITOR_CSS}</style>
-
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '0.25rem 0.75rem', marginBottom: '0.75rem' }}>
-        <h1 style={{ fontSize: '1.1rem', margin: 0 }}>Edit post</h1>
-        <span style={{ color: theme.hint, fontSize: '0.85rem' }}>
-          📢 {data.channel} · {data.sourceLabel ?? 'unknown source'}
-          {data.status === 'scheduled' ? ' · 🕒 scheduled' : ''}
-        </span>
-        {data.url ? (
-          <button type="button" onClick={() => openLink(data.url)} style={{ ...linkButton, marginLeft: 'auto' }}>
-            Original ↗
-          </button>
-        ) : null}
-      </div>
-
-      <Toolbar editor={editor} state={state} />
-
-      <div
-        style={{
-          border: `1px solid ${theme.secondaryBg}`,
-          borderRadius: '0 0 0.6rem 0.6rem',
-          padding: '0.5rem 1rem 1rem',
-          background: theme.bg,
-        }}
-      >
-        <EditorContent editor={editor} />
-        {data.footer ? (
-          <p style={{ color: theme.hint, fontSize: '0.85rem', borderTop: `1px dashed ${theme.hint}`, paddingTop: '0.5rem', margin: '0.75rem 0 0' }}>
-            {data.footer} <span style={{ fontSize: '0.75rem' }}>— the channel&apos;s footer, added when published</span>
-          </p>
-        ) : null}
-      </div>
-
-      {data.media.length > 0 ? (
-        <section style={{ marginTop: '1rem' }}>
-          <div style={{ fontSize: '0.85rem', marginBottom: '0.4rem' }}>
-            The post&apos;s pictures — put one where the cursor is, or drag it in the text:
-          </div>
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            {data.media.map((media) => {
-              const placed = used.has(media.ref);
-              return (
-                <button
-                  key={media.ref}
-                  type="button"
-                  disabled={placed || !editor}
-                  onClick={() =>
-                    editor?.chain().focus().insertContent({ type: 'postMedia', attrs: { ref: media.ref, caption: null } }).run()
-                  }
-                  title={placed ? 'Already in the post' : 'Insert at the cursor'}
-                  style={{
-                    position: 'relative',
-                    width: '6.5rem',
-                    height: '6.5rem',
-                    padding: 0,
-                    border: `1px solid ${theme.hint}`,
-                    borderRadius: '0.45rem',
-                    overflow: 'hidden',
-                    background: '#111111',
-                    cursor: placed ? 'default' : 'pointer',
-                    opacity: placed ? 0.45 : 1,
-                  }}
-                >
-                  {media.previewUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={media.previewUrl} alt="" referrerPolicy="no-referrer" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  ) : (
-                    <span style={{ color: '#bbbbbb', fontSize: '0.75rem' }}>{media.kind}</span>
-                  )}
-                  <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', color: '#ffffff', fontSize: '0.7rem' }}>
-                    {placed ? 'in the post' : media.kind === 'video' ? '+ video' : '+ insert'}
-                  </span>
+      <style>{EDITOR_CSS + ASSISTANT_CSS}</style>
+      <div className={assistantOpen ? 'editor-shell with-assistant' : 'editor-shell'}>
+        <div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '0.25rem 0.75rem', marginBottom: '0.75rem' }}>
+            <h1 style={{ fontSize: '1.1rem', margin: 0 }}>Edit post</h1>
+            <span style={{ color: theme.hint, fontSize: '0.85rem' }}>
+              📢 {data.channel} · {data.sourceLabel ?? 'unknown source'}
+              {data.status === 'scheduled' ? ' · 🕒 scheduled' : ''}
+            </span>
+            <span style={{ display: 'flex', gap: '0.25rem', marginLeft: 'auto' }}>
+              {data.url ? (
+                <button type="button" onClick={() => openLink(data.url)} style={linkButton}>
+                  Original ↗
                 </button>
-              );
-            })}
+              ) : null}
+              {data.assistant && !assistantOpen ? (
+                <button type="button" disabled={!editor} onClick={() => setAssistantOpen(true)} style={{ ...linkButton, fontWeight: 600 }}>
+                  ✨ AI assistant
+                </button>
+              ) : null}
+            </span>
           </div>
-        </section>
-      ) : null}
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', marginTop: '1.25rem' }}>
-        <button type="button" disabled={saving || !editor} onClick={() => void save(true)} style={{ ...mainButton, background: theme.button, color: theme.buttonText }}>
-          {saving ? 'Saving…' : 'Save and back to the queue'}
-        </button>
-        <button type="button" disabled={saving || !editor} onClick={() => void save(false)} style={{ ...mainButton, background: theme.secondaryBg, color: theme.text }}>
-          Save
-        </button>
-        <button type="button" disabled={saving} onClick={() => void leave()} style={linkButton}>
-          Back without saving
-        </button>
-        {data.isRich ? (
-          <button type="button" disabled={saving} onClick={() => void dropRich()} style={{ ...linkButton, color: '#e53935' }}>
-            Back to the plain post
-          </button>
+          <Toolbar editor={editor} state={state} />
+
+          <div
+            style={{
+              border: `1px solid ${theme.secondaryBg}`,
+              borderRadius: '0 0 0.6rem 0.6rem',
+              padding: '0.5rem 1rem 1rem',
+              background: theme.bg,
+            }}
+          >
+            <EditorContent editor={editor} />
+            {data.footer ? (
+              <p style={{ color: theme.hint, fontSize: '0.85rem', borderTop: `1px dashed ${theme.hint}`, paddingTop: '0.5rem', margin: '0.75rem 0 0' }}>
+                {data.footer} <span style={{ fontSize: '0.75rem' }}>— the channel&apos;s footer, added when published</span>
+              </p>
+            ) : null}
+          </div>
+
+          {data.media.length > 0 ? (
+            <section style={{ marginTop: '1rem' }}>
+              <div style={{ fontSize: '0.85rem', marginBottom: '0.4rem' }}>
+                The post&apos;s pictures — put one where the cursor is, or drag it in the text:
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                {data.media.map((media) => {
+                  const placed = used.has(media.ref);
+                  return (
+                    <button
+                      key={media.ref}
+                      type="button"
+                      disabled={placed || !editor}
+                      onClick={() =>
+                        editor?.chain().focus().insertContent({ type: 'postMedia', attrs: { ref: media.ref, caption: null } }).run()
+                      }
+                      title={placed ? 'Already in the post' : 'Insert at the cursor'}
+                      style={{
+                        position: 'relative',
+                        width: '6.5rem',
+                        height: '6.5rem',
+                        padding: 0,
+                        border: `1px solid ${theme.hint}`,
+                        borderRadius: '0.45rem',
+                        overflow: 'hidden',
+                        background: '#111111',
+                        cursor: placed ? 'default' : 'pointer',
+                        opacity: placed ? 0.45 : 1,
+                      }}
+                    >
+                      {media.previewUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={media.previewUrl} alt="" referrerPolicy="no-referrer" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : (
+                        <span style={{ color: '#bbbbbb', fontSize: '0.75rem' }}>{media.kind}</span>
+                      )}
+                      <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', color: '#ffffff', fontSize: '0.7rem' }}>
+                        {placed ? 'in the post' : media.kind === 'video' ? '+ video' : '+ insert'}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', marginTop: '1.25rem' }}>
+            <button type="button" disabled={saving || !editor} onClick={() => void save(true)} style={{ ...mainButton, background: theme.button, color: theme.buttonText }}>
+              {saving ? 'Saving…' : 'Save and back to the queue'}
+            </button>
+            <button type="button" disabled={saving || !editor} onClick={() => void save(false)} style={{ ...mainButton, background: theme.secondaryBg, color: theme.text }}>
+              Save
+            </button>
+            <button type="button" disabled={saving} onClick={() => void leave()} style={linkButton}>
+              Back without saving
+            </button>
+            {data.isRich ? (
+              <button type="button" disabled={saving} onClick={() => void dropRich()} style={{ ...linkButton, color: '#e53935' }}>
+                Back to the plain post
+              </button>
+            ) : null}
+            <span style={{ marginLeft: 'auto', color: length > data.limits.text ? '#e53935' : theme.hint, fontSize: '0.8rem' }}>
+              {length.toLocaleString('en')} / {data.limits.text.toLocaleString('en')} characters
+            </span>
+          </div>
+          {message ? (
+            <p style={{ color: message.ok ? theme.hint : '#e53935', fontSize: '0.85rem', margin: '0.5rem 0 0' }}>{message.text}</p>
+          ) : null}
+        </div>
+        {assistantOpen && editor ? (
+          <AssistantPanel
+            postId={data.postId}
+            request={request}
+            openLink={openLink}
+            getDraft={() => editor.getJSON()}
+            setDraft={(doc) => editor.commands.setContent(doc as object)}
+            onClose={() => setAssistantOpen(false)}
+          />
         ) : null}
-        <span style={{ marginLeft: 'auto', color: length > data.limits.text ? '#e53935' : theme.hint, fontSize: '0.8rem' }}>
-          {length.toLocaleString('en')} / {data.limits.text.toLocaleString('en')} characters
-        </span>
       </div>
-      {message ? (
-        <p style={{ color: message.ok ? theme.hint : '#e53935', fontSize: '0.85rem', margin: '0.5rem 0 0' }}>{message.text}</p>
-      ) : null}
     </EditorMediaContext.Provider>
   );
 }

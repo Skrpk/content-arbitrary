@@ -159,7 +159,8 @@ export async function loadTranslationStyle(db: Database, workspaceId: number, lo
   }
 }
 
-function renderVoice(profile: PublicationProfile): string {
+/** How the channel writes, from its profile: voice and format, in a few lines. */
+export function renderVoice(profile: PublicationProfile): string {
   const { tone, formatting } = profile;
   return [
     `Voice: ${tone.voice}; technicality: ${tone.technicality}; sensationalism: ${tone.sensationalism}; humor: ${tone.humor}.`,
