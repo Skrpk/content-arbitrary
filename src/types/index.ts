@@ -1,3 +1,5 @@
+import type { SourceMetadata } from '../db/schema';
+
 /** One progressive MP4 rendition of a video, as published by X. */
 export interface Mp4Variant {
   url: string;
@@ -38,8 +40,8 @@ export interface NormalizedMedia {
  */
 export interface NormalizedPost {
   /** Where it came from; absent means X, as every post did before feeds. */
-  platform?: 'x' | 'rss' | 'telegram';
-  /** X's post id, a feed item's namespaced id (`rss:…`), or a channel post's (`tg:…`). */
+  platform?: 'x' | 'rss' | 'telegram' | 'youtube';
+  /** X's post id, a feed item's namespaced id (`rss:…`), a channel post's (`tg:…`) or a video's (`yt:…`). */
   id: string;
   /** The post on X or in its Telegram channel, or the article a feed entry links to — empty when it links nowhere. */
   url: string;
@@ -51,6 +53,14 @@ export interface NormalizedPost {
    */
   text: string;
   media: NormalizedMedia[];
+  /**
+   * What the post is about beyond `text`, for analysis only: a video's
+   * transcript. Radar and the embedding read a bounded sample of it; it is
+   * never translated, reviewed or published.
+   */
+  analysisText?: string | null;
+  /** What the source said about it beyond its text: a video's duration and counts, its transcript's state. */
+  sourceMetadata?: SourceMetadata | null;
   isReply: boolean;
   isRepost: boolean;
   isQuote: boolean;

@@ -12,6 +12,7 @@ import {
   type PostStatus,
   type ReviewMediaItem,
   type RejectionReason,
+  type SourceMetadata,
 } from '@/db/schema';
 
 /**
@@ -69,6 +70,10 @@ export async function claimPost(
     sourceText?: string | null;
     /** Engagement as this fetch saw it, kept for analysis like the text. */
     metrics?: PostMetrics | null;
+    /** For analysis only — a video's transcript — kept so Radar and a re-embed read what live did. */
+    analysisText?: string | null;
+    /** What the source said about it beyond its text. */
+    sourceMetadata?: SourceMetadata | null;
   },
 ): Promise<ClaimResult> {
   const staleBefore = new Date(Date.now() - PROCESSING_LEASE_MS);
@@ -100,6 +105,8 @@ export async function claimPost(
       xAuthorUsername: input.xAuthorUsername,
       xCreatedAt: input.xCreatedAt,
       sourceText: input.sourceText ?? null,
+      analysisText: input.analysisText ?? null,
+      sourceMetadata: input.sourceMetadata ?? null,
       ...metricColumns,
       xMetricsAt: metricsAt,
       status: 'processing',
@@ -115,6 +122,9 @@ export async function claimPost(
         // Filled in once, for a row first seen before the column existed;
         // otherwise what was recorded the first time stands.
         sourceText: rawSql`coalesce(${processedPosts.sourceText}, ${input.sourceText ?? null})`,
+        // A retry's transcript fills one the first try could not get; one got stands.
+        analysisText: rawSql`coalesce(${processedPosts.analysisText}, ${input.analysisText ?? null})`,
+        sourceMetadata: input.sourceMetadata ? input.sourceMetadata : rawSql`${processedPosts.sourceMetadata}`,
         xLikeCount: keepFirstSnapshot(processedPosts.xLikeCount, metricColumns.xLikeCount),
         xRepostCount: keepFirstSnapshot(processedPosts.xRepostCount, metricColumns.xRepostCount),
         xReplyCount: keepFirstSnapshot(processedPosts.xReplyCount, metricColumns.xReplyCount),

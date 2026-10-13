@@ -119,7 +119,7 @@ export async function embedProcessedPosts(input: EmbedOptions): Promise<HistoryE
   const posts = await loadProcessedPostsForEmbedding(db, { workspaceId, model });
   const images = await imagesOf(input, posts);
   const { summary, pending, stale } = plan(model, posts, (post) =>
-    buildCandidateEmbeddingText(post.text, imageOf(images, post.imageFingerprint)),
+    buildCandidateEmbeddingText(post.text, imageOf(images, post.imageFingerprint), post.analysisText),
   );
 
   // A post's text is never changed, so a post without text has no vector to drop.

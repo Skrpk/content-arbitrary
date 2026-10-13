@@ -1,4 +1,5 @@
-import { isRssItemId } from '@/lib/sources/display';
+import { platformOfPostId, radarSourceMark } from '@/lib/sources/display';
+import { radarAnalysisOf, radarMediaOf } from '@/lib/radar/analysis';
 import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import {
@@ -195,6 +196,8 @@ export async function submitRadarBackfill(input: {
       externalId: processedPosts.externalId,
       sourceUsername: processedPosts.xAuthorUsername,
       sourceText: processedPosts.sourceText,
+      analysisText: processedPosts.analysisText,
+      sourceMetadata: processedPosts.sourceMetadata,
       method: processedPosts.telegramMethod,
       mediaCount: processedPosts.mediaCount,
       reviewMedia: processedPosts.reviewMedia,
@@ -313,6 +316,7 @@ export async function submitRadarBackfill(input: {
           workspaceId: input.workspaceId,
           processedPostId: post.id,
           candidateText: post.sourceText,
+          candidateAnalysis: post.analysisText,
           candidateImage: media?.understanding ?? null,
           mediaConfig: readsMedia ? input.mediaConfig : null,
           before: post.createdAt,
@@ -343,9 +347,14 @@ export async function submitRadarBackfill(input: {
         approvalRate: history.approvalRate,
         item: {
           sourceUsername: post.sourceUsername ?? 'unknown',
-          ...(isRssItemId(post.externalId) ? { sourcePlatform: 'rss' as const } : {}),
+          ...radarSourceMark(post.externalId),
           text: post.sourceText ?? '',
-          media: describeStoredMedia(post.method, post.mediaCount),
+          media: radarMediaOf({
+            platform: platformOfPostId(post.externalId),
+            media: describeStoredMedia(post.method, post.mediaCount),
+            metadata: post.sourceMetadata,
+          }),
+          analysisText: radarAnalysisOf(post.analysisText),
         },
         examples: usesMediaUnderstanding(version) ? mediaHistory.examples : history.examples,
         image: variant === 'text_image' ? image : undefined,
@@ -413,6 +422,7 @@ export async function ingestRadarBatch(input: {
     {
       createdAt: Date;
       sourceText: string | null;
+      analysisText: string | null;
       examplePostIds: number[];
       image: { understanding: ImageUnderstanding | null; id: number | null };
     } | null
@@ -433,6 +443,7 @@ export async function ingestRadarBatch(input: {
         .select({
           createdAt: processedPosts.createdAt,
           sourceText: processedPosts.sourceText,
+          analysisText: processedPosts.analysisText,
           imageFingerprint: processedPosts.imageFingerprint,
         })
         .from(processedPosts)
@@ -452,6 +463,7 @@ export async function ingestRadarBatch(input: {
           ? {
               createdAt: post.createdAt,
               sourceText: post.sourceText,
+              analysisText: post.analysisText,
               image: { understanding: understandingOf(stored), id: stored?.id ?? null },
               examplePostIds: (
                 await loadRadarHistory(input.db, {
@@ -487,6 +499,7 @@ export async function ingestRadarBatch(input: {
                 workspaceId: input.workspaceId,
                 processedPostId: key.processedPostId,
                 candidateText: post.sourceText,
+                candidateAnalysis: post.analysisText,
                 candidateImage: post.image.understanding,
                 before: post.createdAt,
                 includeApproved: true,

@@ -2,7 +2,7 @@
 
 Content monitoring and an editorial assistant for **Telegram channels** (`content-arbitrary` is the
 repository's and the deployment's name). It watches your
-sources — **X accounts**, **RSS / Atom feeds** and **public Telegram channels** — and brings every
+sources — **X accounts**, **RSS / Atom feeds**, **public Telegram channels** and **YouTube channels** — and brings every
 new post to you for review:
 scored by [Shadow Radar](#shadow-radar), rewritten in your channel's [language](#translation),
 ready to edit, schedule or reject. What you approve is published to the channel.
@@ -12,7 +12,8 @@ seen before.
 
 ```
 X accounts ─────────┐
-RSS feeds ──────────┼─► /api/cron/sync ─► Radar ─► translation ─► review ─► edit / schedule ─► your channel
+RSS feeds ──────────┤
+YouTube channels ───┼─► /api/cron/sync ─► Radar ─► translation ─► review ─► edit / schedule ─► your channel
 Telegram channels ──┘         │
                               └── PostgreSQL (sources, posts, decisions, cursors)
 ```
@@ -45,6 +46,7 @@ Without review switched on, posts go straight to the channel, as the bot first d
 - [R. When X does not return the media you expect](#r-when-x-does-not-return-the-media-you-expect)
 - [RSS and Atom feeds](#rss-and-atom-feeds)
 - [Telegram channels](#telegram-channels)
+- [YouTube channels](#youtube-channels)
 - [Multiple channels](#multiple-channels)
 - [Review website](#review-website)
 - [Shadow Radar](#shadow-radar)
@@ -760,6 +762,70 @@ public page offers, so a renamed channel is a new source. A post's `external_id`
 `tg:<channel>/<message id>`, `x_post_url` its t.me link, `x_author_username` the channel's username.
 In stats and settings a channel is `@username` with a **Telegram** badge and its link; reading it
 costs nothing.
+
+## YouTube channels
+
+A source can also be a public **YouTube channel**. Its new videos become ordinary candidates:
+Radar scores them, they are embedded and [clustered into stories](#stories) with posts from every
+other source, they come to the review queue and the digest, and approved ones are published.
+
+| Command | What it does |
+| --- | --- |
+| `/addyoutube @pbsspacetime` | Start watching a channel; `youtube.com/@pbsspacetime` or `youtube.com/channel/UC…` works too |
+| `/addyoutube 2 @pbsspacetime` | The same, for a reviewer of several channels: `2` is the channel's workspace id |
+
+Or **➕ Add a source → YouTube** on the Sources page (a pasted `youtube.com` link picks that tab).
+A video's link — `youtube.com/watch?v=…`, `youtu.be/…`, a Short — is not a channel and is turned
+away: this follows channels, not single videos.
+
+**Discovery and understanding, not mirroring.** A video is never downloaded. What comes to review
+is its title and the opening of its description — that is the post, translated and published like
+any other — with its link, which Telegram previews with YouTube's own player. Its **transcript**,
+when it has one, is for analysis only: Radar reads it and it shapes the video's embedding, so a
+clickbait title does not decide what the video is about; it is never translated, reviewed or
+published.
+
+**How it is read.** Through the official YouTube Data API with `YOUTUBE_API_KEY`, server-side
+only. A channel is looked up once when it is added (`channels.list`, by handle or id — never
+`search.list`) and stored by its channel id, which never changes; its title is how it is shown,
+and its handle, which can change, is not relied on. Each run reads its uploads playlist (`UU…`,
+from the channel id, so no `channels.list` per run) newest first — one `playlistItems.list` page
+of 15 — and the new videos' details in one batched `videos.list`: duration, views, likes,
+comments, live state. A premiere not yet out is left until it is; a live stream is taken as
+YouTube publishes it, usually without a transcript.
+
+**From now on, not the backlog.** As for a feed, a video is new by identity: published since the
+source was added or resumed, and not already in review or settled. A run reads back page by page
+(at most 3) until it meets one that is not, and hands the new ones on oldest first. The atomic
+claim keeps a video from being taken twice, whatever runs overlap.
+
+**Transcripts — optional, cost-bounded.** YouTube's own captions API gives a video's captions only
+to whoever may edit it, so transcripts come from a provider behind `VideoTranscriptProvider`
+(`src/lib/youtube/transcript.ts`); the first is [Supadata](https://supadata.ai), with
+`SUPADATA_API_KEY`. It is asked only for the transcript a video already has (`mode=native`) —
+never an AI transcription, whose price grows with the video — once per video. No transcript is a
+settled answer, recorded as `unavailable`; a provider outage is `failed`; no key is
+`not_configured`. In every case the video goes on with its metadata, and nothing stops. The whole
+transcript is kept (`processed_posts.analysis_text`, up to 200,000 characters); Radar reads a
+deterministic sample of at most 6,000 characters — the whole of a short one, six excerpts spread
+across a long one, so an hour-long video is not judged by its intro — and the embedding 2,000. No
+model summarises it first.
+
+**Under the hood.** A video's `external_id` is `yt:<video id>`, `x_post_url` its watch link,
+`x_author_username` the channel's title; what YouTube said of it beyond its text is
+`processed_posts.source_metadata` (platform-neutral: duration, counts, live state, the
+transcript's state and language). Radar names the source `PBS Space Time (YouTube)` and its media
+`YouTube video, 15 min`; the transcript is a delimited `<transcript>` block after the post,
+material like everything else, never instructions. A post with no transcript — every post from X,
+a feed or a Telegram channel — has a prompt and an embedding word for word as before. In stats and
+settings a channel is its title with a **YouTube** badge and its link. Each API call is logged as
+`youtube.api_call` with its quota cost (one unit), and runs as `youtube.sync_started`,
+`.videos_fetched`, `.video_discovered`, `.transcript_available` / `_unavailable` / `_failed`,
+`.sync_completed` and `.sync_failed`.
+
+**Quota.** The API allows 10,000 units a day. A channel costs one unit a run (96 a day at the
+15-minute cron) and one more for a run that finds new videos — about 100 a day, so a few dozen
+channels fit. Supadata counts one request per new video.
 
 ## Multiple channels
 
@@ -1838,6 +1904,8 @@ week, the number of sources had little to tell. It runs on backfills only.
 | `ADMIN_SECRET` | falls back to `CRON_SECRET` | Protects `/api/status`. |
 | `RADAR_PROVIDER` | `openai` | [Shadow Radar](#shadow-radar)'s model: `openai` (GPT-6 Luna) or `anthropic` (Claude Haiku 4.5). |
 | `RADAR_MODEL` | provider's default | Overrides the chosen provider's model id. |
+| `YOUTUBE_API_KEY` | — | The YouTube Data API, for YouTube channel sources. Without it a channel cannot be added, and those added are not synced. |
+| `SUPADATA_API_KEY` | — | Supadata, for videos' existing transcripts, used for analysis only. Optional: without it videos are judged on their metadata. |
 | `OPENAI_API_KEY` | — | Needed for Radar with `RADAR_PROVIDER=openai`. Without the chosen provider's key, Radar is off. Also used for history embeddings, whatever the provider. |
 | `HISTORY_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI model for [similar past publications](#similar-past-publications). Vectors are kept per model; after changing it, run `npm run history:embed` again. |
 | `ASSISTANT_MODEL` | `gpt-6-luna` | OpenAI model behind the post editor's [AI assistant](#the-ai-assistant). Needs `OPENAI_API_KEY`. |
@@ -1993,10 +2061,17 @@ src/
       parser.ts                Channel page → posts, media and what the page cannot show
       normalize.ts             Channel post → candidate post, tg:<channel>/<id> ids
       refresh-media.ts         Fresh media links for a queued post, before it is published
+    youtube/
+      channel.ts               @handle / channel links → a channel; video links refused; UC → UU playlist
+      client.ts                The Data API: channels, playlistItems, videos — never search; quota logged
+      normalize.ts             Video → candidate post (title + description), yt:<id> ids
+      transcript.ts            VideoTranscriptProvider, Supadata (native transcripts only)
+    analysis-text.ts           A post's analysis-only text, sampled across it for Radar and the embedding
     sources/
       display.ts               Each platform's identity: its post ids' prefix, and how a source is named
       add-rss.ts               Check-then-store for /addrss and Settings
       add-telegram.ts          Check-then-store for /addtelegram and Settings
+      add-youtube.ts           Look-up-then-store for /addyoutube and Settings
     sync/
       sync-posts.ts            Orchestration, X, RSS and Telegram sources alike
       source-adapters.ts       One adapter per platform: the orchestrator hands each source to its own

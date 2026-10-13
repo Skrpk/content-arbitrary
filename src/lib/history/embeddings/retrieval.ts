@@ -68,6 +68,8 @@ interface RetrievalInput {
   workspaceId: number;
   processedPostId: number;
   candidateText: string | null;
+  /** Its analysis-only text — a video's transcript — embedded with it. */
+  candidateAnalysis?: string | null;
   /** What the post's first image shows, embedded with its text when understood. */
   candidateImage?: ImageUnderstanding | null;
   /**
@@ -93,7 +95,7 @@ export async function retrieveSimilarPublications(
   input: RetrievalInput & { embeddings: EmbeddingProvider | null; timeoutMs?: number; logger?: Logger },
 ): Promise<HistoryRetrieval> {
   const model = input.embeddings?.model ?? null;
-  const text = buildCandidateEmbeddingText(input.candidateText, input.candidateImage);
+  const text = buildCandidateEmbeddingText(input.candidateText, input.candidateImage, input.candidateAnalysis);
   if (text === null) return none(input, model, 'no_text');
   if (!input.embeddings) return none(input, model, 'unavailable');
   const embeddings = input.embeddings;
@@ -143,7 +145,7 @@ export async function retrieveSimilarPublications(
  * failed.
  */
 export async function replaySimilarPublications(input: RetrievalInput & { model: string }): Promise<HistoryRetrieval> {
-  const text = buildCandidateEmbeddingText(input.candidateText, input.candidateImage);
+  const text = buildCandidateEmbeddingText(input.candidateText, input.candidateImage, input.candidateAnalysis);
   if (text === null) return none(input, input.model, 'no_text');
   return search(input, input.model, text, async () => null);
 }

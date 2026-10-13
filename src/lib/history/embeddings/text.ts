@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ImageUnderstanding } from '@/lib/media/understanding';
 import { truncateToLength } from '@/lib/telegram/format-caption';
+import { EMBEDDING_ANALYSIS_MAX, sampleAnalysisText } from '@/lib/analysis-text';
 
 /**
  * The exact text that is embedded, for a past publication and for a new post,
@@ -43,17 +44,26 @@ export const EMBEDDING_TEXT_MAX = 6000;
  *   IMAGE TOPICS: aurora, ISS, Earth observation
  *   IMAGE ENTITIES: Earth, ISS
  *   VISIBLE TEXT: …
+ *
+ *   TRANSCRIPT: [an even sample of a video's transcript, for a video]
+ *
+ * A post with no analysis text embeds exactly as before, so a transcript
+ * changes the vectors of videos only.
  */
 export function buildSemanticContentRepresentation(content: {
   title?: string | null;
   text?: string | null;
   image?: ImageUnderstanding | null;
+  /** A post's analysis-only text — a video's transcript — sampled to fit beside the rest. */
+  analysis?: string | null;
 }): string | null {
   const title = normalise(content.title ?? '');
   const text = normalise(content.text ?? '');
   // An export may repeat the title as the text's first line.
   const parts = text.startsWith(title) ? [text] : [title, text];
   if (content.image) parts.push(renderImageUnderstanding(content.image));
+  const analysis = normalise(content.analysis ?? '');
+  if (analysis) parts.push(`TRANSCRIPT: ${sampleAnalysisText(analysis, EMBEDDING_ANALYSIS_MAX).text}`);
   return finish(parts.filter((part) => part !== '').join('\n\n'));
 }
 
@@ -79,8 +89,12 @@ export function buildHistoryEmbeddingText(
 }
 
 /** What a new post is embedded as, or null when it has neither text nor an understood image. */
-export function buildCandidateEmbeddingText(text: string | null, image?: ImageUnderstanding | null): string | null {
-  return buildSemanticContentRepresentation({ text, image });
+export function buildCandidateEmbeddingText(
+  text: string | null,
+  image?: ImageUnderstanding | null,
+  analysis?: string | null,
+): string | null {
+  return buildSemanticContentRepresentation({ text, image, analysis });
 }
 
 /** SHA-256 of the embedded text and the version of how it was built. */

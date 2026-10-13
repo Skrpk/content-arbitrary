@@ -6,6 +6,8 @@ import { updateSourceUsername } from '@/lib/sources/repository';
 import { addRssSource } from '@/lib/sources/add-rss';
 import { addTelegramSource } from '@/lib/sources/add-telegram';
 import { addXSource } from '@/lib/sources/add-x';
+import { addYouTubeSource } from '@/lib/sources/add-youtube';
+import type { YouTubeClient } from '@/lib/youtube/client';
 import type { FetchChannelOptions } from '@/lib/telegram-channel/client';
 import type { FetchFeedOptions } from '@/lib/rss/client';
 import { sourceLabelOfPost } from '@/lib/sources/display';
@@ -101,6 +103,8 @@ export interface CommandContext {
   feedFetch?: FetchFeedOptions;
   /** How /addtelegram reads the channel's page; injected by tests. */
   channelFetch?: FetchChannelOptions;
+  /** How /addyoutube looks a channel up; null without YOUTUBE_API_KEY. */
+  youtube?: YouTubeClient | null;
 }
 
 /**
@@ -167,6 +171,7 @@ export const BOT_COMMANDS: { command: string; description: string }[] = [
   { command: 'addsource', description: 'Start watching an account: /addsource @username' },
   { command: 'addrss', description: 'Start watching an RSS or Atom feed: /addrss <feed URL>' },
   { command: 'addtelegram', description: 'Start watching a public Telegram channel: /addtelegram @channel' },
+  { command: 'addyoutube', description: 'Start watching a YouTube channel’s new videos: /addyoutube @handle' },
   { command: 'scheduled', description: 'Posts waiting to be published at a set time' },
   { command: 'help', description: 'What the bot can do' },
 ];
@@ -174,10 +179,11 @@ export const BOT_COMMANDS: { command: string; description: string }[] = [
 const HELP_TEXT = [
   '<b>Source management</b>',
   '',
-  '/sourcestats — the Sources page: add any source (X, Telegram, RSS), and see how each performs',
+  '/sourcestats — the Sources page: add any source (X, Telegram, RSS, YouTube), and see how each performs',
   '/addsource @username — start watching an account',
   '/addrss &lt;feed URL&gt; — start watching an RSS or Atom feed (with several channels: /addrss &lt;channel id&gt; &lt;feed URL&gt;)',
   '/addtelegram @channel — start watching a public Telegram channel (with several channels: /addtelegram &lt;channel id&gt; @channel)',
+  '/addyoutube @handle — start watching a YouTube channel’s new videos (with several channels: /addyoutube &lt;channel id&gt; @handle)',
   '',
   'Pause, resume or remove a source with the buttons under it in /sourcestats; options such as mirroring ' +
     'posts without media are under its ⚙️ Settings button.',
@@ -319,38 +325,55 @@ export async function handleAddRss(context: CommandContext, args: string): Promi
 }
 
 /**
+ * The channel a command that adds one source is for, and the source it names:
+ * `/command <source>`, or `/command <channel id> <source>` for a reviewer of
+ * several channels — who is asked which, when they leave it out.
+ */
+function channelAndSource(
+  context: CommandContext,
+  args: string,
+  command: string,
+  placeholder: string,
+): { ok: true; workspaceId: number; value: string } | { ok: false; reply: CommandReply } {
+  const channels = channelsOf(context);
+  const parts = args.split(/\s+/).filter(Boolean);
+  const usage = channels.length > 1 ? `/${command} <channel id> ${placeholder}` : `/${command} ${placeholder}`;
+
+  if (parts.length === 2 && /^\d+$/.test(parts[0]!)) {
+    const workspaceId = Number(parts[0]);
+    if (!channels.some((choice) => choice.id === workspaceId)) return { ok: false, reply: { text: '⚠️ That channel is not one of yours.' } };
+    return { ok: true, workspaceId, value: parts[1]! };
+  }
+  if (parts.length !== 1) return { ok: false, reply: { text: `Usage: <code>${escapeHtml(usage)}</code>` } };
+  if (channels.length > 1) {
+    return {
+      ok: false,
+      reply: {
+        text: [
+          'You review several channels — say which one it is for:',
+          '',
+          ...channels.map((choice) => `${choice.id} — ${escapeHtml(choice.name)}`),
+          '',
+          `<code>/${command} ${channels[0]!.id} ${escapeHtml(parts[0]!)}</code>`,
+          '',
+          'Or add it on the 📊 Sources page.',
+        ].join('\n'),
+        offerStats: true,
+      },
+    };
+  }
+  return { ok: true, workspaceId: context.workspaceId, value: parts[0]! };
+}
+
+/**
  * /addtelegram @channel, or /addtelegram <channel id> @channel for a reviewer
  * of several channels — the same shape as /addrss.
  */
 export async function handleAddTelegram(context: CommandContext, args: string): Promise<CommandReply> {
   const channels = channelsOf(context);
-  const parts = args.split(/\s+/).filter(Boolean);
-  const usage = channels.length > 1 ? '/addtelegram <channel id> @channel' : '/addtelegram @channel';
-
-  let workspaceId = context.workspaceId;
-  let channel = parts[0] ?? '';
-  if (parts.length === 2 && /^\d+$/.test(parts[0]!)) {
-    workspaceId = Number(parts[0]);
-    channel = parts[1]!;
-    if (!channels.some((choice) => choice.id === workspaceId)) {
-      return { text: '⚠️ That channel is not one of yours.' };
-    }
-  } else if (parts.length !== 1) {
-    return { text: `Usage: <code>${escapeHtml(usage)}</code>` };
-  } else if (channels.length > 1) {
-    return {
-      text: [
-        'You review several channels — say which one it is for:',
-        '',
-        ...channels.map((choice) => `${choice.id} — ${escapeHtml(choice.name)}`),
-        '',
-        `<code>/addtelegram ${channels[0]!.id} ${escapeHtml(channel)}</code>`,
-        '',
-        'Or add it on the 📊 Sources page.',
-      ].join('\n'),
-      offerStats: true,
-    };
-  }
+  const picked = channelAndSource(context, args, 'addtelegram', '@channel');
+  if (!picked.ok) return picked.reply;
+  const { workspaceId, value: channel } = picked;
 
   const result = await addTelegramSource(context.db, {
     channel,
@@ -372,6 +395,36 @@ export async function handleAddTelegram(context: CommandContext, args: string): 
       `${where}✅ <b>Telegram channel added</b>\n\n${escapeHtml(result.title)} · ${label}\n\n` +
       'Posts with photos or videos only, from now on — what it has posted so far is not sent. ' +
       'Use Settings to mirror text posts too.',
+    offerSettings: true,
+  };
+}
+
+/** /addyoutube @handle (or a channel's link), or /addyoutube <channel id> @handle for a reviewer of several channels. */
+export async function handleAddYouTube(context: CommandContext, args: string): Promise<CommandReply> {
+  const channels = channelsOf(context);
+  const picked = channelAndSource(context, args, 'addyoutube', '@handle');
+  if (!picked.ok) return picked.reply;
+  const { workspaceId, value } = picked;
+
+  const result = await addYouTubeSource(context.db, {
+    channel: value,
+    workspaceId,
+    youtube: context.youtube ?? null,
+    logger: context.logger,
+  });
+  if (!result.ok) return { text: `⚠️ ${escapeHtml(result.reason)}` };
+
+  const where = channels.length > 1 ? `📢 ${escapeHtml(channels.find((c) => c.id === workspaceId)!.name)}\n\n` : '';
+  const label = escapeHtml(result.title);
+  if (!result.created) {
+    const note = result.source.enabled ? '' : '\n\nIt is currently paused — resume it in /sourcestats.';
+    return { text: `${where}ℹ️ <b>${label}</b> is already in your sources.${note}`, offerSettings: true };
+  }
+  return {
+    text:
+      `${where}✅ <b>YouTube channel added</b>\n\n${label}${result.handle ? ` · ${escapeHtml(result.handle)}` : ''}\n\n` +
+      'New videos from now on — what it has posted so far is not sent. Each comes to review as its title and ' +
+      'description with its link; its transcript, when it has one, helps Radar judge it and is never published.',
     offerSettings: true,
   };
 }
@@ -523,7 +576,7 @@ export async function dispatchCommand(
     case 'sourcestats':
       return {
         text:
-          '<b>Sources</b>\n\nAdd any source — an X account, a Telegram channel, an RSS feed — at the top of ' +
+          '<b>Sources</b>\n\nAdd any source — an X account, a Telegram channel, an RSS feed, a YouTube channel — at the top of ' +
           'the page. Per source: posts it brought in, how many you approved and why the rest were rejected, ' +
           'and roughly what reading them from X cost — with buttons to pause, resume or remove each. ' +
           '⚙️ Settings has the per-source options.',
@@ -534,6 +587,8 @@ export async function dispatchCommand(
       return handleAddRss(context, parsed.args);
     case 'addtelegram':
       return handleAddTelegram(context, parsed.args);
+    case 'addyoutube':
+      return handleAddYouTube(context, parsed.args);
     case 'addsource':
       return channels.length > 1
         ? sourceCommandAcrossChannels(context, command, parsed.args, channels)

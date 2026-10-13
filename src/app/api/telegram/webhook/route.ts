@@ -21,6 +21,7 @@ import {
 } from '@/lib/sync/approval';
 import { publishDecidedPost } from '@/lib/sync/publish';
 import { reviewQueueButton } from '@/lib/review/queue';
+import { YouTubeClient } from '@/lib/youtube/client';
 import { reviewLinkFor } from '@/lib/accounts/users';
 import type { InlineKeyboardButton, InlineKeyboardMarkup } from '@/lib/telegram/send-media';
 import {
@@ -461,6 +462,7 @@ async function handleCommandMessage(
       {
         db,
         xClient: new XClient({ logger }),
+        youtube: youtubeClientFor(logger),
         logger: logger.child({ fromId: message.from?.id }),
         workspaceId: workspace.id,
         workspaces: reviewerWorkspaces.map(({ id, name }) => ({ id, name })),
@@ -574,4 +576,10 @@ async function handleChannelChoice(
       .answerCallbackQuery(query.id, 'Something went wrong — try the command again.')
       .catch(() => {});
   }
+}
+
+/** The YouTube Data API for /addyoutube; null without YOUTUBE_API_KEY. */
+function youtubeClientFor(logger: Logger): YouTubeClient | null {
+  const apiKey = getEnv().YOUTUBE_API_KEY;
+  return apiKey ? new YouTubeClient({ apiKey, logger }) : null;
 }

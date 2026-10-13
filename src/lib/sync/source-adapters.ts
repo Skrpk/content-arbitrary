@@ -5,8 +5,11 @@ import type { CandidateContext } from '@/lib/sync/process-candidate';
 import { syncRssSource } from '@/lib/sync/sync-rss-source';
 import { syncTelegramSource } from '@/lib/sync/sync-telegram-source';
 import { syncXSource } from '@/lib/sync/sync-x-source';
+import { syncYouTubeSource } from '@/lib/sync/sync-youtube-source';
 import type { FetchChannelOptions } from '@/lib/telegram-channel/client';
 import type { XClient } from '@/lib/x/client';
+import type { YouTubeClient } from '@/lib/youtube/client';
+import type { VideoTranscriptProvider } from '@/lib/youtube/transcript';
 import type { SourceSyncSummary } from '@/types';
 
 /**
@@ -32,6 +35,10 @@ export interface SourceClients {
   feedFetch?: FetchFeedOptions;
   /** How public Telegram channels' pages are fetched; injected by tests and the local runner. */
   channelFetch?: FetchChannelOptions;
+  /** The YouTube Data API; null without YOUTUBE_API_KEY. */
+  youtube?: YouTubeClient | null;
+  /** Videos' transcripts; null without SUPADATA_API_KEY. */
+  transcripts?: VideoTranscriptProvider | null;
 }
 
 /** Everything a source's pass is handed, whatever its platform. */
@@ -62,6 +69,11 @@ const SOURCE_ADAPTERS: { readonly [P in SourcePlatform]: SourceAdapter & { platf
     platform: 'telegram',
     sync: (source, { clients, ...context }) =>
       syncTelegramSource(source, { ...context, channelFetch: clients.channelFetch }),
+  },
+  youtube: {
+    platform: 'youtube',
+    sync: (source, { clients, ...context }) =>
+      syncYouTubeSource(source, { ...context, youtube: clients.youtube ?? null, transcripts: clients.transcripts ?? null }),
   },
 };
 

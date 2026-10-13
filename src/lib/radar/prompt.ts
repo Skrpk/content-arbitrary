@@ -141,8 +141,8 @@ export interface RadarSimilarApproved {
   approvedAt: Date;
   similarity: number;
   sourceUsername: string | null;
-  /** 'rss' when `sourceUsername` is a feed's title rather than an X handle. */
-  sourcePlatform?: 'rss';
+  /** 'rss' when `sourceUsername` is a feed's title, 'youtube' a channel's, rather than an X handle. */
+  sourcePlatform?: 'rss' | 'youtube';
   text: string | null;
   /** What its first image shows, for a prompt that reads image descriptions. */
   imageSummary?: string | null;
@@ -153,8 +153,8 @@ export interface RadarSimilarRejected {
   rejectedAt: Date;
   similarity: number;
   sourceUsername: string | null;
-  /** 'rss' when `sourceUsername` is a feed's title rather than an X handle. */
-  sourcePlatform?: 'rss';
+  /** 'rss' when `sourceUsername` is a feed's title, 'youtube' a channel's, rather than an X handle. */
+  sourcePlatform?: 'rss' | 'youtube';
   text: string | null;
   rejectionReason: RejectionReason | null;
   rejectionNote: string | null;
@@ -168,8 +168,8 @@ export interface RadarNearestDecision {
   decidedAt: Date;
   similarity: number;
   sourceUsername: string | null;
-  /** 'rss' when `sourceUsername` is a feed's title rather than an X handle. */
-  sourcePlatform?: 'rss';
+  /** 'rss' when `sourceUsername` is a feed's title, 'youtube' a channel's, rather than an X handle. */
+  sourcePlatform?: 'rss' | 'youtube';
   text: string | null;
   rejectionReason: RejectionReason | null;
   rejectionNote: string | null;
@@ -180,19 +180,25 @@ export interface RadarNearestDecision {
 /** The post to score, reduced to what the prompt shows. */
 export interface RadarItem {
   sourceUsername: string;
-  /** 'rss' when `sourceUsername` is a feed's title rather than an X handle. */
-  sourcePlatform?: 'rss';
+  /** 'rss' when `sourceUsername` is a feed's title, 'youtube' a channel's, rather than an X handle. */
+  sourcePlatform?: 'rss' | 'youtube';
   text: string;
-  /** e.g. "photo", "video", "album of 3", "text only". */
+  /** e.g. "photo", "video", "album of 3", "text only", "YouTube video, 12 min". */
   media: string;
+  /**
+   * What the post is about beyond its text, for analysis only — a sample of
+   * a video's transcript — already bounded. Absent for every other post, whose
+   * prompt reads as it always has.
+   */
+  analysisText?: string | null;
 }
 
 /** One past decision of this editor, shown as an example. */
 export interface RadarExample {
   postId: number;
   sourceUsername: string;
-  /** 'rss' when `sourceUsername` is a feed's title rather than an X handle. */
-  sourcePlatform?: 'rss';
+  /** 'rss' when `sourceUsername` is a feed's title, 'youtube' a channel's, rather than an X handle. */
+  sourcePlatform?: 'rss' | 'youtube';
   text: string;
   media: string;
   decision: 'approve' | 'reject';
@@ -420,6 +426,14 @@ export function buildUserContent(
       `<post source="${sourceRef(item.sourceUsername, item.sourcePlatform)}" media="${attribute(item.media)}">\n` +
       `${neutralise(clip(item.text, ITEM_TEXT_MAX)) || '(no text)'}\n</post>`,
   });
+  if (item.analysisText?.trim()) {
+    content.push({
+      type: 'text',
+      text:
+        "What the video says — its transcript, or excerpts spread across it, for understanding the post only (the post is the text above):\n" +
+        `<transcript>\n${neutralise(item.analysisText.trim())}\n</transcript>`,
+    });
+  }
 
   return content;
 }
@@ -575,14 +589,16 @@ function clip(text: string, max: number): string {
  * so a post cannot pass itself off as an example, the profile or a new post.
  */
 function neutralise(text: string): string {
-  return text.replace(/<\/?\s*(post|example|editorial_profile|publication_history|similar_publications|publication|similar_approved|approved|similar_rejected|rejected|nearest_decisions|decision|story|story_post|image)\b[^>]*>/gi, '');
+  return text.replace(/<\/?\s*(post|example|editorial_profile|publication_history|similar_publications|publication|similar_approved|approved|similar_rejected|rejected|nearest_decisions|decision|story|story_post|transcript|image)\b[^>]*>/gi, '');
 }
 
 function attribute(value: string): string {
   return value.replace(/["<>]/g, '');
 }
 
-/** A source as the prompt names it: `@handle` on X, as it always has; a feed by its title. */
-function sourceRef(name: string, platform?: 'rss'): string {
-  return platform === 'rss' ? attribute(name) : `@${attribute(name)}`;
+/** A source as the prompt names it: `@handle` on X, as it always has; a feed by its title; a YouTube channel by its title, marked. */
+function sourceRef(name: string, platform?: 'rss' | 'youtube'): string {
+  if (platform === 'rss') return attribute(name);
+  if (platform === 'youtube') return `${attribute(name)} (YouTube)`;
+  return `@${attribute(name)}`;
 }

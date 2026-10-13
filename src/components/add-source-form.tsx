@@ -6,7 +6,7 @@ import { theme } from '@/lib/telegram/webapp-client';
 
 /**
  * Add a source of any kind — an X account, a public Telegram channel, an RSS
- * or Atom feed — to one of the reviewer's channels. For the Sources page, in
+ * or Atom feed, a YouTube channel — to one of the reviewer's channels. For the Sources page, in
  * the Mini App and on the website alike.
  *
  * The kind is picked, and a pasted link picks it too: an `@name` alone could
@@ -15,7 +15,7 @@ import { theme } from '@/lib/telegram/webapp-client';
  * storing it, so this form only gets it there.
  */
 
-type Kind = 'x' | 'telegram' | 'rss';
+type Kind = 'x' | 'telegram' | 'rss' | 'youtube';
 
 const KINDS: { key: Kind; label: string; placeholder: string; hint: string; route: string; field: string }[] = [
   {
@@ -35,6 +35,14 @@ const KINDS: { key: Kind; label: string; placeholder: string; hint: string; rout
     field: 'channel',
   },
   {
+    key: 'youtube',
+    label: 'YouTube',
+    placeholder: '@handle or youtube.com/@handle',
+    hint: 'New videos from a public YouTube channel. Transcripts are used when available to help Radar understand the video.',
+    route: '/api/telegram/webapp/sources/youtube',
+    field: 'channel',
+  },
+  {
     key: 'rss',
     label: 'RSS feed',
     placeholder: 'https://example.com/feed.xml',
@@ -49,6 +57,8 @@ function kindOfLink(value: string): Kind | null {
   const trimmed = value.trim();
   if (/^(?:https?:\/\/)?(?:www\.|mobile\.)?(?:x|twitter)\.com\//i.test(trimmed)) return 'x';
   if (/^(?:https?:\/\/)?(?:www\.)?(?:t|telegram)\.me\//i.test(trimmed)) return 'telegram';
+  // A video's link too: the server explains it is a channel that is followed.
+  if (/^(?:https?:\/\/)?(?:(?:www\.|m\.)?youtube\.com|youtu\.be)\//i.test(trimmed)) return 'youtube';
   if (/^https?:\/\//i.test(trimmed)) return 'rss';
   return null;
 }

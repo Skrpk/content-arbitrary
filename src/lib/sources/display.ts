@@ -34,6 +34,8 @@ const PLATFORM_IDENTITY: { readonly [P in SourcePlatform]: PlatformIdentity } = 
   rss: { postIdPrefix: 'rss:', label: (name) => name },
   // `tg:<channel>/<message id>` — see src/lib/telegram-channel/normalize.ts.
   telegram: { postIdPrefix: 'tg:', label: handle },
+  // `yt:<video id>` — see src/lib/youtube/normalize.ts. A channel is named by its title.
+  youtube: { postIdPrefix: 'yt:', label: (name) => name },
 };
 
 /** Where a feed item's id starts in `processed_posts.external_id`. */
@@ -50,6 +52,30 @@ export function isTelegramPostId(externalId: string): boolean {
   return externalId.startsWith(TELEGRAM_POST_ID_PREFIX);
 }
 
+/** Where a YouTube video's id starts in `processed_posts.external_id`. */
+export const YOUTUBE_VIDEO_ID_PREFIX = PLATFORM_IDENTITY.youtube.postIdPrefix!;
+
+export function isYoutubeVideoId(externalId: string): boolean {
+  return externalId.startsWith(YOUTUBE_VIDEO_ID_PREFIX);
+}
+
+/**
+ * How Radar's prompt names a post's source, beyond an X handle: a feed's title
+ * as it is, a YouTube channel's title marked as one. Undefined for X and
+ * Telegram, named by handle, so their prompts read as they always have.
+ */
+export function radarSourcePlatform(externalId: string): 'rss' | 'youtube' | undefined {
+  if (isRssItemId(externalId)) return 'rss';
+  if (isYoutubeVideoId(externalId)) return 'youtube';
+  return undefined;
+}
+
+/** The same, as the field Radar's prompt types take: absent for X and Telegram. */
+export function radarSourceMark(externalId: string): { sourcePlatform?: 'rss' | 'youtube' } {
+  const platform = radarSourcePlatform(externalId);
+  return platform ? { sourcePlatform: platform } : {};
+}
+
 const PREFIXED = (Object.entries(PLATFORM_IDENTITY) as [SourcePlatform, PlatformIdentity][]).filter(
   ([, identity]) => identity.postIdPrefix !== null,
 );
@@ -62,7 +88,7 @@ export function platformOfPostId(externalId: string): SourcePlatform {
   return PREFIXED.find(([, identity]) => externalId.startsWith(identity.postIdPrefix!))?.[0] ?? UNPREFIXED;
 }
 
-/** A source's name: `@handle` on X, `@username` for a Telegram channel, the feed's title for RSS. */
+/** A source's name: `@handle` on X, `@username` for a Telegram channel, the title of a feed or a YouTube channel. */
 export function formatSourceLabel(platform: SourcePlatform, name: string): string {
   return PLATFORM_IDENTITY[platform].label(name);
 }

@@ -31,6 +31,8 @@ import { createRadarRun, type RadarRun } from '@/lib/radar/shadow';
 import { createImageUnderstander, type ImageUnderstander } from '@/lib/media/provider';
 import { mediaUnderstandingConfig } from '@/lib/media/understanding';
 import { sourceAdapter } from '@/lib/sync/source-adapters';
+import { YouTubeClient } from '@/lib/youtube/client';
+import { createSupadataProvider, type VideoTranscriptProvider } from '@/lib/youtube/transcript';
 import type { FetchChannelOptions } from '@/lib/telegram-channel/client';
 import { sendReviewDigest } from '@/lib/review/queue';
 import { sweepUploads, uploadsAvailable, vercelBlobStore } from '@/lib/uploads/uploads';
@@ -92,6 +94,9 @@ export interface SyncOptions {
   feedFetch?: FetchFeedOptions;
   /** How public Telegram channels' pages are fetched; injected by tests. */
   channelFetch?: FetchChannelOptions;
+  /** The YouTube Data API and the transcript provider; injected by tests, else from the env's keys. */
+  youtubeClient?: YouTubeClient | null;
+  transcriptProvider?: VideoTranscriptProvider | null;
   /** Overrides the model that looks at a post's first image; injected by tests. */
   imageUnderstander?: ImageUnderstander | null;
   /** Overrides when the run stops taking new posts (epoch ms); injected by tests. */
@@ -137,7 +142,23 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
   try {
     const xClient = options.xClient ?? new XClient({ logger });
     const telegramClient = options.telegramClient ?? new TelegramClient({ logger });
-    const clients = { xClient, feedFetch: options.feedFetch, channelFetch: options.channelFetch };
+    const clients = {
+      xClient,
+      feedFetch: options.feedFetch,
+      channelFetch: options.channelFetch,
+      youtube:
+        options.youtubeClient !== undefined
+          ? options.youtubeClient
+          : env.YOUTUBE_API_KEY
+            ? new YouTubeClient({ apiKey: env.YOUTUBE_API_KEY, logger })
+            : null,
+      transcripts:
+        options.transcriptProvider !== undefined
+          ? options.transcriptProvider
+          : env.SUPADATA_API_KEY
+            ? createSupadataProvider({ apiKey: env.SUPADATA_API_KEY })
+            : null,
+    };
 
     // Shadow Radar only ever scores posts on their way to a reviewer, and only
     // with the configured provider's key set.

@@ -36,6 +36,8 @@ import {
 } from '../src/lib/radar/prompt';
 import { loadRadarHistory } from '../src/lib/radar/repository';
 import { loadStoryContext } from '../src/lib/stories/context';
+import { platformOfPostId, radarSourceMark } from '../src/lib/sources/display';
+import { radarAnalysisOf, radarMediaOf } from '../src/lib/radar/analysis';
 
 function argument(name: string): string | undefined {
   const index = process.argv.indexOf(`--${name}`);
@@ -83,6 +85,7 @@ async function main() {
         workspaceId,
         processedPostId: post.id,
         candidateText: post.sourceText,
+        candidateAnalysis: post.analysisText,
         before: post.createdAt,
         includeApproved: usesApprovedRetrieval(promptVersion),
         includeRejected: usesRejectedRetrieval(promptVersion),
@@ -125,8 +128,14 @@ async function main() {
   const content = buildUserContent(
     {
       sourceUsername: post.xAuthorUsername ?? 'unknown',
+      ...radarSourceMark(post.externalId),
       text: post.sourceText ?? '',
-      media: describeStoredMedia(post.telegramMethod, post.mediaCount),
+      media: radarMediaOf({
+        platform: platformOfPostId(post.externalId),
+        media: describeStoredMedia(post.telegramMethod, post.mediaCount),
+        metadata: post.sourceMetadata,
+      }),
+      analysisText: radarAnalysisOf(post.analysisText),
     },
     history.examples,
     undefined,

@@ -21,6 +21,7 @@ import { downloadImage, understandImage } from '@/lib/media/understand';
 import type { ReviewMedia } from '@/lib/sync/process-post';
 import { describeMedia, type RadarImage } from '@/lib/radar/prompt';
 import { loadRadarNote } from '@/lib/radar/review-note';
+import { radarAnalysisOf, radarMediaOf } from '@/lib/radar/analysis';
 import { runLiveRadar, type RadarRun } from '@/lib/radar/shadow';
 import { placeInStory } from '@/lib/stories/cluster';
 import { translateForReview, type Translator } from '@/lib/translation/translate';
@@ -88,6 +89,8 @@ export async function processCandidate(
     workspaceId: source.workspaceId,
     sourceText: post.text,
     metrics: post.metrics,
+    analysisText: post.analysisText,
+    sourceMetadata: post.sourceMetadata,
   });
 
   if (!claim.claimed || !claim.row) {
@@ -130,10 +133,12 @@ export async function processCandidate(
                 language: context.radar!.language,
                 item: {
                   sourceUsername: post.authorUsername,
-                  ...(post.platform === 'rss' ? { sourcePlatform: 'rss' as const } : {}),
+                  ...(post.platform === 'rss' || post.platform === 'youtube' ? { sourcePlatform: post.platform } : {}),
                   text: post.text,
-                  media: describeMedia(post.media),
+                  media: radarMediaOf({ platform: post.platform, media: describeMedia(post.media), metadata: post.sourceMetadata }),
+                  analysisText: radarAnalysisOf(post.analysisText, postLogger, { externalId: post.id }),
                 },
+                analysisText: post.analysisText,
                 image: firstImage(post),
                 media: understood,
               },

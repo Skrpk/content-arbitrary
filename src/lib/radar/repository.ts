@@ -1,4 +1,4 @@
-import { isRssItemId } from '@/lib/sources/display';
+import { radarSourceMark } from '@/lib/sources/display';
 import { and, count, desc, eq, inArray, isNotNull, lt, ne, sql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import {
@@ -105,7 +105,7 @@ export async function loadRadarHistory(
     ...exampleImage(images, row.imageFingerprint),
     postId: row.id,
     sourceUsername: row.sourceUsername ?? 'unknown',
-    ...(isRssItemId(row.externalId) ? { sourcePlatform: 'rss' as const } : {}),
+    ...radarSourceMark(row.externalId),
     text: row.sourceText ?? '',
     media: describeStoredMedia(row.method, row.mediaCount),
     decision: row.status === 'rejected' ? 'reject' : 'approve',

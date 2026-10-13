@@ -97,6 +97,8 @@ export interface RadarSubject {
   /** The channel's language, which Radar's reason is written in. */
   language?: string | null;
   item: RadarItem;
+  /** The post's analysis-only text in full — a video's transcript — embedded with it for retrieval. */
+  analysisText?: string | null;
   /** The post's first image, when it has one — sent only for the raw-image experiment. */
   image?: RadarImage;
   /**
@@ -242,6 +244,7 @@ export async function scoreAndRecord(
         workspaceId: subject.workspaceId,
         processedPostId: subject.processedPostId,
         candidateText: subject.item.text,
+        candidateAnalysis: subject.analysisText,
         candidateImage: subject.media?.understanding ?? null,
         mediaConfig: media ? options.mediaConfig : null,
         before: options.before,

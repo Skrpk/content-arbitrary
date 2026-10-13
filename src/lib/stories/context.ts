@@ -2,7 +2,7 @@ import { and, desc, eq, lt, ne } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import { processedPosts, storyPosts, type HistoryRetrievalRecord, type RejectionReason } from '@/db/schema';
 import { APPROVED_STATUSES } from '@/lib/radar/repository';
-import { isRssItemId } from '@/lib/sources/display';
+import { radarSourceMark } from '@/lib/sources/display';
 
 /**
  * A post's story as it stood when the post arrived — for Radar: how many
@@ -18,7 +18,7 @@ export interface StoryContextPost {
   processedPostId: number;
   sourceUsername: string | null;
   /** 'rss' when `sourceUsername` is a feed's title rather than an X handle. */
-  sourcePlatform?: 'rss';
+  sourcePlatform?: 'rss' | 'youtube';
   /** How long before the new post it arrived. */
   hoursBefore: number;
   /** What the editor had done with it by the time the new post arrived. */
@@ -84,7 +84,7 @@ export async function loadStoryContext(
     return {
       processedPostId: row.processedPostId,
       sourceUsername: row.sourceUsername,
-      ...(isRssItemId(row.externalId) ? { sourcePlatform: 'rss' as const } : {}),
+      ...radarSourceMark(row.externalId),
       hoursBefore: (own.arrivedAt.getTime() - row.arrivedAt.getTime()) / 3_600_000,
       decision: published ? 'published' : rejected ? 'rejected' : 'undecided',
       rejectionReason: rejected ? row.rejectionReason : null,

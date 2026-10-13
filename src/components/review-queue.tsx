@@ -20,7 +20,7 @@ import { fromQueue, theme } from '@/lib/telegram/webapp-client';
 
 export interface QueueItem {
   id: number;
-  platform: 'x' | 'rss' | 'telegram';
+  platform: 'x' | 'rss' | 'telegram' | 'youtube';
   sourceLabel: string | null;
   url: string;
   postedAt: string | null;

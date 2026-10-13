@@ -252,7 +252,28 @@ export const DEFAULT_WORKSPACE_ID = 1;
  * deliberately not named `x_...` anywhere, so another platform is one enum
  * value plus a fetcher, not a schema reshape.
  */
-export const sourcePlatformEnum = pgEnum('source_platform', ['x', 'rss', 'telegram']);
+/**
+ * What a source said about a post beyond its text, kept for analysis: the
+ * same shape for every platform that has any, each field optional.
+ */
+export interface SourceMetadata {
+  /** Its length, for a video. */
+  durationSeconds?: number | null;
+  views?: number | null;
+  likes?: number | null;
+  comments?: number | null;
+  /** YouTube's `liveBroadcastContent`: none, live or upcoming. */
+  live?: 'none' | 'live' | 'upcoming' | null;
+  /** How its transcript went, for a video. */
+  transcript?: {
+    status: 'available' | 'unavailable' | 'failed' | 'not_configured';
+    language?: string | null;
+    provider?: string | null;
+    length?: number | null;
+  } | null;
+}
+
+export const sourcePlatformEnum = pgEnum('source_platform', ['x', 'rss', 'telegram', 'youtube']);
 
 export type SourcePlatform = (typeof sourcePlatformEnum.enumValues)[number];
 
@@ -397,6 +418,20 @@ export const processedPosts = pgTable(
      * text.
      */
     sourceText: text('source_text'),
+    /**
+     * What the post is about beyond its text, for analysis only — never
+     * translated, reviewed or published: a YouTube video's transcript. Radar
+     * and the embedding read a bounded sample of it; it is kept whole so a
+     * backfill and a re-embed read exactly what live did. Null for a post
+     * that has none, which is every post but a video's.
+     */
+    analysisText: text('analysis_text'),
+    /**
+     * What the source said about the post beyond its text, platform-neutral
+     * in shape: a video's duration and counts, and how its transcript went.
+     * See SourceMetadata.
+     */
+    sourceMetadata: jsonb('source_metadata').$type<SourceMetadata>(),
 
     /**
      * The post's public engagement as X reported it when we first fetched it,

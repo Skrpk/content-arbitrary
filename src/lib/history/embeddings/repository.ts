@@ -1,4 +1,4 @@
-import { isRssItemId } from '@/lib/sources/display';
+import { radarSourceMark } from '@/lib/sources/display';
 import { and, asc, count, eq, inArray, isNotNull, lt, ne, sql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import {
@@ -216,6 +216,7 @@ export async function loadProcessedPostsForEmbedding(db: Database, input: { work
     .select({
       id: processedPosts.id,
       text: processedPosts.sourceText,
+      analysisText: processedPosts.analysisText,
       imageFingerprint: processedPosts.imageFingerprint,
       storedFingerprint: radarCandidateEmbeddings.contentFingerprint,
     })
@@ -236,7 +237,7 @@ export interface ApprovedMatch {
   text: string | null;
   sourceUsername: string | null;
   /** 'rss' when `sourceUsername` is a feed's title rather than an X handle. */
-  sourcePlatform?: 'rss';
+  sourcePlatform?: 'rss' | 'youtube';
   /** When the editor approved it. */
   approvedAt: Date;
   /** Its first image's fingerprint, to find what it shows; null without one. */
@@ -296,7 +297,7 @@ export async function findSimilarApprovedPosts(
   // reviewed_at is non-null by the filter.
   return rows.map(({ externalId, ...row }) => ({
     ...row,
-    ...(isRssItemId(externalId) ? { sourcePlatform: 'rss' as const } : {}),
+    ...radarSourceMark(externalId),
     approvedAt: row.approvedAt!,
   }));
 }
@@ -319,7 +320,7 @@ export interface RejectedMatch {
   text: string | null;
   sourceUsername: string | null;
   /** 'rss' when `sourceUsername` is a feed's title rather than an X handle. */
-  sourcePlatform?: 'rss';
+  sourcePlatform?: 'rss' | 'youtube';
   /** When the editor rejected it. */
   rejectedAt: Date;
   rejectionReason: RejectionReason | null;
@@ -373,7 +374,7 @@ export async function findSimilarRejectedPosts(
   // reviewed_at is non-null by the filter.
   return rows.map(({ externalId, ...row }) => ({
     ...row,
-    ...(isRssItemId(externalId) ? { sourcePlatform: 'rss' as const } : {}),
+    ...radarSourceMark(externalId),
     rejectedAt: row.rejectedAt!,
   }));
 }
