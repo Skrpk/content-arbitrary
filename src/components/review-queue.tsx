@@ -33,6 +33,8 @@ export interface QueueItem {
     reason: string | null;
     possiblyAlreadyCovered: boolean;
   } | null;
+  /** A post its source sent before: when the earlier copy came, and what became of it. */
+  repeat: { arrivedAt: string; outcome: string } | null;
   edited: boolean;
   /** Written in the website's editor: goes out as a rich message. */
   rich: boolean;
@@ -112,6 +114,29 @@ function ago(iso: string | null): string {
   const hours = Math.round(minutes / 60);
   if (hours < 48) return `${hours}h ago`;
   return `${Math.round(hours / 24)}d ago`;
+}
+
+/** A post its source sent before, and what became of the earlier copy: `🔁 Repeat of 10 Oct · rejected`. */
+function RepeatBadge({ repeat }: { repeat: NonNullable<QueueItem['repeat']> }) {
+  const day = new Date(repeat.arrivedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  return (
+    <span
+      title={`The same post as one this source sent on ${day}, which was ${repeat.outcome}`}
+      style={{
+        marginLeft: '0.4rem',
+        padding: '0.05rem 0.4rem',
+        borderRadius: '0.3rem',
+        background: '#7a5af5',
+        color: '#ffffff',
+        fontSize: '0.7rem',
+        fontWeight: 700,
+        verticalAlign: 'middle',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      🔁 Repeat of {day} · {repeat.outcome}
+    </span>
+  );
 }
 
 /** Green for a likely approval, amber for a maybe, grey for a likely no. */
@@ -387,6 +412,7 @@ export function ReviewQueue({ surface, request, initialWorkspaceId, confirm, ope
               <span style={{ fontWeight: 600, flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>
                 {item.sourceLabel ?? 'unknown source'}
                 <PlatformBadge platform={item.platform} />
+                {item.repeat ? <RepeatBadge repeat={item.repeat} /> : null}
               </span>
               <span style={{ color: theme.hint, fontSize: '0.8rem', whiteSpace: 'nowrap' }}>{ago(item.postedAt)}</span>
             </div>

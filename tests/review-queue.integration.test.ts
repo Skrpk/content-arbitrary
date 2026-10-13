@@ -9,6 +9,8 @@ import {
   processedPosts,
   radarEvaluations,
   sources,
+  stories,
+  storyPosts,
   syncState,
   telegramMessages,
   users,
@@ -20,6 +22,7 @@ import { POST as channelsRoute } from '@/app/api/telegram/webapp/channels/route'
 import * as accountRoute from '@/app/api/account/route';
 import * as richRoute from '@/app/api/telegram/webapp/rich/route';
 import * as captionRoute from '@/app/api/telegram/webapp/caption/route';
+import { loadRadarNote } from '@/lib/radar/review-note';
 import { syncPosts } from '@/lib/sync/sync-posts';
 import { publishDueScheduledPosts } from '@/lib/sync/publish-scheduled';
 import { schedulePost } from '@/lib/sync/repository';
@@ -443,6 +446,34 @@ describeIfDb('GET /api/telegram/webapp/queue', () => {
       media: [{ kind: 'photo', imageUrl: 'https://cdn.example/3_1.jpg' }],
     });
     expect(channel!.items[2]!.score).toBeNull();
+  });
+
+  it('marks a post its source sent before, with what became of the earlier copy', async () => {
+    const earlier = await queuedPost({ status: 'rejected', rejectionReason: 'not_interesting', createdAt: new Date('2026-10-10T08:00:00Z') });
+    const repeat = await queuedPost();
+    const close = await queuedPost();
+    const otherSource = await queuedPost({ xAuthorUsername: 'bears_daily' });
+    const [story] = await db.insert(stories).values({ workspaceId: DEFAULT_WORKSPACE_ID }).returning();
+    const placed = (processedPostId: number, similarity: number | null, nearestPostId: number | null = earlier.id) => ({
+      processedPostId,
+      storyId: story!.id,
+      nearestPostId,
+      similarity,
+      threshold: 0.75,
+      embeddingModel: 'text-embedding-3-small',
+    });
+    await db
+      .insert(storyPosts)
+      .values([placed(earlier.id, null, null), placed(repeat.id, 0.99), placed(close.id, 0.9), placed(otherSource.id, 0.99)]);
+
+    const body = (await (await loadQueue()).json()) as {
+      channels: { items: { id: number; repeat: { arrivedAt: string; outcome: string } | null }[] }[];
+    };
+    const repeatOf = (id: number) => body.channels[0]!.items.find((item) => item.id === id)!.repeat;
+    expect(repeatOf(repeat.id)).toEqual({ arrivedAt: '2026-10-10T08:00:00.000Z', outcome: 'rejected' });
+    expect(repeatOf(close.id)).toBeNull();
+    expect(repeatOf(otherSource.id)).toBeNull();
+    expect(await loadRadarNote(db, repeat.id)).toBe('🔁 Repeat of a post from 10 Oct · rejected');
   });
 
   it('shows the text without the channel footer', async () => {

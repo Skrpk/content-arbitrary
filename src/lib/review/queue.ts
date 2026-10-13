@@ -6,6 +6,7 @@ import type { Env } from '@/lib/env';
 import { describeError } from '@/lib/errors';
 import type { Logger } from '@/lib/logger';
 import { findReviewScores, type ReviewScore } from '@/lib/radar/review-note';
+import { findRepeats, repeatOutcome, type Repeat } from '@/lib/stories/repeats';
 import { richDocumentPlainText } from '@/lib/rich/document';
 import { platformOfPostId, sourceLabelOfPost } from '@/lib/sources/display';
 import type { TelegramClient } from '@/lib/telegram/client';
@@ -113,6 +114,8 @@ export interface ReviewQueueItem {
   /** A picture for each item: a photo, or a video's still; null when there is none to show. */
   media: { kind: 'photo' | 'video'; imageUrl: string | null }[];
   score: ReviewScore | null;
+  /** A post its source sent before: when the earlier copy came, and what became of it. */
+  repeat: { arrivedAt: string; outcome: string } | null;
   /** Edited by the reviewer since it came in. */
   edited: boolean;
   /** Written in the website's editor: published as a rich message, as written there. */
@@ -148,10 +151,8 @@ export async function loadReviewQueue(
     .limit(REVIEW_QUEUE_PAGE_LIMIT);
 
   const { waiting } = await countReviewQueue(db, workspace.id, null);
-  const scores = await findReviewScores(
-    db,
-    rows.map((row) => row.id),
-  );
+  const ids = rows.map((row) => row.id);
+  const [scores, repeats] = await Promise.all([findReviewScores(db, ids), findRepeats(db, ids)]);
   const footer = parsePostFooter(workspace.postFooter);
 
   const items = rows.map((row): ReviewQueueItem => {
@@ -173,6 +174,7 @@ export async function loadReviewQueue(
         imageUrl: (item.kind === 'photo' ? item.url : item.previewUrl) ?? null,
       })),
       score: scores.get(row.id) ?? null,
+      repeat: repeatOf(repeats.get(row.id)),
       edited: row.captionEditedAt !== null,
       rich: row.richDoc !== null,
     };
@@ -181,6 +183,10 @@ export async function loadReviewQueue(
   // Newest first already; a stable sort keeps that order among equal scores.
   items.sort((a, b) => (b.score?.score ?? -1) - (a.score?.score ?? -1));
   return { items, waiting };
+}
+
+function repeatOf(repeat: Repeat | undefined): ReviewQueueItem['repeat'] {
+  return repeat ? { arrivedAt: repeat.arrivedAt.toISOString(), outcome: repeatOutcome(repeat.status) } : null;
 }
 
 /**

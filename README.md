@@ -1675,8 +1675,9 @@ effect would otherwise drown among text posts — with what the images cost to l
 
 The same event comes in from several sources: a launch from the company, the agency, two news
 accounts and a feed, within hours. Story clustering groups them — one story per event — as they
-arrive. **Recorded only, for now:** the review queue, the notification and Radar are unchanged;
-`stories:cluster` reports what it made of a workspace, to judge it before anything uses it.
+arrive. So far the stories are used for one thing, marking repeats in review (below); Radar and the
+queue's order are unchanged, and `stories:cluster` reports what the clustering made of a
+workspace, to judge it before anything more uses it.
 
 **How a post is placed.** By the vector Radar's [retrieval](#similar-past-publications) already
 made of it (text and what its image shows), so no extra embedding call. It is compared with the
@@ -1700,6 +1701,15 @@ npm run stories:cluster -- --workspace 2
 npm run stories:cluster -- --workspace 2 --rebuild --threshold 0.72 --dry-run
 npm run stories:cluster -- --workspace 2 --report
 ```
+
+**Repeats.** Some sources post the same text and picture again every day or two. A post whose
+nearest earlier post is from the same source and at least 0.97 similar (`REPEAT_SIMILARITY` in
+[`src/lib/stories/repeats.ts`](src/lib/stories/repeats.ts)) is marked as a repeat, with what
+became of the earlier copy: `🔁 Repeat of 12 Oct · rejected` beside the source in the review queue,
+and `🔁 Repeat of a post from 12 Oct · rejected` under Radar's note on the message with the
+buttons. A mark only: it still comes to review, and its Radar score is unchanged. On VECTOR's first
+week 50 posts were repeats — 47 rejected, 3 published the second time round — all from the same
+source; no two sources came that close.
 
 It places, in the order they arrived, the posts that have a vector and no story yet — exactly as
 live — and prints the report: how many stories hold more than one post and from how many
@@ -1899,6 +1909,7 @@ src/
     stories/
       cluster.ts               A post into the story of the nearest close post before it, or a new one
       report.ts                What the clustering made of a workspace, beside the editor's decisions
+      repeats.ts               A source sending the same post again: found, and said in review
     rich/
       document.ts              A rich post: the editor's document, checked, to Telegram rich HTML
       edit-html.ts             The document as the small HTML the AI assistant edits, and back

@@ -872,6 +872,14 @@ describeIfDb('the score on the review message', () => {
     expect(long.split('\n')[1]!.length).toBeLessThanOrEqual(200);
     expect(long.endsWith('…')).toBe(true);
     expect(formatRadarNote(null)).toBeNull();
+
+    const repeat = { ofPostId: 1, arrivedAt: new Date('2026-10-10T23:30:00Z'), status: 'published' as const };
+    expect(
+      formatRadarNote({ score: 12, predictedDecision: 'reject', reason: null, possiblyAlreadyCovered: false }, repeat),
+    ).toBe('📡 Radar 12/100 · likely reject\n🔁 Repeat of a post from 10 Oct · published');
+    expect(formatRadarNote(null, { ...repeat, status: 'awaiting_approval' })).toBe(
+      '🔁 Repeat of a post from 10 Oct · still in review',
+    );
   });
 });
 

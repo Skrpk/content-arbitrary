@@ -294,9 +294,10 @@ async function understandFirstImage(
 }
 
 /**
- * Put the post in its story, by the vector Radar's retrieval made of it.
- * Recorded only, for now; never throws, and a post without a vector — no
- * text, or nothing for retrieval to search — is left out.
+ * Put the post in its story, by the vector Radar's retrieval made of it —
+ * before the review message is built, so a repeat is said on it. Never
+ * throws, and a post without a vector — no text, or nothing for retrieval to
+ * search — is left out.
  */
 async function placeInStoryQuietly(
   db: Database,

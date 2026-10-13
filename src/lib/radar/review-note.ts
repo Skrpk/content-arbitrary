@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import { radarEvaluations } from '@/db/schema';
 import { RADAR_PROMPT_APPROVED, RADAR_PROMPT_BASELINE, RADAR_PROMPT_RETRIEVAL } from '@/lib/radar/prompt';
+import { findRepeat, formatRepeatNote, type Repeat } from '@/lib/stories/repeats';
 
 /**
  * Radar's score on the message with the review buttons, and the order of the
@@ -79,10 +80,12 @@ export async function findReviewScores(db: Database, processedPostIds: number[])
 
 /**
  * The note as plain text — the review message escapes it, so a model's words
- * can never become markup — or null for none.
+ * can never become markup — or null for none. A repeat is said under it, or
+ * alone when Radar has no score.
  */
-export function formatRadarNote(score: ReviewScore | null): string | null {
-  if (!score) return null;
+export function formatRadarNote(score: ReviewScore | null, repeat: Repeat | null = null): string | null {
+  const repeatLine = formatRepeatNote(repeat);
+  if (!score) return repeatLine;
 
   const verdict = score.predictedDecision === 'approve' ? 'likely approve' : 'likely reject';
   const lines = [`📡 Radar ${score.score}/100 · ${verdict}`];
@@ -90,10 +93,12 @@ export function formatRadarNote(score: ReviewScore | null): string | null {
   if (score.reason) {
     lines.push(score.reason.length > REASON_MAX ? `${score.reason.slice(0, REASON_MAX - 1).trimEnd()}…` : score.reason);
   }
+  if (repeatLine) lines.push(repeatLine);
   return lines.join('\n');
 }
 
 /** Look up and format in one go, for a review message re-rendered after the fact. */
 export async function loadRadarNote(db: Database, processedPostId: number): Promise<string | null> {
-  return formatRadarNote(await findReviewScore(db, processedPostId));
+  const [score, repeat] = await Promise.all([findReviewScore(db, processedPostId), findRepeat(db, processedPostId)]);
+  return formatRadarNote(score, repeat);
 }

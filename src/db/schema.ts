@@ -1183,8 +1183,9 @@ export const assistantRequests = pgTable(
  * One story: the posts, from any source, that report the same event — a
  * launch, a discovery, a death — grouped as they arrive. A post joins the
  * story of the nearest post that arrived before it, within a window, when the
- * two are similar enough; otherwise it starts a story of its own. Recorded
- * only, for now: nothing reads stories yet but the report.
+ * two are similar enough; otherwise it starts a story of its own. Read, so
+ * far, to mark repeats in review (src/lib/stories/repeats.ts), and by the
+ * report.
  */
 export const stories = pgTable(
   'stories',
