@@ -16,6 +16,7 @@ import {
   radarCandidateEmbeddings,
   radarEvaluations,
   sources,
+  storyPosts,
   syncState,
   telegramMessages,
   workspaces,
@@ -279,6 +280,16 @@ describeIfDb('a new post with a photo, in the sync', () => {
 
     expect(embeddings.calls).toHaveLength(1);
     expect(embeddings.calls[0]![0]).toContain('Це просто неймовірно\n\nIMAGE: View from the ISS');
+  });
+
+  it('places the new post in a story by that same vector, with no call of its own', async () => {
+    const { embeddings } = await sync();
+
+    expect(embeddings.calls).toHaveLength(1);
+    const [post] = await db.select().from(processedPosts);
+    expect(await db.select().from(storyPosts)).toEqual([
+      expect.objectContaining({ processedPostId: post!.id, nearestPostId: null, embeddingModel: 'text-embedding-3-small' }),
+    ]);
   });
 
   it('looks only at the first photo of an album', async () => {

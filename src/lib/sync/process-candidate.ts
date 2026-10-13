@@ -22,6 +22,7 @@ import type { ReviewMedia } from '@/lib/sync/process-post';
 import { describeMedia, type RadarImage } from '@/lib/radar/prompt';
 import { loadRadarNote } from '@/lib/radar/review-note';
 import { runLiveRadar, type RadarRun } from '@/lib/radar/shadow';
+import { placeInStory } from '@/lib/stories/cluster';
 import { translateForReview, type Translator } from '@/lib/translation/translate';
 import type { TelegramDestination } from '@/lib/workspace';
 import type { NormalizedPost, SourceSyncSummary } from '@/types';
@@ -137,6 +138,8 @@ export async function processCandidate(
               },
               postLogger,
             );
+            // By the vector Radar's retrieval just made: no call of its own.
+            await placeInStoryQuietly(db, source.workspaceId, row.id, context.radar!.run, postLogger);
             // The score just recorded, for the reviewer to see beside the buttons.
             return loadRadarNote(db, row.id);
           }
@@ -287,6 +290,27 @@ async function understandFirstImage(
   } catch (error) {
     logger.warn('media.understanding_failed', { error: describeError(error) });
     return { understanding: null, understandingId: null };
+  }
+}
+
+/**
+ * Put the post in its story, by the vector Radar's retrieval made of it.
+ * Recorded only, for now; never throws, and a post without a vector — no
+ * text, or nothing for retrieval to search — is left out.
+ */
+async function placeInStoryQuietly(
+  db: Database,
+  workspaceId: number,
+  processedPostId: number,
+  run: RadarRun,
+  logger: Logger,
+): Promise<void> {
+  if (!run.embeddings) return;
+  try {
+    const placement = await placeInStory(db, { workspaceId, processedPostId, model: run.embeddings.model });
+    if (placement) logger.info('story.placed', { ...placement });
+  } catch (error) {
+    logger.warn('story.placement_failed', { error: describeError(error) });
   }
 }
 

@@ -48,6 +48,7 @@ Without review switched on, posts go straight to the channel, as the bot first d
 - [Review website](#review-website)
 - [Shadow Radar](#shadow-radar)
 - [Publication history](#publication-history)
+- [Stories](#stories)
 - [Configuration reference](#configuration-reference)
 - [Architecture decisions](#architecture-decisions)
 - [Project structure](#project-structure)
@@ -1670,6 +1671,42 @@ than before.
 puts the two side by side on the same posts — and again on the posts with images only, where an
 effect would otherwise drown among text posts — with what the images cost to look at.
 
+## Stories
+
+The same event comes in from several sources: a launch from the company, the agency, two news
+accounts and a feed, within hours. Story clustering groups them — one story per event — as they
+arrive. **Recorded only, for now:** the review queue, the notification and Radar are unchanged;
+`stories:cluster` reports what it made of a workspace, to judge it before anything uses it.
+
+**How a post is placed.** By the vector Radar's [retrieval](#similar-past-publications) already
+made of it (text and what its image shows), so no extra embedding call. It is compared with the
+posts of its workspace that arrived in the 48 hours before it; when the nearest is at least 0.75
+similar, the post joins that post's story, otherwise it starts its own. One link is enough, so a
+story can run for days while each new post is close to one in the window. What was found is kept
+either way — in `story_posts`, the nearest post, its similarity and the threshold used — so the
+threshold can be judged and changed from what the posts actually looked like. A post without a
+vector (no text and no understood image, or a workspace without Radar) is not placed.
+
+**The threshold.** On VECTOR's first week, a nearest post at 0.75 or more was almost always the
+same event from another account — a crew's return, a reentry video, an obituary, the same record
+fast radio burst; between 0.70 and 0.75 about half were; below that it was mostly the same
+subject, another galaxy or nebula. `STORY_SIMILARITY_THRESHOLD` in
+[`src/lib/stories/cluster.ts`](src/lib/stories/cluster.ts).
+
+**Placing past posts**, and trying another threshold:
+
+```bash
+npm run stories:cluster -- --workspace 2
+npm run stories:cluster -- --workspace 2 --rebuild --threshold 0.72 --dry-run
+npm run stories:cluster -- --workspace 2 --report
+```
+
+It places, in the order they arrived, the posts that have a vector and no story yet — exactly as
+live — and prints the report: how many stories hold more than one post and from how many
+sources, the nearest similarities by band, the stories the editor published twice, and how many
+of their "already covered" rejections sit in a story they had already published. `--rebuild`
+forgets the workspace's stories first; `--dry-run` rolls everything back.
+
 ## Configuration reference
 
 | Variable | Default | Description |
@@ -1859,6 +1896,9 @@ src/
       adapters/telegram-json.ts  Telegram Desktop JSON export
       profile/                 History → editorial profile: sources, prompts, map/reduce, store
       embeddings/              Embedded text and fingerprint, OpenAI embeddings, backfill, search
+    stories/
+      cluster.ts               A post into the story of the nearest close post before it, or a new one
+      report.ts                What the clustering made of a workspace, beside the editor's decisions
     rich/
       document.ts              A rich post: the editor's document, checked, to Telegram rich HTML
       edit-html.ts             The document as the small HTML the AI assistant edits, and back
@@ -1891,7 +1931,7 @@ src/
 scripts/                       migrate, run-sync, telegram-check, telegram-commands, rss-check,
                                import-history, history-profile, history-embed,
                                history-understand-images, radar-backfill,
-                               radar-report, radar-context
+                               radar-report, radar-context, stories-cluster
 tests/                         Unit + integration suites
 ```
 

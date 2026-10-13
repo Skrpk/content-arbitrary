@@ -1178,3 +1178,48 @@ export const assistantRequests = pgTable(
     check('assistant_requests_status_check', sql`${table.status} IN ('ok', 'failed')`),
   ],
 );
+
+/**
+ * One story: the posts, from any source, that report the same event — a
+ * launch, a discovery, a death — grouped as they arrive. A post joins the
+ * story of the nearest post that arrived before it, within a window, when the
+ * two are similar enough; otherwise it starts a story of its own. Recorded
+ * only, for now: nothing reads stories yet but the report.
+ */
+export const stories = pgTable(
+  'stories',
+  {
+    id: serial('id').primaryKey(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('stories_workspace_idx').on(table.workspaceId)],
+);
+
+/**
+ * A post's place in a story, and what decided it: the nearest earlier post
+ * found and how similar it was — kept even when it was not close enough, so
+ * the threshold can be judged, and changed, from what was seen.
+ */
+export const storyPosts = pgTable(
+  'story_posts',
+  {
+    processedPostId: integer('processed_post_id')
+      .primaryKey()
+      .references(() => processedPosts.id, { onDelete: 'cascade' }),
+    storyId: integer('story_id')
+      .notNull()
+      .references(() => stories.id, { onDelete: 'cascade' }),
+    /** The most similar post that arrived within the window before it, if any. */
+    nearestPostId: integer('nearest_post_id').references(() => processedPosts.id, { onDelete: 'set null' }),
+    /** Cosine similarity to that post, -1..1. */
+    similarity: doublePrecision('similarity'),
+    /** The similarity a post needed to join, when this one was placed. */
+    threshold: doublePrecision('threshold').notNull(),
+    embeddingModel: text('embedding_model').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('story_posts_story_idx').on(table.storyId)],
+);
