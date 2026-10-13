@@ -89,7 +89,7 @@ function LoadedEditor({
   const [dirty, setDirty] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [media, setMedia] = useState<EditorMedia[]>(data.media);
-  const [uploading, setUploading] = useState<{ name: string; percent: number } | null>(null);
+  const [uploading, setUploading] = useState<{ name: string } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   // The editor is set up once; pasting and dropping reach the upload as it is now through this.
   const uploadFromEditor = useRef<((files: File[], at?: number) => void) | null>(null);
@@ -204,14 +204,16 @@ function LoadedEditor({
         setMessage({ ok: false, text: `${file.name} is ${megabytes(file.size)}; a ${kind} can be up to ${megabytes(limits.maxBytes[kind])}.` });
         continue;
       }
-      setUploading({ name: file.name, percent: 0 });
+      setUploading({ name: file.name });
+      setMessage({ ok: true, text: `Uploading ${file.name}…` });
       try {
         const blob = await uploadPresigned(`${limits.pathPrefix}${safeFileName(file.name)}`, file, {
           access: 'public',
           handleUploadUrl: '/api/telegram/webapp/uploads',
           clientPayload: JSON.stringify({ postId: data.postId }),
           multipart: file.size > 8 * 1024 * 1024,
-          onUploadProgress: ({ percentage }) => setUploading({ name: file.name, percent: Math.round(percentage) }),
+          // No onUploadProgress: with it the SDK streams the body, which a browser may refuse for an
+          // upload, and its retry then finds the stream already read. Sent whole, a retry resends it.
         });
         const recorded = await readJson<{ ref: string; kind: 'photo' | 'video'; url: string }>(
           await request('/api/telegram/webapp/uploads/register', {
@@ -231,6 +233,7 @@ function LoadedEditor({
           },
         ]);
         editor.chain().focus().insertContent({ type: 'postMedia', attrs: { ref: recorded.ref, caption: null } }).run();
+        setMessage(null);
       } catch (reason: unknown) {
         setMessage({ ok: false, text: `${file.name}: ${reason instanceof Error ? reason.message : 'could not upload.'}` });
       }
@@ -355,7 +358,7 @@ function LoadedEditor({
                       cursor: uploading ? 'default' : 'pointer',
                     }}
                   >
-                    {uploading ? `Uploading… ${uploading.percent}%` : '⬆ Upload photo or video'}
+                    {uploading ? 'Uploading…' : '⬆ Upload photo or video'}
                   </button>
                 ) : null}
                 <input
