@@ -1270,9 +1270,10 @@ their [stored descriptions](#image-understanding), never the image itself; and
 help) plus the [five most similar posts the editor turned down](#similar-rejected-posts); and
 `radar-v6-nearest-decisions`, which is `radar-v3` plus the [editor's ten nearest
 decisions](#nearest-decisions), approved and rejected together. Live, every post is scored with
-`radar-v1` and `radar-v3`; the others run on backfills only — `radar-v4` scored below `radar-v3`
-live, and neither `radar-v5` nor `radar-v6` ordered a day's posts better than it — and backfills
-score all six by default.
+`radar-v1`, `radar-v3` and `radar-v5` (since 13 October 2026, to test on fresh posts what a
+backfill [suggested](#similar-rejected-posts)); the others run on backfills only — `radar-v4`
+scored below `radar-v3` live, and `radar-v6` did no better than `radar-v5` — and backfills score
+all six by default.
 `LIVE_RADAR_PROMPT_VERSIONS` in
 [`src/lib/radar/prompt.ts`](src/lib/radar/prompt.ts) is the live list.
 
@@ -1574,10 +1575,15 @@ found among galaxies: the post's image description is embedded with its text, wh
 reads it. Same vectors, same boundaries (rejected strictly before the new post arrived), no extra
 embedding call; recorded in `history_retrieval.rejected`.
 
-On a backfill it ranked no better than `radar-v3` (same AUC and daily hit rate) and turned
-pessimistic about everything: with nine posts in ten rejected, rejected neighbours turn up for
-almost any post, and it read their mere presence as a verdict — halving the galaxy photos scored
-high, and missing approvals with a bare caption too.
+On the first backfill, 199 posts, it ranked no better than `radar-v3` (same AUC and daily hit
+rate) and turned pessimistic about everything: with nine posts in ten rejected, rejected
+neighbours turn up for almost any post, and it read their mere presence as a verdict — halving the
+galaxy photos scored high, and missing approvals with a bare caption too. On the 219 newer posts
+after them, though, it ordered each day far better: 10 of 24 approvals in each day's top against
+`radar-v3`'s 4 (chance: 3.5), AUC 0.74 against 0.69 — over all 418, a daily hit rate of 41%
+against 32%. The likely reason is that later posts have more rejections behind them to be found.
+Three days and 24 approvals are not proof, so it now runs live beside `radar-v3`. Its scores sit
+lower (27 approvals under 50 against 15), so read its threshold lower too.
 
 ### Nearest decisions
 
@@ -1594,7 +1600,8 @@ It did no better: on the same backfill its daily hit rate matched `radar-v3`'s, 
 `radar-v5` it mostly lowered every score — cleaner at the very top, more approvals under 50.
 Ranking posts by the share approved among their ten nearest decisions alone, with no model at
 all, gets about 30–34% against `radar-v3`'s 41%: the model earns its keep, but more neighbours in
-its prompt add nothing. Both run on backfills only.
+its prompt add nothing. It runs on backfills only; over all 418 posts its daily hit rate (38%)
+fell between `radar-v3`'s and `radar-v5`'s.
 
 **Cost.** One embedding call per new post (a few hundred tokens), and the history once: VECTOR's
 83 posts with text, about 24,000 characters, cost a fraction of a cent. `history:embed` prints the

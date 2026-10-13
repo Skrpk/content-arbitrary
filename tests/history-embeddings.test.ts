@@ -253,7 +253,7 @@ describe('the approved-posts prompt', () => {
   });
 
   it('runs live as the baseline and the best so far, nothing else', () => {
-    expect(LIVE_RADAR_PROMPT_VERSIONS).toEqual([RADAR_PROMPT_BASELINE, RADAR_PROMPT_APPROVED]);
+    expect(LIVE_RADAR_PROMPT_VERSIONS).toEqual([RADAR_PROMPT_BASELINE, RADAR_PROMPT_APPROVED, RADAR_PROMPT_REJECTED]);
   });
 });
 
