@@ -200,10 +200,29 @@ export function richDocumentToHtml(
   doc: RichDocument,
   options: { mediaKinds: MediaKinds; footerHtml?: string | null },
 ): string {
-  // An empty paragraph — the editor keeps one at the end to type into — is not sent.
-  const out = doc.content.map((block) => blockHtml(block, options.mediaKinds)).filter((html) => html !== '<p></p>');
+  // Telegram sets paragraphs one under another, with no gap, and drops one
+  // with nothing in it. So an empty line left between paragraphs is sent as
+  // a line holding a no-break space, and shows as the gap it was meant to be.
+  // Empty lines at the start or the end — the editor keeps one at the end to
+  // type into — are not sent.
+  const blocks = doc.content;
+  let first = 0;
+  let last = blocks.length - 1;
+  while (first <= last && isBlankParagraph(blocks[first]!)) first += 1;
+  while (last >= first && isBlankParagraph(blocks[last]!)) last -= 1;
+  const out = blocks
+    .slice(first, last + 1)
+    .map((block) => (isBlankParagraph(block) ? BLANK_LINE_HTML : blockHtml(block, options.mediaKinds)));
   if (options.footerHtml) out.push(`<p>${options.footerHtml}</p>`);
   return out.join('');
+}
+
+/** An empty line, as Telegram keeps it. */
+const BLANK_LINE_HTML = '<p>&nbsp;</p>';
+
+/** A paragraph with nothing a reader would see: no text, or only spaces and line breaks. */
+function isBlankParagraph(block: RichBlock): boolean {
+  return block.type === 'paragraph' && (block.content ?? []).every((node) => node.type === 'hardBreak' || node.text.trim() === '');
 }
 
 function blockHtml(block: RichBlock, kinds: MediaKinds): string {

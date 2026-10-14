@@ -63,6 +63,28 @@ describe('a document from the editor', () => {
     );
   });
 
+  it('keeps an empty line between paragraphs as a gap, and drops the ones at the edges', () => {
+    const paragraph = (value: string) => ({ type: 'paragraph', content: [text(value)] });
+    const doc = {
+      type: 'doc',
+      content: [
+        { type: 'paragraph' },
+        paragraph('Title'),
+        { type: 'paragraph' },
+        paragraph('Body'),
+        { type: 'paragraph', content: [text('   ')] },
+        { type: 'paragraph', content: [{ type: 'hardBreak' }] },
+        paragraph('More'),
+        { type: 'paragraph' },
+        { type: 'paragraph' },
+      ],
+    };
+    const parsed = parseRichDocument(doc, { mediaCount: 0 }) as { ok: true; doc: RichDocument };
+    expect(richDocumentToHtml(parsed.doc, { mediaKinds: { own: [] }, footerHtml: 'F' })).toBe(
+      '<p>Title</p><p>&nbsp;</p><p>Body</p><p>&nbsp;</p><p>&nbsp;</p><p>More</p><p>F</p>',
+    );
+  });
+
   it('refuses what a channel cannot show, or what the browser should not get to say', () => {
     const withBlock = (block: unknown) => ({ type: 'doc', content: [block] });
     const refused = [
