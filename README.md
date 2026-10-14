@@ -920,8 +920,8 @@ unless you genuinely want the tenant forgotten.
 ## Review website
 
 The review queue, the sources and the settings also work as a website on its own
-subdomain — say `https://app.zmistik.com` — under one header with the three sections
-(`/queue`, `/sources`, `/settings`; the old `/stats` redirects to `/sources`) and Sign out. The queue gets room to read: each post's pictures beside its text, the text and the
+subdomain — say `https://app.zmistik.com` — under one header with its sections
+(`/queue`, `/scheduled`, `/sources`, `/settings`; the old `/stats` redirects to `/sources`) and Sign out. The queue gets room to read: each post's pictures beside its text, the text and the
 schedule edited in place, and the keyboard to work through the list (`j` / `k` to move, `a` to
 approve, `r` then `1`–`6` to reject, `e` to edit, `s` to schedule, `o` for the original, `Esc`
 to step back). The Mini Apps stay as they are: each page is one component (`src/components/`)
@@ -1292,6 +1292,13 @@ tomorrow morning). Pick a time and the post is approved for then: the review mes
 | ✏️ Edit text | Still editable until it goes out; the latest text is what is published. |
 
 `/scheduled` lists what is waiting, soonest first, at the times you picked.
+
+On the website, **Scheduled** (`/scheduled`) shows the same list by day — Today, Tomorrow,
+Fri 16 Oct — with each post's pictures, text and how long until it goes out. Each post has
+**✏️ Edit** (the full editor, which comes back to this page), **🕒 Change time** (a picker in
+your browser's zone; the list re-sorts), **↩️ Back to review** and **Original**. The scheduler
+reads a post's text and time only when the time comes, so whatever was saved up to that minute
+is what goes out.
 
 **Telegram does not let bots use a channel's own scheduled messages**, so these do not appear
 in the channel's *Scheduled* list. The queue lives in the database instead, and

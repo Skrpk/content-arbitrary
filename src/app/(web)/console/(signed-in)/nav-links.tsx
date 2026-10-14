@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 /** The website's sections. Paths are the website's own; see next.config.ts. */
 const SECTIONS = [
   { href: '/queue', label: 'Review queue' },
+  { href: '/scheduled', label: 'Scheduled' },
   { href: '/sources', label: 'Sources' },
   { href: '/settings', label: 'Settings' },
 ];

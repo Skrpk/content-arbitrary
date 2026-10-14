@@ -771,7 +771,7 @@ function activeCard(items: QueueItem[], cards: Record<number, CardState>, focuse
 }
 
 /** A local `datetime-local` value for a moment: what the picker shows, in this browser's zone. */
-function localInputValue(at: Date): string {
+export function localInputValue(at: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}`;
 }
@@ -859,7 +859,7 @@ function ScheduleEditor({
  * with the arrows elsewhere. A photo is shown whole rather than cropped, as it
  * will be in the channel; a video by its still.
  */
-function MediaGallery({ media }: { media: QueueItem['media'] }) {
+export function MediaGallery({ media }: { media: QueueItem['media'] }) {
   const strip = useRef<HTMLDivElement>(null);
   const [index, setIndex] = useState(0);
 

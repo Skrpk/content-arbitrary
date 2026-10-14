@@ -53,7 +53,13 @@ export function PostEditor({
   confirm,
   openLink,
   onDone,
-}: PanelTools & { postId: number; onDone: () => void }) {
+  backTo = 'the queue',
+}: PanelTools & {
+  postId: number;
+  onDone: () => void;
+  /** Where done goes, for its button: "Save and back to …". */
+  backTo?: string;
+}) {
   const [data, setData] = useState<EditorData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -74,7 +80,7 @@ export function PostEditor({
 
   if (error) return <p style={{ color: theme.hint }}>{error}</p>;
   if (!data) return <p style={{ color: theme.hint }}>Loading…</p>;
-  return <LoadedEditor data={data} request={request} confirm={confirm} openLink={openLink} onDone={onDone} />;
+  return <LoadedEditor data={data} request={request} confirm={confirm} openLink={openLink} onDone={onDone} backTo={backTo} />;
 }
 
 function LoadedEditor({
@@ -83,7 +89,8 @@ function LoadedEditor({
   confirm,
   openLink,
   onDone,
-}: PanelTools & { data: EditorData; onDone: () => void }) {
+  backTo,
+}: PanelTools & { data: EditorData; onDone: () => void; backTo: string }) {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -379,7 +386,7 @@ function LoadedEditor({
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', marginTop: '1.25rem' }}>
             <button type="button" disabled={saving || !editor} onClick={() => void save(true)} style={{ ...mainButton, background: theme.button, color: theme.buttonText }}>
-              {saving ? 'Saving…' : 'Save and back to the queue'}
+              {saving ? 'Saving…' : `Save and back to ${backTo}`}
             </button>
             <button type="button" disabled={saving || !editor} onClick={() => void save(false)} style={{ ...mainButton, background: theme.secondaryBg, color: theme.text }}>
               Save

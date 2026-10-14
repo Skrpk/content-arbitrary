@@ -22,6 +22,8 @@ import { POST as channelsRoute } from '@/app/api/telegram/webapp/channels/route'
 import * as accountRoute from '@/app/api/account/route';
 import * as richRoute from '@/app/api/telegram/webapp/rich/route';
 import * as captionRoute from '@/app/api/telegram/webapp/caption/route';
+import * as scheduledRoute from '@/app/api/telegram/webapp/scheduled/route';
+import { POST as scheduleRoute } from '@/app/api/telegram/webapp/schedule/route';
 import { loadRadarNote } from '@/lib/radar/review-note';
 import { sendReviewDigest } from '@/lib/review/queue';
 import { syncPosts } from '@/lib/sync/sync-posts';
@@ -780,6 +782,106 @@ describeIfDb('a queued post scheduled for later', () => {
     expect(summary.published).toBe(1);
     expect(stack.calls.map((call) => [call.method, call.body.chat_id])).toEqual([['sendPhoto', CHANNEL_CHAT]]);
     expect((await reload(post.id)).status).toBe('published');
+  });
+});
+
+describeIfDb('the Scheduled page', () => {
+  const HOUR = 60 * MINUTE;
+
+  const listScheduled = async () => {
+    const response = await withEnv(queueEnv, () =>
+      scheduledRoute.GET(new Request('https://example.vercel.app/api/telegram/webapp/scheduled', { headers: { authorization: auth() } })),
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      channels: { id: number; items: { id: number; text: string; scheduledFor: string; display: string }[] }[];
+    };
+    return body.channels.find((channel) => channel.id === DEFAULT_WORKSPACE_ID)!.items;
+  };
+
+  const post = (route: (request: Request) => Promise<Response>, path: string, body: unknown) =>
+    withEnv(queueEnv, () =>
+      route(
+        new Request(`https://example.vercel.app/api/telegram/webapp/${path}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: auth() },
+          body: JSON.stringify(body),
+        }),
+      ),
+    );
+
+  const scheduledAt = async (at: Date, overrides: Partial<typeof processedPosts.$inferInsert> = {}) => {
+    const row = await queuedPost(overrides);
+    await schedulePost(db, { id: row.id, workspaceId: DEFAULT_WORKSPACE_ID, scheduledFor: at, timezone: 'Europe/Kyiv' });
+    return row;
+  };
+
+  it('lists only scheduled posts, soonest first, with their time as it was picked', async () => {
+    const later = await scheduledAt(new Date(Date.now() + 5 * HOUR), { caption: 'Later' });
+    const sooner = await scheduledAt(new Date(Date.now() + HOUR), { caption: 'Sooner' });
+    await queuedPost({ caption: 'Still in review' });
+    await queuedPost({ status: 'published', caption: 'Gone out' });
+
+    const items = await listScheduled();
+    expect(items.map((item) => [item.id, item.text])).toEqual([
+      [sooner.id, 'Sooner'],
+      [later.id, 'Later'],
+    ]);
+    expect(items[0]!.display).not.toContain('UTC');
+  });
+
+  it('moves a post to another time, and the list follows', async () => {
+    const first = await scheduledAt(new Date(Date.now() + HOUR));
+    const second = await scheduledAt(new Date(Date.now() + 2 * HOUR));
+
+    const moved = new Date(Date.now() + 3 * HOUR);
+    const response = await post(scheduleRoute, 'schedule', {
+      postId: first.id,
+      scheduledFor: moved.toISOString(),
+      timezone: 'Europe/Kyiv',
+    });
+    expect(response.status).toBe(200);
+
+    const items = await listScheduled();
+    expect(items.map((item) => item.id)).toEqual([second.id, first.id]);
+    expect(items[1]!.scheduledFor).toBe(moved.toISOString());
+    expect((await reload(first.id)).status).toBe('scheduled');
+  });
+
+  it('takes a post back into the review queue, gives its chat message the buttons back, and the scheduler leaves it', async () => {
+    const stack = makeStack();
+    vi.stubGlobal('fetch', stack.fetchImpl);
+    const row = await scheduledAt(new Date(Date.now() + HOUR), { adminChatId: ADMIN_CHAT, adminMessageId: 42 });
+
+    const response = await post(scheduledRoute.POST, 'scheduled', { action: 'unschedule', postId: row.id });
+    expect(response.status).toBe(200);
+
+    const after = await reload(row.id);
+    expect(after.status).toBe('awaiting_approval');
+    expect(after.scheduledFor).toBeNull();
+    expect(await listScheduled()).toEqual([]);
+
+    const edit = stack.calls.find((call) => call.method === 'editMessageText');
+    expect(edit?.body.message_id).toBe(42);
+    expect(JSON.stringify(edit?.body.reply_markup)).toContain('Approve');
+
+    // Settled once: a second try finds nothing to undo.
+    expect((await post(scheduledRoute.POST, 'scheduled', { action: 'unschedule', postId: row.id })).status).toBe(409);
+  });
+
+  it('cannot take back a post of a channel the reviewer does not review', async () => {
+    const row = await scheduledAt(new Date(Date.now() + HOUR));
+    const response = await withEnv(queueEnv, () =>
+      scheduledRoute.POST(
+        new Request('https://example.vercel.app/api/telegram/webapp/scheduled', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: auth(OTHER_REVIEWER_ID) },
+          body: JSON.stringify({ action: 'unschedule', postId: row.id }),
+        }),
+      ),
+    );
+    expect(response.status).not.toBe(200);
+    expect((await reload(row.id)).status).toBe('scheduled');
   });
 });
 
