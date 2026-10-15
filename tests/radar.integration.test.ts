@@ -13,8 +13,14 @@ import {
   workspaces,
 } from '@/db/schema';
 import { ingestRadarBatch, submitRadarBackfill, waitForBatch } from '@/lib/radar/backfill';
-import { RADAR_PROMPT_APPROVED, RADAR_PROMPT_BASELINE, RADAR_PROMPT_RETRIEVAL } from '@/lib/radar/prompt';
-import { findReviewScore, formatRadarNote } from '@/lib/radar/review-note';
+import {
+  RADAR_PROMPT_APPROVED,
+  RADAR_PROMPT_BASELINE,
+  RADAR_PROMPT_NEAREST,
+  RADAR_PROMPT_REJECTED,
+  RADAR_PROMPT_RETRIEVAL,
+} from '@/lib/radar/prompt';
+import { findReviewScore, formatRadarNote, type ReviewScore } from '@/lib/radar/review-note';
 import { insertRadarEvaluation, loadRadarHistory } from '@/lib/radar/repository';
 
 /** These tests are about one prompt; both side by side are tested in radar-retrieval. */
@@ -428,7 +434,7 @@ describeIfDb('Radar in the sync', () => {
     );
 
     const control = sentTexts.at(-1)!;
-    expect(control).toContain('https://x.com/esa/status/1760000000000099001\n\n📡 Radar 77/100 · likely approve');
+    expect(control).toContain('https://x.com/esa/status/1760000000000099001\n\n📡 Radar v1: 77/100 · likely approve');
     expect(control).toContain('Fits &lt;the&gt; channel &amp; tone.');
   });
 
@@ -840,7 +846,32 @@ describeIfDb('the score on the review message', () => {
       { version: RADAR_PROMPT_APPROVED, mode: 'backfill', variant: 'text_image', score: 99 },
     ]);
 
-    expect(await findReviewScore(db, post.id)).toMatchObject({ score: 70, predictedDecision: 'approve' });
+    expect(await findReviewScore(db, post.id)).toMatchObject({
+      version: 'v3',
+      score: 70,
+      predictedDecision: 'approve',
+      compared: [],
+    });
+  });
+
+  it('comes with the compared prompt’s live score beside it, each named', async () => {
+    const post = await decidedPost({ decision: 'pending' });
+    await scored(post.id, [
+      { version: RADAR_PROMPT_APPROVED, score: 70 },
+      { version: RADAR_PROMPT_REJECTED, score: 41 },
+      { version: RADAR_PROMPT_REJECTED, variant: 'text_image', score: 90 },
+      { version: RADAR_PROMPT_NEAREST, score: 10 },
+    ]);
+    expect(await findReviewScore(db, post.id)).toMatchObject({
+      version: 'v3',
+      score: 70,
+      compared: [{ version: 'v5', score: 41, predictedDecision: 'reject', reason: `scored by ${RADAR_PROMPT_REJECTED}` }],
+    });
+
+    // Only the compared prompt scored it: that score, shown alone.
+    const onlyV5 = await decidedPost({ decision: 'pending' });
+    await scored(onlyV5.id, [{ version: RADAR_PROMPT_REJECTED, score: 55 }]);
+    expect(await findReviewScore(db, onlyV5.id)).toMatchObject({ version: 'v5', score: 55, compared: [] });
   });
 
   it('falls back to what there is, and is nothing without a score that came back', async () => {
@@ -849,34 +880,44 @@ describeIfDb('the score on the review message', () => {
       { version: RADAR_PROMPT_APPROVED, score: 0, ok: false },
       { version: RADAR_PROMPT_BASELINE, variant: 'text_image', score: 35 },
     ]);
-    expect(await findReviewScore(db, post.id)).toMatchObject({ score: 35, predictedDecision: 'reject' });
+    expect(await findReviewScore(db, post.id)).toMatchObject({ version: 'v1', score: 35, predictedDecision: 'reject' });
 
     const unscored = await decidedPost({ decision: 'pending' });
     expect(await findReviewScore(db, unscored.id)).toBeNull();
   });
 
-  it('reads as a short note, flagged when it may repeat the channel', () => {
-    expect(
-      formatRadarNote({ score: 82, predictedDecision: 'approve', reason: 'Fits.', possiblyAlreadyCovered: true }),
-    ).toBe('📡 Radar 82/100 · likely approve\n♻️ May already be covered in the channel\nFits.');
-    expect(
-      formatRadarNote({ score: 12, predictedDecision: 'reject', reason: null, possiblyAlreadyCovered: false }),
-    ).toBe('📡 Radar 12/100 · likely reject');
-
-    const long = formatRadarNote({
-      score: 50,
+  it('reads as a short note, each version named, flagged when it may repeat the channel', () => {
+    const v3 = (fields: Partial<ReviewScore> = {}): ReviewScore => ({
+      version: 'v3',
+      score: 82,
       predictedDecision: 'approve',
-      reason: 'word '.repeat(100),
-      possiblyAlreadyCovered: false,
-    })!;
+      reason: 'Fits.',
+      possiblyAlreadyCovered: true,
+      compared: [],
+      ...fields,
+    });
+    expect(formatRadarNote(v3())).toBe('📡 Radar v3: 82/100 · likely approve\n♻️ May already be covered in the channel\nFits.');
+    expect(formatRadarNote(v3({ score: 12, predictedDecision: 'reject', reason: null, possiblyAlreadyCovered: false }))).toBe(
+      '📡 Radar v3: 12/100 · likely reject',
+    );
+    expect(
+      formatRadarNote(
+        v3({
+          possiblyAlreadyCovered: false,
+          compared: [{ version: 'v5', score: 40, predictedDecision: 'reject', reason: 'Like rejected ones.', possiblyAlreadyCovered: false }],
+        }),
+      ),
+    ).toBe('📡 Radar v3: 82/100 · likely approve\nFits.\n📡 Radar v5: 40/100 · likely reject\nLike rejected ones.');
+
+    const long = formatRadarNote(v3({ score: 50, reason: 'word '.repeat(100), possiblyAlreadyCovered: false }))!;
     expect(long.split('\n')[1]!.length).toBeLessThanOrEqual(200);
     expect(long.endsWith('…')).toBe(true);
     expect(formatRadarNote(null)).toBeNull();
 
     const repeat = { ofPostId: 1, arrivedAt: new Date('2026-10-10T23:30:00Z'), status: 'published' as const };
     expect(
-      formatRadarNote({ score: 12, predictedDecision: 'reject', reason: null, possiblyAlreadyCovered: false }, repeat),
-    ).toBe('📡 Radar 12/100 · likely reject\n🔁 Repeat of a post from 10 Oct · published');
+      formatRadarNote(v3({ score: 12, predictedDecision: 'reject', reason: null, possiblyAlreadyCovered: false }), repeat),
+    ).toBe('📡 Radar v3: 12/100 · likely reject\n🔁 Repeat of a post from 10 Oct · published');
     expect(formatRadarNote(null, { ...repeat, status: 'awaiting_approval' })).toBe(
       '🔁 Repeat of a post from 10 Oct · still in review',
     );

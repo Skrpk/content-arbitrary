@@ -391,7 +391,7 @@ describeIfDb('an RSS source in the sync', () => {
     const prompt = JSON.stringify(radar.requests[0]);
     expect(prompt).toContain('source=\\"ESA Space Science\\"');
     expect(prompt).not.toContain('@ESA');
-    expect(telegram.calls.at(-1)!.body.text).toContain('📡 Radar 64/100');
+    expect(telegram.calls.at(-1)!.body.text).toContain('📡 Radar v1: 64/100');
   });
 
   it('is rewritten in the workspace’s language, keeping the original as the source text', async () => {

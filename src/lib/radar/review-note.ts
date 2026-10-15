@@ -1,7 +1,12 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import { radarEvaluations } from '@/db/schema';
-import { RADAR_PROMPT_APPROVED, RADAR_PROMPT_BASELINE, RADAR_PROMPT_RETRIEVAL } from '@/lib/radar/prompt';
+import {
+  RADAR_PROMPT_APPROVED,
+  RADAR_PROMPT_BASELINE,
+  RADAR_PROMPT_REJECTED,
+  RADAR_PROMPT_RETRIEVAL,
+} from '@/lib/radar/prompt';
 import { findRepeat, formatRepeatNote, type Repeat } from '@/lib/stories/repeats';
 
 /**
@@ -9,22 +14,38 @@ import { findRepeat, formatRepeatNote, type Repeat } from '@/lib/stories/repeats
  * review queue: a hint for the reviewer, never a filter — every post still
  * comes to review, whatever it scored, and nothing is decided for them.
  *
- * Of the live scores a post has, the one shown is from the prompt version
- * that has matched the editor best so far (radar:report), on the text alone,
- * which has separated better live than text with the image.
+ * Of the live scores a post has, the one shown first — and the one the queue
+ * is ordered by — is from the prompt version that has matched the editor
+ * best so far (radar:report), on the text alone, which has separated better
+ * live than text with the image. The versions being compared with it are
+ * shown beside it, each named, so the reviewer can see them side by side.
  */
 
 /** Most trusted first. */
 const SHOWN_VERSIONS = [RADAR_PROMPT_APPROVED, RADAR_PROMPT_RETRIEVAL, RADAR_PROMPT_BASELINE];
+/** Shown beside the first, each under its own name. */
+const COMPARED_VERSIONS = [RADAR_PROMPT_REJECTED];
 
 /** Long enough for Radar's one-line why, short enough to stay under the buttons' URL. */
 const REASON_MAX = 200;
 
-export interface ReviewScore {
+export interface VersionScore {
+  /** The prompt version it came from, short: `v3`. */
+  version: string;
   score: number;
   predictedDecision: 'approve' | 'reject';
   reason: string | null;
   possiblyAlreadyCovered: boolean;
+}
+
+export interface ReviewScore extends VersionScore {
+  /** The compared versions' scores for the same post, in COMPARED_VERSIONS order; empty when none. */
+  compared: VersionScore[];
+}
+
+/** `radar-v5-similar-rejected` → `v5`. */
+export function shortVersion(promptVersion: string): string {
+  return /^radar-(v\d+)/.exec(promptVersion)?.[1] ?? promptVersion;
 }
 
 /** The live score to show for a post, or null when Radar has none for it. */
@@ -37,15 +58,11 @@ export async function findReviewScores(db: Database, processedPostIds: number[])
   const scores = new Map<number, ReviewScore>();
   if (processedPostIds.length === 0) return scores;
 
-  const rank = sql`case ${radarEvaluations.promptVersion} ${sql.join(
-    SHOWN_VERSIONS.map((version, index) => sql`when ${version} then ${index}`),
-    sql` `,
-  )} else ${SHOWN_VERSIONS.length} end`;
-
-  // The best row per post: DISTINCT ON keeps the first of each in this order.
+  // The best row per post and version: DISTINCT ON keeps the first of each in this order.
   const rows = await db
-    .selectDistinctOn([radarEvaluations.processedPostId], {
+    .selectDistinctOn([radarEvaluations.processedPostId, radarEvaluations.promptVersion], {
       processedPostId: radarEvaluations.processedPostId,
+      promptVersion: radarEvaluations.promptVersion,
       score: radarEvaluations.score,
       predictedDecision: radarEvaluations.predictedDecision,
       reason: radarEvaluations.reason,
@@ -55,25 +72,40 @@ export async function findReviewScores(db: Database, processedPostIds: number[])
     .where(
       and(
         inArray(radarEvaluations.processedPostId, processedPostIds),
+        inArray(radarEvaluations.promptVersion, [...SHOWN_VERSIONS, ...COMPARED_VERSIONS]),
         eq(radarEvaluations.mode, 'live'),
         eq(radarEvaluations.status, 'ok'),
+        isNotNull(radarEvaluations.score),
+        isNotNull(radarEvaluations.predictedDecision),
       ),
     )
     .orderBy(
       radarEvaluations.processedPostId,
-      rank,
+      radarEvaluations.promptVersion,
       sql`case ${radarEvaluations.variant} when 'text' then 0 else 1 end`,
       desc(radarEvaluations.createdAt),
     );
 
+  const byPost = new Map<number, Map<string, VersionScore>>();
   for (const row of rows) {
     if (row.processedPostId === null || row.score === null || !row.predictedDecision) continue;
-    scores.set(row.processedPostId, {
+    const versions = byPost.get(row.processedPostId) ?? new Map<string, VersionScore>();
+    versions.set(row.promptVersion, {
+      version: shortVersion(row.promptVersion),
       score: row.score,
       predictedDecision: row.predictedDecision,
       reason: row.reason?.trim() || null,
       possiblyAlreadyCovered: row.historicalAssessment?.possiblyAlreadyCovered === true,
     });
+    byPost.set(row.processedPostId, versions);
+  }
+
+  for (const [postId, versions] of byPost) {
+    const first = [...SHOWN_VERSIONS, ...COMPARED_VERSIONS].find((version) => versions.has(version))!;
+    const compared = COMPARED_VERSIONS.filter((version) => version !== first && versions.has(version)).map(
+      (version) => versions.get(version)!,
+    );
+    scores.set(postId, { ...versions.get(first)!, compared });
   }
   return scores;
 }
@@ -87,12 +119,16 @@ export function formatRadarNote(score: ReviewScore | null, repeat: Repeat | null
   const repeatLine = formatRepeatNote(repeat);
   if (!score) return repeatLine;
 
-  const verdict = score.predictedDecision === 'approve' ? 'likely approve' : 'likely reject';
-  const lines = [`📡 Radar ${score.score}/100 · ${verdict}`];
-  if (score.possiblyAlreadyCovered) lines.push('♻️ May already be covered in the channel');
-  if (score.reason) {
-    lines.push(score.reason.length > REASON_MAX ? `${score.reason.slice(0, REASON_MAX - 1).trimEnd()}…` : score.reason);
-  }
+  const lines = [score, ...score.compared].flatMap((version) => {
+    const verdict = version.predictedDecision === 'approve' ? 'likely approve' : 'likely reject';
+    return [
+      `📡 Radar ${version.version}: ${version.score}/100 · ${verdict}`,
+      ...(version.possiblyAlreadyCovered ? ['♻️ May already be covered in the channel'] : []),
+      ...(version.reason
+        ? [version.reason.length > REASON_MAX ? `${version.reason.slice(0, REASON_MAX - 1).trimEnd()}…` : version.reason]
+        : []),
+    ];
+  });
   if (repeatLine) lines.push(repeatLine);
   return lines.join('\n');
 }

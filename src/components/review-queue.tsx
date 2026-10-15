@@ -18,6 +18,15 @@ import { fromQueue, theme } from '@/lib/telegram/webapp-client';
  * website they open in place, and the keyboard works the list.
  */
 
+/** One prompt version's score for a post, named by its version (`v3`). */
+interface VersionScore {
+  version: string;
+  score: number;
+  predictedDecision: 'approve' | 'reject';
+  reason: string | null;
+  possiblyAlreadyCovered: boolean;
+}
+
 export interface QueueItem {
   id: number;
   platform: 'x' | 'rss' | 'telegram' | 'youtube';
@@ -27,12 +36,8 @@ export interface QueueItem {
   text: string;
   fullText: string | null;
   media: { kind: 'photo' | 'video'; imageUrl: string | null }[];
-  score: {
-    score: number;
-    predictedDecision: 'approve' | 'reject';
-    reason: string | null;
-    possiblyAlreadyCovered: boolean;
-  } | null;
+  /** Radar's score, from the version the queue is ordered by, and the versions compared with it. */
+  score: (VersionScore & { compared: VersionScore[] }) | null;
   /** A post its source sent before: when the earlier copy came, and what became of it. */
   repeat: { arrivedAt: string; outcome: string } | null;
   edited: boolean;
@@ -206,21 +211,7 @@ function StoryPanel({
           {others.map((post) => (
             <div key={post.id} style={{ padding: '0.35rem 0', borderTop: `1px solid ${theme.secondaryBg}` }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
-                {post.score ? (
-                  <span
-                    style={{
-                      padding: '0 0.3rem',
-                      borderRadius: '0.3rem',
-                      background: scoreColour(post.score.score),
-                      color: '#ffffff',
-                      fontWeight: 700,
-                      fontSize: '0.75rem',
-                    }}
-                    title="Radar score"
-                  >
-                    {post.score.score}
-                  </span>
-                ) : null}
+                {post.score ? <ScoreBadges score={post.score} small /> : null}
                 <span style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>
                   {post.sourceLabel ?? 'unknown source'}
                   <PlatformBadge platform={post.platform} />
@@ -246,6 +237,34 @@ function StoryPanel({
         </>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Radar's score as badges, one per prompt version, each named: the version the
+ * queue is ordered by first, then the ones compared with it.
+ */
+function ScoreBadges({ score, small = false }: { score: VersionScore & { compared: VersionScore[] }; small?: boolean }) {
+  return (
+    <span style={{ display: 'inline-flex', gap: '0.25rem', flexShrink: 0 }}>
+      {[score, ...score.compared].map((version) => (
+        <span
+          key={version.version}
+          style={{
+            whiteSpace: 'nowrap',
+            padding: small ? '0 0.3rem' : '0.15rem 0.4rem',
+            borderRadius: small ? '0.3rem' : '0.4rem',
+            background: scoreColour(version.score),
+            color: '#ffffff',
+            fontWeight: 700,
+            fontSize: small ? '0.75rem' : '0.9rem',
+          }}
+          title={`Radar score, prompt ${version.version}`}
+        >
+          <span style={{ fontWeight: 500, opacity: 0.85, fontSize: '0.8em' }}>{version.version}</span> {version.score}
+        </span>
+      ))}
+    </span>
   );
 }
 
@@ -552,21 +571,7 @@ export function ReviewQueue({
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
               {item.score ? (
-                <span
-                  style={{
-                    minWidth: '2.2rem',
-                    textAlign: 'center',
-                    padding: '0.15rem 0.4rem',
-                    borderRadius: '0.4rem',
-                    background: scoreColour(item.score.score),
-                    color: '#ffffff',
-                    fontWeight: 700,
-                    fontSize: '0.9rem',
-                  }}
-                  title="Radar score"
-                >
-                  {item.score.score}
-                </span>
+                <ScoreBadges score={item.score} />
               ) : (
                 <span style={{ color: theme.hint, fontSize: '0.8rem' }} title="No Radar score">
                   —
@@ -622,13 +627,21 @@ export function ReviewQueue({
                   <div style={{ color: theme.hint, fontSize: '0.75rem', marginTop: '0.2rem' }}>✏️ edited</div>
                 ) : null}
 
-                {item.score?.reason || item.score?.possiblyAlreadyCovered ? (
-                  <div style={{ color: theme.hint, fontSize: '0.8rem', marginTop: '0.45rem', lineHeight: 1.35 }}>
-                    📡 {item.score.predictedDecision === 'approve' ? 'likely approve' : 'likely reject'}
-                    {item.score.possiblyAlreadyCovered ? ' · ♻️ may already be covered' : ''}
-                    {item.score.reason ? ` — ${item.score.reason}` : ''}
-                  </div>
-                ) : null}
+                {item.score
+                  ? [item.score, ...item.score.compared]
+                      .filter((version) => version.reason || version.possiblyAlreadyCovered)
+                      .map((version) => (
+                        <div
+                          key={version.version}
+                          style={{ color: theme.hint, fontSize: '0.8rem', marginTop: '0.45rem', lineHeight: 1.35 }}
+                        >
+                          📡 <b>{version.version}</b> {version.score} ·{' '}
+                          {version.predictedDecision === 'approve' ? 'likely approve' : 'likely reject'}
+                          {version.possiblyAlreadyCovered ? ' · ♻️ may already be covered' : ''}
+                          {version.reason ? ` — ${version.reason}` : ''}
+                        </div>
+                      ))
+                  : null}
 
 
                 <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.6rem' }}>

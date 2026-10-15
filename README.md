@@ -1389,9 +1389,13 @@ are any good is measured against the decisions the editor makes.
 
 **On the review message.** Under the link, the message with the buttons shows the score, the
 predicted decision, Radar's one-line reason, and a ♻️ flag when it thinks the channel may have
-covered this already — e.g. `📡 Radar 82/100 · likely approve`. It is the live score from
+covered this already — e.g. `📡 Radar v3: 82/100 · likely approve`. It is the live score from
 `radar-v3-retrieval-approved` on the text alone when there is one (the best match so far),
-falling back to the other versions; a post Radar could not score shows no note. A hint only:
+falling back to the other versions; a post Radar could not score shows no note. Under it comes
+the live score of `radar-v5-similar-rejected`, the version being compared with it, with its own
+reason — `📡 Radar v5: 41/100 · likely reject` — so the two can be read side by side; the review
+queue shows both as badges named `v3` and `v5`. The queue's order and the review notification
+still follow the first. A hint only:
 every post still comes to review. Seeing it can sway a decision, so decisions made since it was
 shown (8 October 2026) are a little less independent a test of Radar than those before.
 
