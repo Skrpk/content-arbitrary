@@ -33,6 +33,7 @@ import { mediaUnderstandingConfig } from '@/lib/media/understanding';
 import { sourceAdapter } from '@/lib/sync/source-adapters';
 import { YouTubeClient } from '@/lib/youtube/client';
 import { createSupadataProvider, type VideoTranscriptProvider } from '@/lib/youtube/transcript';
+import type { WebsiteFetchOptions } from '@/lib/website/http';
 import type { FetchChannelOptions } from '@/lib/telegram-channel/client';
 import { sendReviewDigest } from '@/lib/review/queue';
 import { sweepUploads, uploadsAvailable, vercelBlobStore } from '@/lib/uploads/uploads';
@@ -94,6 +95,8 @@ export interface SyncOptions {
   feedFetch?: FetchFeedOptions;
   /** How public Telegram channels' pages are fetched; injected by tests. */
   channelFetch?: FetchChannelOptions;
+  /** How websites' sitemaps and pages are fetched; injected by tests. */
+  websiteFetch?: WebsiteFetchOptions;
   /** The YouTube Data API and the transcript provider; injected by tests, else from the env's keys. */
   youtubeClient?: YouTubeClient | null;
   transcriptProvider?: VideoTranscriptProvider | null;
@@ -146,6 +149,7 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
       xClient,
       feedFetch: options.feedFetch,
       channelFetch: options.channelFetch,
+      websiteFetch: options.websiteFetch,
       youtube:
         options.youtubeClient !== undefined
           ? options.youtubeClient

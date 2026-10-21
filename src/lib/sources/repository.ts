@@ -231,9 +231,9 @@ export async function deleteSource(
 
 /**
  * Stable `sync_state` key for a source. An X account's is unchanged from the
- * single-source era; a feed's is a hash of its URL, which may be long.
+ * single-source era; a feed's or a sitemap's is a hash of its URL, which may be long.
  */
 export function syncStateKey(source: Pick<Source, 'platform' | 'externalId'>): string {
-  if (source.platform === 'rss') return `rss:${feedHash(source.externalId)}`;
+  if (source.platform === 'rss' || source.platform === 'website') return `${source.platform}:${feedHash(source.externalId)}`;
   return `${source.platform}:${source.externalId}`;
 }

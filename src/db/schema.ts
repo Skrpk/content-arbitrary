@@ -276,9 +276,24 @@ export interface SourceMetadata {
     provider?: string | null;
     length?: number | null;
   } | null;
+  /** Where a website's page came from and what was read of it; see src/lib/website/normalize.ts. */
+  website?: {
+    /** The sitemap that listed it. */
+    sitemapUrl: string;
+    /** The page's address as the sitemap gave it — its identity — when the post links elsewhere. */
+    originalUrl?: string | null;
+    /** The page's own canonical address, when it named a safe one on the same site. */
+    canonicalUrl?: string | null;
+    author?: string | null;
+    language?: string | null;
+    /** How long the extracted article was, in characters, before it was bounded. */
+    extractedLength: number;
+    /** Its og:image, noted for later; never downloaded or sent. */
+    imageUrl?: string | null;
+  } | null;
 }
 
-export const sourcePlatformEnum = pgEnum('source_platform', ['x', 'rss', 'telegram', 'youtube']);
+export const sourcePlatformEnum = pgEnum('source_platform', ['x', 'rss', 'telegram', 'youtube', 'website']);
 
 export type SourcePlatform = (typeof sourcePlatformEnum.enumValues)[number];
 

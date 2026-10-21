@@ -23,6 +23,7 @@ import { describeMedia, type RadarImage } from '@/lib/radar/prompt';
 import { loadRadarNote } from '@/lib/radar/review-note';
 import { radarAnalysisOf, radarMediaOf } from '@/lib/radar/analysis';
 import { runLiveRadar, type RadarRun } from '@/lib/radar/shadow';
+import { radarSourceMark } from '@/lib/sources/display';
 import { placeInStory } from '@/lib/stories/cluster';
 import { translateForReview, type Translator } from '@/lib/translation/translate';
 import type { TelegramDestination } from '@/lib/workspace';
@@ -133,7 +134,7 @@ export async function processCandidate(
                 language: context.radar!.language,
                 item: {
                   sourceUsername: post.authorUsername,
-                  ...(post.platform === 'rss' || post.platform === 'youtube' ? { sourcePlatform: post.platform } : {}),
+                  ...radarSourceMark(post.id),
                   text: post.text,
                   media: radarMediaOf({ platform: post.platform, media: describeMedia(post.media), metadata: post.sourceMetadata }),
                   analysisText: radarAnalysisOf(post.analysisText, postLogger, { externalId: post.id }),

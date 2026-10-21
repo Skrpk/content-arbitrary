@@ -777,8 +777,9 @@ export async function recordFeedBacklog(
   },
 ): Promise<void> {
   const now = new Date();
-  for (let start = 0; start < input.items.length; start += 200) {
-    const chunk = input.items.slice(start, start + 200);
+  // A website's sitemap can hold tens of thousands: a few hundred rows a statement keeps it to few round trips.
+  for (let start = 0; start < input.items.length; start += 500) {
+    const chunk = input.items.slice(start, start + 500);
     await db
       .insert(processedPosts)
       .values(
@@ -796,6 +797,69 @@ export async function recordFeedBacklog(
 }
 
 /**
+ * Why a website's page never became a candidate starts with this — a page
+ * that is no article, gone, not HTML, or that kept failing to load. Like a
+ * feed's backlog, stats leave these rows out.
+ */
+export const WEBSITE_PAGE_REASON_PREFIX = 'website page: ';
+
+interface PageRow {
+  workspaceId: number;
+  sourceId: number;
+  externalId: string;
+  xPostUrl: string;
+  xAuthorUsername: string | null;
+  xCreatedAt: Date | null;
+}
+
+/**
+ * Settle a website's page without review — never to be fetched again — with
+ * why. A page whose earlier tries failed is settled too; one already decided
+ * or in review is left as it is.
+ */
+export async function recordSkippedPage(db: Database, input: PageRow & { reason: string }): Promise<void> {
+  const { reason, ...row } = input;
+  await db
+    .insert(processedPosts)
+    .values({ ...row, status: 'skipped', errorMessage: reason.slice(0, 2000), processedAt: new Date() })
+    .onConflictDoUpdate({
+      target: [processedPosts.workspaceId, processedPosts.externalId],
+      set: { status: 'skipped', errorMessage: reason.slice(0, 2000), processedAt: new Date(), updatedAt: new Date() },
+      where: eq(processedPosts.status, 'failed'),
+    });
+}
+
+/**
+ * A website's page that could not be read this time — a timeout, a server
+ * error, a block. It stays new, to be tried on a later run, until it has
+ * failed `maxRetryAttempts` times; then it is settled as skipped, so a page
+ * that never loads does not take a place in every run for ever.
+ */
+export async function recordPageFailure(
+  db: Database,
+  input: PageRow & { error: string; maxRetryAttempts: number },
+): Promise<'retry' | 'gave-up'> {
+  const { error, maxRetryAttempts, ...row } = input;
+  const message = `${WEBSITE_PAGE_REASON_PREFIX}could not be read: ${error}`.slice(0, 2000);
+  const giveUp = maxRetryAttempts <= 1;
+  const rows = await db
+    .insert(processedPosts)
+    .values({ ...row, status: giveUp ? 'skipped' : 'failed', errorMessage: message, retryCount: 1 })
+    .onConflictDoUpdate({
+      target: [processedPosts.workspaceId, processedPosts.externalId],
+      set: {
+        retryCount: rawSql`${processedPosts.retryCount} + 1`,
+        status: rawSql`case when ${processedPosts.retryCount} + 1 >= ${maxRetryAttempts} then 'skipped'::post_status else 'failed'::post_status end`,
+        errorMessage: message,
+        updatedAt: new Date(),
+      },
+      where: eq(processedPosts.status, 'failed'),
+    })
+    .returning({ status: processedPosts.status });
+  return rows[0]?.status === 'skipped' ? 'gave-up' : 'retry';
+}
+
+/**
  * Ids already decided or in review — everything a feed must not offer again.
  * Unlike X, a feed shows the same entries run after run, so posts waiting for
  * a reviewer or a scheduled time count too, not only terminal ones.
@@ -805,20 +869,22 @@ export async function findKnownPostIds(
   externalIds: string[],
   workspaceId: number,
 ): Promise<Set<string>> {
-  if (externalIds.length === 0) return new Set();
-
-  const rows = await db
-    .select({ externalId: processedPosts.externalId })
-    .from(processedPosts)
-    .where(
-      and(
-        eq(processedPosts.workspaceId, workspaceId),
-        inArray(processedPosts.externalId, externalIds),
-        inArray(processedPosts.status, ['published', 'skipped', 'rejected', 'awaiting_approval', 'scheduled']),
-      ),
-    );
-
-  return new Set(rows.map((row) => row.externalId));
+  const known = new Set<string>();
+  // In slices: a website's sitemap can list more ids than one statement may carry.
+  for (let start = 0; start < externalIds.length; start += 5000) {
+    const rows = await db
+      .select({ externalId: processedPosts.externalId })
+      .from(processedPosts)
+      .where(
+        and(
+          eq(processedPosts.workspaceId, workspaceId),
+          inArray(processedPosts.externalId, externalIds.slice(start, start + 5000)),
+          inArray(processedPosts.status, ['published', 'skipped', 'rejected', 'awaiting_approval', 'scheduled']),
+        ),
+      );
+    for (const row of rows) known.add(row.externalId);
+  }
+  return known;
 }
 
 /** Record which image a post's first image is, by its bytes' fingerprint. */

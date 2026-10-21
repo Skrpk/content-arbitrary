@@ -29,7 +29,7 @@ interface VersionScore {
 
 export interface QueueItem {
   id: number;
-  platform: 'x' | 'rss' | 'telegram' | 'youtube';
+  platform: 'x' | 'rss' | 'telegram' | 'youtube' | 'website';
   sourceLabel: string | null;
   url: string;
   postedAt: string | null;

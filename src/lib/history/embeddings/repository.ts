@@ -10,6 +10,7 @@ import {
   type RejectionReason,
 } from '@/db/schema';
 import { APPROVED_STATUSES } from '@/lib/radar/repository';
+import type { RadarSourcePlatform } from '@/lib/sources/display';
 
 /** A workspace's history items with the fingerprint of their stored vector for `model`, if any. */
 export async function loadHistoryForEmbedding(db: Database, input: { workspaceId: number; model: string }) {
@@ -237,7 +238,7 @@ export interface ApprovedMatch {
   text: string | null;
   sourceUsername: string | null;
   /** 'rss' when `sourceUsername` is a feed's title rather than an X handle. */
-  sourcePlatform?: 'rss' | 'youtube';
+  sourcePlatform?: RadarSourcePlatform;
   /** When the editor approved it. */
   approvedAt: Date;
   /** Its first image's fingerprint, to find what it shows; null without one. */
@@ -320,7 +321,7 @@ export interface RejectedMatch {
   text: string | null;
   sourceUsername: string | null;
   /** 'rss' when `sourceUsername` is a feed's title rather than an X handle. */
-  sourcePlatform?: 'rss' | 'youtube';
+  sourcePlatform?: RadarSourcePlatform;
   /** When the editor rejected it. */
   rejectedAt: Date;
   rejectionReason: RejectionReason | null;

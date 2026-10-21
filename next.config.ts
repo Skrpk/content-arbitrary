@@ -16,8 +16,9 @@ const webHost = `(${webHosts.map((host) => host.replace(/[.]/g, '\\.')).join('|'
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   // `postgres` (postgres.js) uses Node APIs; keep it external so Next does not
-  // try to bundle it into the serverless function bundle.
-  serverExternalPackages: ['postgres'],
+  // try to bundle it into the serverless function bundle. `jsdom` (a website's
+  // article reader) loads files of its own at run time, which a bundle loses.
+  serverExternalPackages: ['postgres', 'jsdom'],
 
   async rewrites() {
     return {

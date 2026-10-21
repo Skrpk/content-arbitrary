@@ -20,7 +20,7 @@ import { theme } from '@/lib/telegram/webapp-client';
 
 interface SourceView {
   id: number;
-  platform: 'x' | 'rss' | 'telegram' | 'youtube';
+  platform: 'x' | 'rss' | 'telegram' | 'youtube' | 'website';
   username: string;
   /** `@handle` for X and a Telegram channel, the feed's title for RSS. */
   label: string;
@@ -85,7 +85,7 @@ const SETTINGS: { key: Setting; label: string; hint: string; platforms: SourceVi
     key: 'enabled',
     label: 'Active',
     hint: 'Off pauses the source: kept, but not synced.',
-    platforms: ['x', 'rss', 'telegram', 'youtube'],
+    platforms: ['x', 'rss', 'telegram', 'youtube', 'website'],
   },
   {
     key: 'includeTextOnly',

@@ -3,7 +3,7 @@ import type { Database } from '@/lib/db';
 import { processedPosts, sources, type RejectionReason, type SourcePlatform } from '@/db/schema';
 import { formatSourceLabel } from '@/lib/sources/display';
 import { sourceChannelUrl } from '@/lib/sources/view';
-import { RSS_BACKLOG_REASON } from '@/lib/sync/repository';
+import { RSS_BACKLOG_REASON, WEBSITE_PAGE_REASON_PREFIX } from '@/lib/sync/repository';
 
 /**
  * How each source has served its channel: what it brought in, and what the
@@ -13,8 +13,9 @@ import { RSS_BACKLOG_REASON } from '@/lib/sync/repository';
  * Counted from `processed_posts`, so only posts the bot kept a row for. Posts
  * X returned that the bot passed over (a quote, a post with no usable media)
  * leave no row but were still read, which makes the read cost a floor. A
- * feed's backlog — what it held when it was followed — is left out: it was
- * never a candidate. Reading a feed costs nothing, so a feed shows no cost.
+ * feed's or a website's backlog — what it held when it was followed — is left
+ * out: it was never a candidate; and so is a website's page that was not an
+ * article, or never loaded. Reading a feed costs nothing, so a feed shows no cost.
  */
 
 /** X's price per post read, pay-per-use. See README → "The X API is paid, per post read". */
@@ -37,7 +38,7 @@ export interface SourceStats {
   username: string;
   /** `@handle`, or a feed's title. */
   label: string;
-  /** A feed's URL; null for X. */
+  /** A feed's or a sitemap's URL; null for X. */
   feedUrl: string | null;
   enabled: boolean;
   /** Every post the source brought in this period. */
@@ -69,7 +70,9 @@ export async function loadSourceStats(
 ): Promise<SourceStats[]> {
   if (input.workspaceIds.length === 0) return [];
 
-  const notBacklog = sql`not (${processedPosts.status} = 'skipped' and ${processedPosts.errorMessage} is not distinct from ${RSS_BACKLOG_REASON})`;
+  // Neither a feed's or site's backlog nor a site's page that never became a candidate.
+  const notBacklog = sql`not (${processedPosts.status} = 'skipped' and ${processedPosts.errorMessage} is not distinct from ${RSS_BACKLOG_REASON})
+    and not (${processedPosts.status} in ('skipped', 'failed') and coalesce(${processedPosts.errorMessage}, '') like ${`${WEBSITE_PAGE_REASON_PREFIX}%`})`;
   const inPeriod = and(
     eq(processedPosts.sourceId, sources.id),
     input.since ? gte(processedPosts.createdAt, input.since) : undefined,
@@ -121,12 +124,12 @@ export async function loadSourceStats(
 
   return rows.map(({ externalId, ...row }) => {
     const decided = row.approved + row.rejected;
-    // Feeds, channel pages and YouTube's quota cost nothing per read; only X bills per post read.
+    // Feeds, channel pages, websites and YouTube's quota cost nothing per read; only X bills per post read.
     const readCostUsd = row.platform === 'x' ? row.posts * X_POST_READ_USD : null;
     return {
       ...row,
       label: formatSourceLabel(row.platform, row.username),
-      feedUrl: row.platform === 'rss' ? externalId : null,
+      feedUrl: row.platform === 'rss' || row.platform === 'website' ? externalId : null,
       channelUrl: sourceChannelUrl(row.platform, externalId),
       notSent: row.posts - row.approved - row.rejected - row.waiting,
       approvalRate: decided > 0 ? row.approved / decided : null,

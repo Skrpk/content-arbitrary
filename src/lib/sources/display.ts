@@ -36,6 +36,8 @@ const PLATFORM_IDENTITY: { readonly [P in SourcePlatform]: PlatformIdentity } = 
   telegram: { postIdPrefix: 'tg:', label: handle },
   // `yt:<video id>` — see src/lib/youtube/normalize.ts. A channel is named by its title.
   youtube: { postIdPrefix: 'yt:', label: (name) => name },
+  // `web:<sha256 of the page's URL>` — see src/lib/website/url.ts. A site is named by its host.
+  website: { postIdPrefix: 'web:', label: (name) => name },
 };
 
 /** Where a feed item's id starts in `processed_posts.external_id`. */
@@ -59,19 +61,31 @@ export function isYoutubeVideoId(externalId: string): boolean {
   return externalId.startsWith(YOUTUBE_VIDEO_ID_PREFIX);
 }
 
+/** Where a website page's id starts in `processed_posts.external_id`. */
+export const WEB_ITEM_ID_PREFIX = PLATFORM_IDENTITY.website.postIdPrefix!;
+
+export function isWebItemId(externalId: string): boolean {
+  return externalId.startsWith(WEB_ITEM_ID_PREFIX);
+}
+
+/** The platforms whose sources Radar names by title rather than by handle. */
+export type RadarSourcePlatform = 'rss' | 'youtube' | 'website';
+
 /**
  * How Radar's prompt names a post's source, beyond an X handle: a feed's title
- * as it is, a YouTube channel's title marked as one. Undefined for X and
- * Telegram, named by handle, so their prompts read as they always have.
+ * as it is, a YouTube channel's title or a website's host marked as one.
+ * Undefined for X and Telegram, named by handle, so their prompts read as they
+ * always have.
  */
-export function radarSourcePlatform(externalId: string): 'rss' | 'youtube' | undefined {
+export function radarSourcePlatform(externalId: string): RadarSourcePlatform | undefined {
   if (isRssItemId(externalId)) return 'rss';
   if (isYoutubeVideoId(externalId)) return 'youtube';
+  if (isWebItemId(externalId)) return 'website';
   return undefined;
 }
 
 /** The same, as the field Radar's prompt types take: absent for X and Telegram. */
-export function radarSourceMark(externalId: string): { sourcePlatform?: 'rss' | 'youtube' } {
+export function radarSourceMark(externalId: string): { sourcePlatform?: RadarSourcePlatform } {
   const platform = radarSourcePlatform(externalId);
   return platform ? { sourcePlatform: platform } : {};
 }
@@ -88,7 +102,7 @@ export function platformOfPostId(externalId: string): SourcePlatform {
   return PREFIXED.find(([, identity]) => externalId.startsWith(identity.postIdPrefix!))?.[0] ?? UNPREFIXED;
 }
 
-/** A source's name: `@handle` on X, `@username` for a Telegram channel, the title of a feed or a YouTube channel. */
+/** A source's name: `@handle` on X, `@username` for a Telegram channel, the title of a feed or a YouTube channel, a website's host. */
 export function formatSourceLabel(platform: SourcePlatform, name: string): string {
   return PLATFORM_IDENTITY[platform].label(name);
 }

@@ -2,7 +2,8 @@
 
 Content monitoring and an editorial assistant for **Telegram channels** (`content-arbitrary` is the
 repository's and the deployment's name). It watches your
-sources — **X accounts**, **RSS / Atom feeds**, **public Telegram channels** and **YouTube channels** — and brings every
+sources — **X accounts**, **RSS / Atom feeds**, **public Telegram channels**, **YouTube channels** and **websites** (through
+their sitemaps) — and brings every
 new post to you for review:
 scored by [Shadow Radar](#shadow-radar), rewritten in your channel's [language](#translation),
 ready to edit, schedule or reject. What you approve is published to the channel.
@@ -13,9 +14,10 @@ seen before.
 ```
 X accounts ─────────┐
 RSS feeds ──────────┤
-YouTube channels ───┼─► /api/cron/sync ─► Radar ─► translation ─► review ─► edit / schedule ─► your channel
-Telegram channels ──┘         │
-                              └── PostgreSQL (sources, posts, decisions, cursors)
+YouTube channels ───┤
+Telegram channels ──┼─► sync adapters ─► processCandidate ─► Radar ─► translation ─► review ─► edit / schedule ─► your channel
+Website sitemaps ───┘   (/api/cron/sync)        │
+                                                └── PostgreSQL (sources, posts, decisions, cursors)
 ```
 
 Without review switched on, posts go straight to the channel, as the bot first did.
@@ -47,6 +49,7 @@ Without review switched on, posts go straight to the channel, as the bot first d
 - [RSS and Atom feeds](#rss-and-atom-feeds)
 - [Telegram channels](#telegram-channels)
 - [YouTube channels](#youtube-channels)
+- [Website sitemap sources](#website-sitemap-sources)
 - [Multiple channels](#multiple-channels)
 - [Review website](#review-website)
 - [Shadow Radar](#shadow-radar)
@@ -577,18 +580,20 @@ environment change and no redeploy:
 | Command | What it does |
 | --- | --- |
 | `/review` | Open the review queue: posts waiting for a decision, best Radar score first — see [The review queue](#the-review-queue) |
-| `/sourcestats` | Open the **Sources** page: add any source — X account, Telegram channel, RSS feed — see how each performs, pause, resume or remove it |
+| `/sourcestats` | Open the **Sources** page: add any source — X account, Telegram channel, RSS feed, YouTube channel, website — see how each performs, pause, resume or remove it |
 | `/addsource @karpathy` | Start watching an account |
 | `/addrss <feed URL>` | Start watching an RSS or Atom feed — see [RSS and Atom feeds](#rss-and-atom-feeds) |
 | `/addtelegram @channel` | Start watching a public Telegram channel — see [Telegram channels](#telegram-channels) |
+| `/addyoutube @handle` | Start watching a YouTube channel — see [YouTube channels](#youtube-channels) |
+| `/addwebsite <sitemap URL>` | Start watching a website's new articles — see [Website sitemap sources](#website-sitemap-sources) |
 
 `/addsource` accepts whatever is easiest to paste — `karpathy`, `@karpathy`,
 `x.com/karpathy`, a full profile URL, or even a link to one of the account's posts.
 
 The **Sources** page (the button under `/sourcestats`, or `/sources` on the
 [review website](#review-website)) adds any kind of source too: **➕ Add a source** has a tab per
-kind — X account, Telegram channel, RSS feed — and a pasted `x.com`, `t.me` or other link picks
-the tab itself; only a bare `@name` needs the tab chosen. Each is checked on the server exactly as
+kind — X account, Telegram channel, YouTube, RSS feed, Website — and a pasted `x.com`, `t.me`,
+`youtube.com`, sitemap or other link picks the tab itself; only a bare `@name` needs the tab chosen. Each is checked on the server exactly as
 its command checks it before it is stored, and the list below refreshes with it.
 
 Pausing, resuming and removing a source are buttons under it on the `/sourcestats` page, next
@@ -826,6 +831,128 @@ settings a channel is its title with a **YouTube** badge and its link. Each API 
 **Quota.** The API allows 10,000 units a day. A channel costs one unit a run (96 a day at the
 15-minute cron) and one more for a run that finds new videos — about 100 a day, so a few dozen
 channels fit. Supadata counts one request per new video.
+
+## Website sitemap sources
+
+A source can also be a **website**, followed through its **sitemap**. The sitemap is the cheap way to
+learn what is new; only a new page is fetched, and only its own HTML:
+
+```
+sitemap (urlset or index, .xml or .xml.gz)
+   ↓  new page addresses — identity, not dates
+fetch only the new pages
+   ↓
+Readability extraction (no scripts, no browser, no model)
+   ↓  NormalizedPost: title + lead as text, the whole article as analysis text
+Radar → translation → stories → review → publish — as for every other source
+```
+
+| Command | What it does |
+| --- | --- |
+| `/addwebsite https://example.com/sitemap.xml` | Start watching a site; a sitemap index (`sitemap_index.xml`) or a gzip one (`.xml.gz`) works too |
+| `/addwebsite 2 https://example.com/news-sitemap.xml` | The same, for a reviewer of several channels: `2` is the channel's workspace id |
+
+Or **➕ Add a source → Website** on the Sources page (a pasted URL with `sitemap` in its file name
+picks that tab). The sitemap's URL is given, never searched for: there is no discovery from the
+home page or `robots.txt`, and no crawling of links. It is read once before it is stored — an
+index with its sitemaps — so an address that is not a `<urlset>` or `<sitemapindex>` is turned
+away; the reply says what was found (`Sitemap contains 438 URLs`, `12 sitemaps · 8,421 URLs`),
+never that they are all articles. A sitemap of 10,000 pages or more gets a warning: a site's
+dedicated news or posts sitemap, when it has one, means fewer pages fetched that turn out not to be
+articles. The source is named by its host; the home page is not fetched for a prettier name.
+Try one first without storing anything:
+
+```bash
+npm run website:check -- https://blog.cloudflare.com/sitemap.xml
+npm run website:check -- https://blog.cloudflare.com/sitemap.xml --extract 3
+```
+
+It prints the sitemap's type, host, child sitemaps, how many addresses it lists and the most recent;
+`--extract N` (at most 10) fetches the N most recent pages and shows what the article reader makes of
+each — the post's text and the article's length, or why it is not an article. By default it fetches
+no page.
+
+**From now on, not the backlog.** The first sync after a site is added — or resumed — records every
+page its sitemaps list as backlog, in a few batched inserts: no page fetched, no Radar, no
+translation, no review. A sitemap of 5,000 pages costs a few sitemap downloads, not 5,000 page
+fetches. If a child sitemap cannot be read on that first run, nothing is recorded and the whole is
+tried again next run, so its pages are not later taken for new. After that, every run reads the
+sitemaps again, and a page is new by **identity** — its address — never by `<lastmod>`: a known page
+whose `<lastmod>` changes is not fetched again (article updates may come later). A page the sitemap
+dates more than a day before the source was followed, or whose article says it was published then,
+is backlog too.
+
+**Identity.** `web:<sha256 of the address>`, normalised conservatively: scheme and host lower-cased
+and a default port dropped by the URL parser, the fragment removed; the path and the query kept as
+they are — some sites tell pages apart by the query alone, and no tracking parameters are stripped.
+The same address in two sitemaps, or under two sources of one channel, is one candidate, fetched
+once. Identity is fixed when the page is found, whatever canonical address it names later.
+
+**Sitemaps, bounded.** Namespaces are handled; entities are not processed at all — no DTD, no
+external entity, nothing loaded from outside the document. An index is followed breadth first,
+at most `MAX_SITEMAP_DEPTH` = 3 levels (the sitemap given, its sitemaps, theirs), each sitemap once
+(a cycle `A → B → A` stops), newest `<lastmod>` first, and only on the same site as the sitemap
+given — as are the pages, so a sitemap cannot point the server anywhere else. A sync reads at most
+25 sitemap files (`WEBSITE_MAX_SITEMAPS_PER_SYNC`) and 50,000 addresses
+(`WEBSITE_MAX_URLS_PER_SYNC`); a download may be at most 10 MB, and at most 20 MB once
+decompressed — gzip is inflated with Node's zlib, which stops at that limit itself, so a small file
+cannot inflate without end. Child sitemaps are re-read every run: XML is cheap next to a page, an
+article or a Radar call, and a cursor would be one more thing to get wrong.
+
+**Pages, bounded.** Only new pages are fetched, deduplicated before any request, oldest first by the
+sitemap's dates (a news sitemap's `<news:publication_date>`, else `<lastmod>`; pages without one
+after, in sitemap order). A run fetches at most 15 pages per site
+(`WEBSITE_MAX_PAGE_FETCHES_PER_SYNC`) and hands on at most `MAX_POSTS_PER_RUN` articles, inside the
+run's time budget; what is left is not marked known and is taken on a later run. A page must be HTML,
+at most 3 MB, read within 12 s.
+
+**Is it an article?** No model decides. The page is parsed by jsdom with scripts off and nothing
+loaded, and Mozilla's Readability (Firefox's Reader View) finds its article, leaving navigation,
+sidebars and footers behind. It counts as an article when Readability finds one with a real title
+and at least 400 characters of text (200 for a page whose JSON-LD or `og:type` declares an Article,
+NewsArticle or BlogPosting), the page does not declare itself a listing (CollectionPage, ItemList,
+ProfilePage, Product…) or read as one — several headings, most of them links — and it is not the
+site's home page. A page that is not an article is recorded as skipped, with why, and never fetched
+again; so is one that is gone (404/410) or is not HTML. A page that only a browser running its
+scripts would fill has too little text and is passed over the same way: **JavaScript-only sites are
+not supported**.
+
+**What a candidate is.** `text` — what is translated, reviewed and published — is the article's
+title and its lead: the page's description, or failing that its opening paragraphs, at most 1,500
+characters. `analysisText` is the whole article as plain text, at most 60,000 characters: Radar reads
+a sample of it (an `<article_text>` block, after the post) and it shapes the embedding, exactly as a
+video's transcript does — so stories cluster an article with the X post, the Telegram post and the
+video about the same event. The post links the page's canonical address when it names a safe one on
+the same site (else the page's own), and Telegram previews it. Its date is the article's own
+(JSON-LD `datePublished`, then `article:published_time`), then the news sitemap's, then `<lastmod>`,
+else none — none is guessed. It is named by the page's `og:site_name`, else the host. **No images**
+in this version: the article's pictures are not downloaded, sent or understood; only its `og:image`
+address is noted in `source_metadata.website`, with the sitemap it came from, the original address
+when the link differs, its author, language and length.
+
+**Failures.** A site whose sitemap cannot be read fails on its own: the error is recorded for that
+source, and the run carries on with every other site, feed, channel and account. A page that times
+out, answers 5xx or 429, or refuses us (401/403 — often an anti-bot wall) is recorded as failed and
+tried again on a later run, up to `MAX_RETRY_ATTEMPTS` times, then skipped for good. Nothing is done
+to get past a block, a paywall or a login: only what the server returns to anyone is read.
+
+**Safety.** Sitemaps and pages are untrusted input. Only `http(s)` addresses without credentials are
+fetched, and neither the host nor any redirect hop (at most 5) may be — or resolve to — a local,
+private or link-local address (the same checks as a feed). No cookies, no credentials, no scripts, no
+page resources; no HTML is kept — only plain text. Logs carry hosts, counts, ids and a short hash of
+a page's path, never a query string or an article's text.
+
+**Cost.** HTTP bandwidth and the Radar calls every candidate gets anyway. Ingestion makes no model
+call of its own: no summarising, no extraction, no classification.
+
+**Under the hood.** `sources.external_id` is the sitemap's normalised URL, `username` the host;
+`sync_state` is keyed `website:<hash of the URL>`. A page's row borrows X's columns like a feed's:
+`x_post_url` its link, `x_author_username` the site's name, `x_created_at` its date. In stats and
+settings a site is its host with a **Web** badge and its sitemap's URL; its backlog and the pages
+that were not articles are left out of the counts. Events: `website.sitemap_fetch_started` /
+`_done`, `.sitemaps_found`, `.urls_found`, `.initialized`, `.new_urls_found`,
+`.article_fetch_started`, `.article_extracted`, `.article_not_readable`, `.article_failed`,
+`.source_failed`.
 
 ## Multiple channels
 
@@ -1976,10 +2103,10 @@ published.
 
 **One adapter per platform.** The sync run knows nothing of X, feeds or channels: it hands each
 source to its platform's `SourceAdapter` ([`src/lib/sync/source-adapters.ts`](src/lib/sync/source-adapters.ts)),
-which reads what is new in its own way — a cursor on X and Telegram, identity on a feed — and
-passes each post, normalised, to the path every platform shares from claim to review
+which reads what is new in its own way — a cursor on X and Telegram, identity on a feed or a
+sitemap — and passes each post, normalised, to the path every platform shares from claim to review
 (`processCandidate`). A platform's identity — the prefix of its posts' ids in
-`processed_posts.external_id` (none for X, `rss:`, `tg:`) and how a source is named — is in
+`processed_posts.external_id` (none for X, `rss:`, `tg:`, `yt:`, `web:`) and how a source is named — is in
 [`src/lib/sources/display.ts`](src/lib/sources/display.ts). Both are typed by `source_platform`,
 so a new platform (a newsletter, say) does not compile until it has both. The column was
 `x_post_id` until every platform used it (migration `0031_external_id`).
@@ -2082,18 +2209,29 @@ src/
       client.ts                The Data API: channels, playlistItems, videos — never search; quota logged
       normalize.ts             Video → candidate post (title + description), yt:<id> ids
       transcript.ts            VideoTranscriptProvider, Supadata (native transcripts only)
+    website/
+      url.ts                   Sitemap and page addresses: normalised, same-site, web:<hash> ids
+      http.ts                  One bounded public GET: private addresses refused hop by hop, size and time caps
+      sitemap-parser.ts        <urlset> / <sitemapindex> in any namespace prefix, entities never expanded
+      sitemap.ts               The sitemap tree: gzip, depth, cycles, same site, per-sync limits
+      article-client.ts        A new page's HTML, and nothing else
+      article-extractor.ts     jsdom (no scripts) + Readability: the article, or why it is none
+      normalize.ts             Article → candidate post (title + lead; the article as analysis text)
     analysis-text.ts           A post's analysis-only text, sampled across it for Radar and the embedding
     sources/
       display.ts               Each platform's identity: its post ids' prefix, and how a source is named
       add-rss.ts               Check-then-store for /addrss and Settings
       add-telegram.ts          Check-then-store for /addtelegram and Settings
       add-youtube.ts           Look-up-then-store for /addyoutube and Settings
+      add-website.ts           Read-the-sitemap-then-store for /addwebsite and the Sources page
     sync/
       sync-posts.ts            Orchestration, X, RSS and Telegram sources alike
       source-adapters.ts       One adapter per platform: the orchestrator hands each source to its own
       sync-x-source.ts         One X account: cursor, candidates
       sync-rss-source.ts       One feed: backlog on follow, known-id dedup, candidates
       sync-telegram-source.ts  One public channel: message-id cursor, pages back to it
+      sync-youtube-source.ts   One YouTube channel: uploads newest first, back to what is known
+      sync-website-source.ts   One website: sitemap backlog on follow, new pages by identity, bounded fetches
       process-candidate.ts     Claim → Radar → translate → review/publish → record, shared
       process-post.ts          Per-post publish, all-or-nothing media policy
       acquire-media.ts         Fetch and check every asset before a send, for both paths
@@ -2137,7 +2275,7 @@ src/
     review-queue.tsx           The review queue, shared by the Mini App and the website
     settings-panel.tsx         Settings, likewise
     source-stats-panel.tsx     The Sources page — adding and stats — likewise
-    add-source-form.tsx        ➕ Add a source: X, Telegram or RSS, on the Sources page
+    add-source-form.tsx        ➕ Add a source: X, Telegram, YouTube, RSS or a website, on the Sources page
     mini-app-frame.tsx         The Mini App frame: Telegram's script, initData-signed requests
     rich-editor/               The website's post editor (Tiptap), its picture block and AI assistant panel
     media/
@@ -2146,7 +2284,7 @@ src/
       understand.ts            Understand an image at most once, never throwing
       repository.ts            media_understandings, by fingerprint and config
       history.ts               The history's images, from the export's files
-scripts/                       migrate, run-sync, telegram-check, telegram-commands, rss-check,
+scripts/                       migrate, run-sync, telegram-check, telegram-commands, rss-check, website-check,
                                import-history, history-profile, history-embed,
                                history-understand-images, radar-backfill,
                                radar-report, radar-context, stories-cluster

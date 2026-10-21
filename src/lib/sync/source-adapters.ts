@@ -4,9 +4,11 @@ import type { FetchFeedOptions } from '@/lib/rss/client';
 import type { CandidateContext } from '@/lib/sync/process-candidate';
 import { syncRssSource } from '@/lib/sync/sync-rss-source';
 import { syncTelegramSource } from '@/lib/sync/sync-telegram-source';
+import { syncWebsiteSource } from '@/lib/sync/sync-website-source';
 import { syncXSource } from '@/lib/sync/sync-x-source';
 import { syncYouTubeSource } from '@/lib/sync/sync-youtube-source';
 import type { FetchChannelOptions } from '@/lib/telegram-channel/client';
+import type { WebsiteFetchOptions } from '@/lib/website/http';
 import type { XClient } from '@/lib/x/client';
 import type { YouTubeClient } from '@/lib/youtube/client';
 import type { VideoTranscriptProvider } from '@/lib/youtube/transcript';
@@ -18,7 +20,7 @@ import type { SourceSyncSummary } from '@/types';
  * and knows nothing of X, feeds or channels.
  *
  * An adapter reads what is new at its source, in its own way — a cursor on
- * X and Telegram, identity on a feed — and hands each new post, normalised,
+ * X and Telegram, identity on a feed or a sitemap — and hands each new post, normalised,
  * to processCandidate, which every platform shares from claim to review. It
  * keeps its own cursor, and never throws: a source that fails says why in its
  * summary, and the run moves on.
@@ -39,6 +41,8 @@ export interface SourceClients {
   youtube?: YouTubeClient | null;
   /** Videos' transcripts; null without SUPADATA_API_KEY. */
   transcripts?: VideoTranscriptProvider | null;
+  /** How websites' sitemaps and pages are fetched; injected by tests and the local runner. */
+  websiteFetch?: WebsiteFetchOptions;
 }
 
 /** Everything a source's pass is handed, whatever its platform. */
@@ -74,6 +78,10 @@ const SOURCE_ADAPTERS: { readonly [P in SourcePlatform]: SourceAdapter & { platf
     platform: 'youtube',
     sync: (source, { clients, ...context }) =>
       syncYouTubeSource(source, { ...context, youtube: clients.youtube ?? null, transcripts: clients.transcripts ?? null }),
+  },
+  website: {
+    platform: 'website',
+    sync: (source, { clients, ...context }) => syncWebsiteSource(source, { ...context, websiteFetch: clients.websiteFetch }),
   },
 };
 

@@ -7,6 +7,8 @@ import { addRssSource } from '@/lib/sources/add-rss';
 import { addTelegramSource } from '@/lib/sources/add-telegram';
 import { addXSource } from '@/lib/sources/add-x';
 import { addYouTubeSource } from '@/lib/sources/add-youtube';
+import { addWebsiteSource, describeSitemap } from '@/lib/sources/add-website';
+import type { WebsiteFetchOptions } from '@/lib/website/http';
 import type { YouTubeClient } from '@/lib/youtube/client';
 import type { FetchChannelOptions } from '@/lib/telegram-channel/client';
 import type { FetchFeedOptions } from '@/lib/rss/client';
@@ -105,6 +107,8 @@ export interface CommandContext {
   channelFetch?: FetchChannelOptions;
   /** How /addyoutube looks a channel up; null without YOUTUBE_API_KEY. */
   youtube?: YouTubeClient | null;
+  /** How /addwebsite reads the sitemap it checks; injected by tests. */
+  websiteFetch?: WebsiteFetchOptions;
 }
 
 /**
@@ -172,6 +176,7 @@ export const BOT_COMMANDS: { command: string; description: string }[] = [
   { command: 'addrss', description: 'Start watching an RSS or Atom feed: /addrss <feed URL>' },
   { command: 'addtelegram', description: 'Start watching a public Telegram channel: /addtelegram @channel' },
   { command: 'addyoutube', description: 'Start watching a YouTube channel’s new videos: /addyoutube @handle' },
+  { command: 'addwebsite', description: 'Start watching a website’s new articles: /addwebsite <sitemap URL>' },
   { command: 'scheduled', description: 'Posts waiting to be published at a set time' },
   { command: 'help', description: 'What the bot can do' },
 ];
@@ -179,11 +184,12 @@ export const BOT_COMMANDS: { command: string; description: string }[] = [
 const HELP_TEXT = [
   '<b>Source management</b>',
   '',
-  '/sourcestats — the Sources page: add any source (X, Telegram, RSS, YouTube), and see how each performs',
+  '/sourcestats — the Sources page: add any source (X, Telegram, RSS, YouTube, a website), and see how each performs',
   '/addsource @username — start watching an account',
   '/addrss &lt;feed URL&gt; — start watching an RSS or Atom feed (with several channels: /addrss &lt;channel id&gt; &lt;feed URL&gt;)',
   '/addtelegram @channel — start watching a public Telegram channel (with several channels: /addtelegram &lt;channel id&gt; @channel)',
   '/addyoutube @handle — start watching a YouTube channel’s new videos (with several channels: /addyoutube &lt;channel id&gt; @handle)',
+  '/addwebsite &lt;sitemap URL&gt; — start watching a website’s new articles through its sitemap (with several channels: /addwebsite &lt;channel id&gt; &lt;sitemap URL&gt;)',
   '',
   'Pause, resume or remove a source with the buttons under it in /sourcestats; options such as mirroring ' +
     'posts without media are under its ⚙️ Settings button.',
@@ -429,6 +435,37 @@ export async function handleAddYouTube(context: CommandContext, args: string): P
   };
 }
 
+/** /addwebsite <sitemap URL>, or /addwebsite <channel id> <sitemap URL> for a reviewer of several channels. */
+export async function handleAddWebsite(context: CommandContext, args: string): Promise<CommandReply> {
+  const channels = channelsOf(context);
+  const picked = channelAndSource(context, args, 'addwebsite', '<sitemap URL>');
+  if (!picked.ok) return picked.reply;
+  const { workspaceId, value } = picked;
+
+  const result = await addWebsiteSource(context.db, {
+    url: value,
+    workspaceId,
+    websiteFetch: context.websiteFetch,
+    logger: context.logger,
+  });
+  if (!result.ok) return { text: `⚠️ ${escapeHtml(result.reason)}` };
+
+  const where = channels.length > 1 ? `📢 ${escapeHtml(channels.find((c) => c.id === workspaceId)!.name)}\n\n` : '';
+  const label = escapeHtml(result.host);
+  if (!result.created) {
+    const note = result.source.enabled ? '' : '\n\nIt is currently paused — resume it in /sourcestats.';
+    return { text: `${where}ℹ️ <b>${label}</b> is already in your sources.${note}`, offerSettings: true };
+  }
+  return {
+    text:
+      `${where}✅ <b>Website added</b>\n\n${label}\n${escapeHtml(result.source.externalId)}\n${escapeHtml(describeSitemap(result))}\n\n` +
+      'Pages already in the sitemap are not sent — from now on, each new page that is an article comes to review ' +
+      'as its title and lead with its link; the whole article helps Radar judge it and is never published.' +
+      (result.warning ? `\n\n⚠️ ${escapeHtml(result.warning)}` : ''),
+    offerSettings: true,
+  };
+}
+
 /**
  * The scheduled posts of every channel the sender reviews, soonest first, each
  * at the time it was picked in — and, across several channels, which one.
@@ -576,7 +613,7 @@ export async function dispatchCommand(
     case 'sourcestats':
       return {
         text:
-          '<b>Sources</b>\n\nAdd any source — an X account, a Telegram channel, an RSS feed, a YouTube channel — at the top of ' +
+          '<b>Sources</b>\n\nAdd any source — an X account, a Telegram channel, an RSS feed, a YouTube channel, a website — at the top of ' +
           'the page. Per source: posts it brought in, how many you approved and why the rest were rejected, ' +
           'and roughly what reading them from X cost — with buttons to pause, resume or remove each. ' +
           '⚙️ Settings has the per-source options.',
@@ -589,6 +626,8 @@ export async function dispatchCommand(
       return handleAddTelegram(context, parsed.args);
     case 'addyoutube':
       return handleAddYouTube(context, parsed.args);
+    case 'addwebsite':
+      return handleAddWebsite(context, parsed.args);
     case 'addsource':
       return channels.length > 1
         ? sourceCommandAcrossChannels(context, command, parsed.args, channels)

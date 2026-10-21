@@ -4,6 +4,7 @@ import type { NormalizedMedia } from '@/types';
 import { truncateToLength } from '@/lib/telegram/format-caption';
 import type { ImageUnderstanding } from '@/lib/media/understanding';
 import type { StoryContext } from '@/lib/stories/context';
+import type { RadarSourcePlatform } from '@/lib/sources/display';
 
 /**
  * Shadow Radar's prompt: the editor's profile and past decisions, and the post
@@ -141,8 +142,8 @@ export interface RadarSimilarApproved {
   approvedAt: Date;
   similarity: number;
   sourceUsername: string | null;
-  /** 'rss' when `sourceUsername` is a feed's title, 'youtube' a channel's, rather than an X handle. */
-  sourcePlatform?: 'rss' | 'youtube';
+  /** 'rss' when `sourceUsername` is a feed's title, 'youtube' a channel's, 'website' a site's, rather than an X handle. */
+  sourcePlatform?: RadarSourcePlatform;
   text: string | null;
   /** What its first image shows, for a prompt that reads image descriptions. */
   imageSummary?: string | null;
@@ -153,8 +154,8 @@ export interface RadarSimilarRejected {
   rejectedAt: Date;
   similarity: number;
   sourceUsername: string | null;
-  /** 'rss' when `sourceUsername` is a feed's title, 'youtube' a channel's, rather than an X handle. */
-  sourcePlatform?: 'rss' | 'youtube';
+  /** 'rss' when `sourceUsername` is a feed's title, 'youtube' a channel's, 'website' a site's, rather than an X handle. */
+  sourcePlatform?: RadarSourcePlatform;
   text: string | null;
   rejectionReason: RejectionReason | null;
   rejectionNote: string | null;
@@ -168,8 +169,8 @@ export interface RadarNearestDecision {
   decidedAt: Date;
   similarity: number;
   sourceUsername: string | null;
-  /** 'rss' when `sourceUsername` is a feed's title, 'youtube' a channel's, rather than an X handle. */
-  sourcePlatform?: 'rss' | 'youtube';
+  /** 'rss' when `sourceUsername` is a feed's title, 'youtube' a channel's, 'website' a site's, rather than an X handle. */
+  sourcePlatform?: RadarSourcePlatform;
   text: string | null;
   rejectionReason: RejectionReason | null;
   rejectionNote: string | null;
@@ -180,8 +181,8 @@ export interface RadarNearestDecision {
 /** The post to score, reduced to what the prompt shows. */
 export interface RadarItem {
   sourceUsername: string;
-  /** 'rss' when `sourceUsername` is a feed's title, 'youtube' a channel's, rather than an X handle. */
-  sourcePlatform?: 'rss' | 'youtube';
+  /** 'rss' when `sourceUsername` is a feed's title, 'youtube' a channel's, 'website' a site's, rather than an X handle. */
+  sourcePlatform?: RadarSourcePlatform;
   text: string;
   /** e.g. "photo", "video", "album of 3", "text only", "YouTube video, 12 min". */
   media: string;
@@ -197,8 +198,8 @@ export interface RadarItem {
 export interface RadarExample {
   postId: number;
   sourceUsername: string;
-  /** 'rss' when `sourceUsername` is a feed's title, 'youtube' a channel's, rather than an X handle. */
-  sourcePlatform?: 'rss' | 'youtube';
+  /** 'rss' when `sourceUsername` is a feed's title, 'youtube' a channel's, 'website' a site's, rather than an X handle. */
+  sourcePlatform?: RadarSourcePlatform;
   text: string;
   media: string;
   decision: 'approve' | 'reject';
@@ -429,9 +430,13 @@ export function buildUserContent(
   if (item.analysisText?.trim()) {
     content.push({
       type: 'text',
+      // A website's post is an article's title and lead; the rest of it is here. A video's is its transcript.
       text:
-        "What the video says — its transcript, or excerpts spread across it, for understanding the post only (the post is the text above):\n" +
-        `<transcript>\n${neutralise(item.analysisText.trim())}\n</transcript>`,
+        item.sourcePlatform === 'website'
+          ? "The whole article, or excerpts spread across it, for understanding the post only (the post is the text above):\n" +
+            `<article_text>\n${neutralise(item.analysisText.trim())}\n</article_text>`
+          : "What the video says — its transcript, or excerpts spread across it, for understanding the post only (the post is the text above):\n" +
+            `<transcript>\n${neutralise(item.analysisText.trim())}\n</transcript>`,
     });
   }
 
@@ -597,8 +602,9 @@ function attribute(value: string): string {
 }
 
 /** A source as the prompt names it: `@handle` on X, as it always has; a feed by its title; a YouTube channel by its title, marked. */
-function sourceRef(name: string, platform?: 'rss' | 'youtube'): string {
+function sourceRef(name: string, platform?: RadarSourcePlatform): string {
   if (platform === 'rss') return attribute(name);
   if (platform === 'youtube') return `${attribute(name)} (YouTube)`;
+  if (platform === 'website') return `${attribute(name)} (website)`;
   return `@${attribute(name)}`;
 }

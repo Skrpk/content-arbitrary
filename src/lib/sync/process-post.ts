@@ -567,17 +567,17 @@ function sourceFraming(
   env: Env,
   review: boolean,
 ): { includeSourceLink: boolean; sourceLine?: string } {
-  // A video goes out as its text and its link, which Telegram previews with YouTube's player.
-  if (post.platform === 'rss' || post.platform === 'youtube') {
+  // A video goes out as its text and its link, which Telegram previews with YouTube's player; an article, with its page's.
+  if (post.platform === 'rss' || post.platform === 'youtube' || post.platform === 'website') {
     return post.url ? { includeSourceLink: true, sourceLine: post.url } : { includeSourceLink: false };
   }
   if (post.platform === 'telegram') return { includeSourceLink: sourceLineInPost(env, review), sourceLine: `Source: ${post.url}` };
   return { includeSourceLink: sourceLineInPost(env, review) };
 }
 
-/** The link a feed entry's or a video's text message previews; none for X, whose previews stay off. */
+/** The link a feed entry's, a video's or an article's text message previews; none for X, whose previews stay off. */
 function linkPreviewOf(post: NormalizedPost): string | undefined {
-  return (post.platform === 'rss' || post.platform === 'youtube') && post.url ? post.url : undefined;
+  return (post.platform === 'rss' || post.platform === 'youtube' || post.platform === 'website') && post.url ? post.url : undefined;
 }
 
 /**

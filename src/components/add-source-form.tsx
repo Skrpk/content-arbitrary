@@ -6,16 +6,16 @@ import { theme } from '@/lib/telegram/webapp-client';
 
 /**
  * Add a source of any kind — an X account, a public Telegram channel, an RSS
- * or Atom feed, a YouTube channel — to one of the reviewer's channels. For the Sources page, in
+ * or Atom feed, a YouTube channel, a website by its sitemap — to one of the reviewer's channels. For the Sources page, in
  * the Mini App and on the website alike.
  *
  * The kind is picked, and a pasted link picks it too: an `@name` alone could
  * be an X account or a Telegram channel, a link cannot. The server checks
- * whatever is sent — the account on X, the channel's page, the feed — before
+ * whatever is sent — the account on X, the channel's page, the feed, the sitemap — before
  * storing it, so this form only gets it there.
  */
 
-type Kind = 'x' | 'telegram' | 'rss' | 'youtube';
+type Kind = 'x' | 'telegram' | 'rss' | 'youtube' | 'website';
 
 const KINDS: { key: Kind; label: string; placeholder: string; hint: string; route: string; field: string }[] = [
   {
@@ -50,6 +50,14 @@ const KINDS: { key: Kind; label: string; placeholder: string; hint: string; rout
     route: '/api/telegram/webapp/sources/rss',
     field: 'url',
   },
+  {
+    key: 'website',
+    label: 'Website',
+    placeholder: 'https://example.com/sitemap.xml',
+    hint: 'The site’s sitemap URL. We’ll watch the sitemap for new pages and extract new articles. Existing pages are ignored when the source is first added.',
+    route: '/api/telegram/webapp/sources/website',
+    field: 'url',
+  },
 ];
 
 /** The kind a pasted link is unmistakably, or null when it could be either. */
@@ -59,6 +67,8 @@ function kindOfLink(value: string): Kind | null {
   if (/^(?:https?:\/\/)?(?:www\.)?(?:t|telegram)\.me\//i.test(trimmed)) return 'telegram';
   // A video's link too: the server explains it is a channel that is followed.
   if (/^(?:https?:\/\/)?(?:(?:www\.|m\.)?youtube\.com|youtu\.be)\//i.test(trimmed)) return 'youtube';
+  // A sitemap names itself: sitemap.xml, sitemap_index.xml, news-sitemap.xml.gz.
+  if (/^https?:\/\/[^?#]*sitemap[^/?#]*\.xml(?:\.gz)?(?:[?#].*)?$/i.test(trimmed)) return 'website';
   if (/^https?:\/\//i.test(trimmed)) return 'rss';
   return null;
 }
@@ -108,15 +118,24 @@ export function AddSourceForm({
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ [chosen.field]: value.trim(), workspaceId }),
       });
-      const body = (await response.json()) as { error?: string; created?: boolean; source?: { label: string } };
+      const body = (await response.json()) as {
+        error?: string;
+        created?: boolean;
+        source?: { label: string };
+        /** What the server found there — a website's sitemap, say — when it has more to tell. */
+        detail?: string;
+        warning?: string | null;
+      };
       if (!response.ok || !body.source) throw new Error(body.error ?? `Could not add (${response.status})`);
 
       setValue('');
+      const found = body.detail ? `\n${body.detail}` : '';
+      const warning = body.warning ? `\n⚠️ ${body.warning}` : '';
       setResult({
         ok: true,
         text: body.created
-          ? `✅ ${body.source.label} added. What is there now is not sent — only new posts come to review.`
-          : `ℹ️ ${body.source.label} is already in your sources.`,
+          ? `✅ ${body.source.label} added. What is there now is not sent — only new posts come to review.${found}${warning}`
+          : `ℹ️ ${body.source.label} is already in your sources.${found}`,
       });
       onAdded({ workspaceId, label: body.source.label });
     } catch (error: unknown) {
@@ -137,7 +156,7 @@ export function AddSourceForm({
     >
       <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>➕ Add a source</div>
 
-      <div role="radiogroup" aria-label="Kind of source" style={{ display: 'flex', gap: '0.35rem', marginBottom: '0.5rem' }}>
+      <div role="radiogroup" aria-label="Kind of source" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.5rem' }}>
         {KINDS.map((option) => {
           const active = option.key === kind;
           return (
@@ -151,8 +170,8 @@ export function AddSourceForm({
                 setResult(null);
               }}
               style={{
-                flex: 1,
-                padding: '0.4rem 0',
+                flex: '1 1 auto',
+                padding: '0.4rem 0.5rem',
                 border: 'none',
                 borderRadius: '0.45rem',
                 fontSize: '0.8rem',
@@ -228,7 +247,7 @@ export function AddSourceForm({
       </div>
 
       {result ? (
-        <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: result.ok ? theme.text : '#e53935' }}>
+        <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', whiteSpace: 'pre-line', color: result.ok ? theme.text : '#e53935' }}>
           {result.text}
         </p>
       ) : null}
