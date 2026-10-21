@@ -18,7 +18,12 @@ import {
   type RadarPromptVersion,
 } from '@/lib/radar/prompt';
 import type { RadarProvider } from '@/lib/radar/providers';
-import { findEvaluatedVariants, insertRadarEvaluation, loadRadarHistory } from '@/lib/radar/repository';
+import {
+  editorialProfileHash,
+  findEvaluatedVariants,
+  insertRadarEvaluation,
+  loadRadarHistory,
+} from '@/lib/radar/repository';
 import { loadRadarPublicationProfile } from '@/lib/history/profile/repository';
 import type { PublicationProfile } from '@/lib/history/profile/schema';
 import type { EmbeddingProvider } from '@/lib/history/embeddings/provider';
@@ -401,5 +406,6 @@ function setup(
     variant,
     model: provider.model,
     promptVersion,
+    editorialProfileHash: editorialProfileHash(subject.profile),
   };
 }

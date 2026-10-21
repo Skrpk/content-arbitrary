@@ -48,7 +48,8 @@ export const workspaces = pgTable('workspaces', {
   /**
    * What this channel publishes and what its editor turns down, in the
    * editor's words. Shadow Radar scores posts against it; null leaves Radar
-   * off for the tenant.
+   * off for the tenant. The reviewer edits it on the settings page, up to
+   * EDITORIAL_PROFILE_MAX_LENGTH characters (src/lib/radar/editorial-profile.ts).
    */
   editorialProfile: text('editorial_profile'),
   /**
@@ -100,6 +101,10 @@ export const workspaces = pgTable('workspaces', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   check('workspaces_language_check', sql`${table.language} IS NULL OR ${table.language} ~ '^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$'`),
+  check(
+    'workspaces_editorial_profile_check',
+    sql`${table.editorialProfile} IS NULL OR char_length(${table.editorialProfile}) <= 2000`,
+  ),
   // From one cron interval to ninety days.
   check(
     'workspaces_review_digest_minutes_check',
@@ -703,6 +708,12 @@ export const radarEvaluations = pgTable(
      * can be traced to the exact context it was made with.
      */
     publicationHistoryProfileId: integer('publication_history_profile_id'),
+    /**
+     * Which editorial profile the prompt carried: the first 16 hex characters
+     * of its SHA-256, so a score can be told from one made after the editor
+     * rewrote it. Null for scores recorded before this was kept.
+     */
+    editorialProfileHash: text('editorial_profile_hash'),
     /**
      * The similar past publications the prompt carried, and how the search for
      * them went — null for a prompt version that does not retrieve them.

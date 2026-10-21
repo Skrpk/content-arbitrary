@@ -1,0 +1,2 @@
+ALTER TABLE "radar_evaluations" ADD COLUMN "editorial_profile_hash" text;--> statement-breakpoint
+ALTER TABLE "workspaces" ADD CONSTRAINT "workspaces_editorial_profile_check" CHECK ("workspaces"."editorial_profile" IS NULL OR char_length("workspaces"."editorial_profile") <= 2000);

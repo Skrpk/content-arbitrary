@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { radarSourceMark } from '@/lib/sources/display';
 import { and, count, desc, eq, inArray, isNotNull, lt, ne, sql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
@@ -151,6 +152,16 @@ export async function findEvaluatedVariants(
   return new Set(rows.map((row) => row.variant));
 }
 
+/**
+ * Which editorial profile a prompt carried, as `radar_evaluations` records it:
+ * the first 16 hex characters of the SHA-256 of the text as the prompt shows
+ * it — trimmed — so a score can be told from one made after the editor
+ * rewrote the profile without storing the text again on every row.
+ */
+export function editorialProfileHash(profile: string): string {
+  return createHash('sha256').update(profile.trim()).digest('hex').slice(0, 16);
+}
+
 /** Record an attempt. A duplicate — a second run racing the first — is ignored. */
 export async function insertRadarEvaluation(
   db: Database,
@@ -195,6 +206,7 @@ export async function recordBackfillEvaluation(
         latencyMs: row.latencyMs ?? null,
         error: row.error ?? null,
         publicationHistoryProfileId: row.publicationHistoryProfileId ?? null,
+        editorialProfileHash: row.editorialProfileHash ?? null,
         historyRetrieval: row.historyRetrieval ?? null,
         historicalAssessment: row.historicalAssessment ?? null,
         createdAt: new Date(),

@@ -40,6 +40,7 @@ import type { ImageUnderstanding, MediaUnderstandingConfig } from '@/lib/media/u
 import { setPostImageFingerprint } from '@/lib/sync/repository';
 import type { RadarProvider } from '@/lib/radar/providers';
 import {
+  editorialProfileHash,
   findEvaluatedVariants,
   loadRadarHistory,
   recordBackfillEvaluation,
@@ -414,6 +415,12 @@ export async function ingestRadarBatch(input: {
   embeddingModel?: string | null;
   /** Whose image understandings the requests read; needed to record which one each media score used. */
   mediaConfig?: MediaUnderstandingConfig | null;
+  /**
+   * The editorial profile the requests were built with — like the examples,
+   * the workspace's read again now, so it must not change while a batch is
+   * pending. Recorded as its hash; null records none.
+   */
+  editorialProfile?: string | null;
   logger: Logger;
 }): Promise<IngestSummary> {
   const summary: IngestSummary = { scored: 0, failed: 0 };
@@ -542,6 +549,7 @@ export async function ingestRadarBatch(input: {
       mediaUnderstandingId: usesMediaUnderstanding(key.promptVersion) ? post.image.id : null,
       examplePostIds: post.examplePostIds,
       publicationHistoryProfileId: key.historyProfileId,
+      editorialProfileHash: input.editorialProfile?.trim() ? editorialProfileHash(input.editorialProfile) : null,
       historyRetrieval,
     };
 

@@ -21,7 +21,8 @@ import {
   RADAR_PROMPT_RETRIEVAL,
 } from '@/lib/radar/prompt';
 import { findReviewScore, formatRadarNote, type ReviewScore } from '@/lib/radar/review-note';
-import { insertRadarEvaluation, loadRadarHistory } from '@/lib/radar/repository';
+import { editorialProfileHash, insertRadarEvaluation, loadRadarHistory } from '@/lib/radar/repository';
+import { setEditorialProfile } from '@/lib/workspace';
 
 /** These tests are about one prompt; both side by side are tested in radar-retrieval. */
 const BASELINE_ONLY = [RADAR_PROMPT_BASELINE] as const;
@@ -234,6 +235,23 @@ describeIfDb('runLiveRadar', () => {
       JSON.stringify(request.messages).includes('"type":"image"'),
     );
     expect(sentImages.sort()).toEqual([false, true]);
+  });
+
+  it('records which editorial profile it was shown, as the hash of its trimmed text', async () => {
+    const post = await decidedPost({ decision: 'pending' });
+    const { provider } = fakeAnthropic(() => messageResponse(radarOutput()));
+
+    await runLiveRadar(
+      createRadarRun({ promptVersions: BASELINE_ONLY, provider }),
+      db,
+      subject(post.id, { profile: '  Space and sci-fi.\n' }),
+      createTestLogger(),
+    );
+
+    const [row] = await evaluations();
+    expect(row!.editorialProfileHash).toBe(editorialProfileHash('Space and sci-fi.'));
+    expect(row!.editorialProfileHash).toMatch(/^[0-9a-f]{16}$/);
+    expect(editorialProfileHash('Space and sci-fi.')).not.toBe(editorialProfileHash('Space only.'));
   });
 
   it('scores only the text when the post has no image', async () => {
@@ -513,6 +531,36 @@ describeIfDb('Radar in the sync', () => {
     expect(post!.caption).toContain('A rare photo of Saturn');
   });
 
+  it('scores the next post with the profile as the editor last saved it, and leaves earlier scores alone', async () => {
+    await seed('Old profile: cats.');
+    const earlier = await decidedPost({ decision: 'pending' });
+    const { provider } = fakeAnthropic(() => messageResponse(radarOutput({ score: 20 })));
+    await runLiveRadar(
+      createRadarRun({ promptVersions: BASELINE_ONLY, provider }),
+      db,
+      subject(earlier.id, { profile: 'Old profile: cats.' }),
+      createTestLogger(),
+    );
+
+    await setEditorialProfile(db, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      reviewerWorkspaceIds: [DEFAULT_WORKSPACE_ID],
+      editorialProfile: '  New profile: Saturn and its moons.  ',
+    });
+    const radar = await sync([], () => messageResponse(radarOutput({ score: 88 })));
+
+    expect(radar.requests).toHaveLength(1);
+    const request = JSON.stringify(radar.requests[0]);
+    expect(request).toContain('<editorial_profile>\\nNew profile: Saturn and its moons.\\n</editorial_profile>');
+    expect(request).not.toContain('Old profile');
+
+    const rows = await db.select().from(radarEvaluations).orderBy(radarEvaluations.id);
+    expect(rows.map((row) => [row.processedPostId === earlier.id, row.score, row.editorialProfileHash])).toEqual([
+      [true, 20, editorialProfileHash('Old profile: cats.')],
+      [false, 88, editorialProfileHash('New profile: Saturn and its moons.')],
+    ]);
+  });
+
   it('leaves a tenant without an editorial profile alone', async () => {
     await seed(null);
     const order: string[] = [];
@@ -562,6 +610,7 @@ describe.each(['openai', 'anthropic'] as const)('Radar backfill through the %s b
             provider: fake.provider,
             batchId,
             workspaceId: DEFAULT_WORKSPACE_ID,
+            editorialProfile: extra.profile ?? 'Space.',
             logger: createTestLogger(),
           }),
         );
@@ -587,7 +636,14 @@ describe.each(['openai', 'anthropic'] as const)('Radar backfill through the %s b
       expect(ingested).toEqual([{ scored: 2, failed: 0 }]);
 
       const row = (await evaluations()).find((evaluation) => evaluation.processedPostId === post.id)!;
-      expect(row).toMatchObject({ mode: 'backfill', status: 'ok', score: 33, inputTokens: 1000, model });
+      expect(row).toMatchObject({
+        mode: 'backfill',
+        status: 'ok',
+        score: 33,
+        inputTokens: 1000,
+        model,
+        editorialProfileHash: editorialProfileHash('Space.'),
+      });
       expect(row.examplePostIds).toHaveLength(2);
     });
 

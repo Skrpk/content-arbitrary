@@ -8,5 +8,5 @@ import { SettingsPanel } from '@/components/settings-panel';
  * /addsource. The page itself is the website's too (src/components/settings-panel.tsx).
  */
 export default function SettingsPage() {
-  return <MiniAppFrame opener="the Settings button">{(tools) => <SettingsPanel request={tools.request} />}</MiniAppFrame>;
+  return <MiniAppFrame opener="the Settings button">{(tools) => <SettingsPanel request={tools.request} confirm={tools.confirm} />}</MiniAppFrame>;
 }

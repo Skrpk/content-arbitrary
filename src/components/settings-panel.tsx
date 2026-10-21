@@ -3,13 +3,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { PlatformBadge } from '@/app/(app)/platform-badge';
 import { readJson, type PanelTools } from '@/components/panel-tools';
+import { EDITORIAL_PROFILE_MAX_LENGTH, editorialProfileLength } from '@/lib/radar/editorial-profile';
 import { theme } from '@/lib/telegram/webapp-client';
 
 /**
  * Settings, for the Mini App and the website alike.
  *
  * Sets how often each channel's reviewer hears about the review queue, and
- * lists the reviewer's own sources — channel by channel when they review
+ * what each channel publishes in the editor's words — the editorial profile
+ * Radar scores posts against, saved with its own button. It also lists the reviewer's own sources — channel by channel when they review
  * several — with their switches; each switch saves as soon as it is flipped.
  * It also adds an RSS / Atom feed, by URL, to the channel picked. Every
  * request goes through the frame's `request`, which proves who is asking, and
@@ -39,6 +41,8 @@ interface ChannelView {
   reviewDigestTimezone: string | null;
   /** Every post goes straight to the channel, with no review. */
   autoPublish: boolean;
+  /** What Radar scores posts against, in the editor's words; null leaves Radar off. */
+  editorialProfile: string | null;
   sources: SourceView[];
 }
 
@@ -103,7 +107,7 @@ const inputStyle = {
   fontSize: '0.95rem',
 } as const;
 
-export function SettingsPanel({ request }: Pick<PanelTools, 'request'>) {
+export function SettingsPanel({ request, confirm }: Pick<PanelTools, 'request' | 'confirm'>) {
   const [phase, setPhase] = useState<Phase>('loading');
   const [message, setMessage] = useState<string | null>(null);
   const [channels, setChannels] = useState<ChannelView[]>([]);
@@ -120,6 +124,11 @@ export function SettingsPanel({ request }: Pick<PanelTools, 'request'>) {
   const [account, setAccount] = useState<{ reviewLink: ReviewLink; websiteUrl: string } | null>(null);
   const [linkMessage, setLinkMessage] = useState<string | null>(null);
 
+  /** The editorial profile as typed, per channel, until it is saved or put back. */
+  const [profileDrafts, setProfileDrafts] = useState<Record<number, string>>({});
+  /** Channels whose profile is being saved. */
+  const [savingProfile, setSavingProfile] = useState<Set<number>>(new Set());
+  const [profileMessage, setProfileMessage] = useState<{ text: string; error: boolean } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -267,6 +276,59 @@ export function SettingsPanel({ request }: Pick<PanelTools, 'request'>) {
       });
     }
   }, [request]);
+
+  /**
+   * Save a channel's editorial profile, or clear it — null — which turns Radar
+   * off for the channel. Unlike the switches it waits for the server: the
+   * draft stays in the box until the save is confirmed, so nothing typed is lost.
+   */
+  const saveProfile = useCallback(async (channel: ChannelView, text: string | null) => {
+    setSavingProfile((current) => new Set(current).add(channel.id));
+    setProfileMessage(null);
+    try {
+      const body = await readJson<{ editorialProfile: string | null }>(
+        await request('/api/telegram/webapp/channels', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ workspaceId: channel.id, editorialProfile: text }),
+        }),
+      );
+      setChannels((all) =>
+        all.map((item) => (item.id === channel.id ? { ...item, editorialProfile: body.editorialProfile } : item)),
+      );
+      setProfileDrafts((all) => {
+        const next = { ...all };
+        delete next[channel.id];
+        return next;
+      });
+      setProfileMessage({
+        text:
+          body.editorialProfile === null
+            ? `${channel.name}: cleared — Radar is off for this channel.`
+            : `${channel.name}: saved — new posts are scored with it; scores already given stay as they are.`,
+        error: false,
+      });
+    } catch (error: unknown) {
+      setProfileMessage({
+        text: `${channel.name}: ${error instanceof Error ? error.message : 'could not save'}`,
+        error: true,
+      });
+    } finally {
+      setSavingProfile((current) => {
+        const next = new Set(current);
+        next.delete(channel.id);
+        return next;
+      });
+    }
+  }, [request]);
+
+  /** Clear the profile, once the reviewer has said yes: Radar stops for the channel. */
+  const clearProfile = useCallback(async (channel: ChannelView) => {
+    const sure = await confirm(
+      `Clear ${channel.name}'s profile? Radar stops scoring its posts until you write a new one.`,
+    );
+    if (sure) await saveProfile(channel, null);
+  }, [confirm, saveProfile]);
 
   /** Save where the review buttons go: shown at once, put back if refused. */
   const saveReviewLink = useCallback(
@@ -446,6 +508,114 @@ export function SettingsPanel({ request }: Pick<PanelTools, 'request'>) {
             })}
             {digestMessage ? (
               <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: '#e53935' }}>{digestMessage}</p>
+            ) : null}
+          </section>
+
+          <section
+            style={{
+              background: theme.secondaryBg,
+              borderRadius: '0.6rem',
+              padding: '0.75rem 0.9rem',
+              marginBottom: '1.25rem',
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>📡 Radar: what this channel publishes</div>
+            <div style={{ color: theme.hint, fontSize: '0.8rem', marginBottom: '0.5rem' }}>
+              In your own words: what the channel is for, what you take and what you turn down. Radar scores every
+              new post against it, and the post editor&apos;s AI assistant reads it too. Empty leaves Radar off.
+            </div>
+            {channels.map((channel) => {
+              const stored = channel.editorialProfile ?? '';
+              const draft = profileDrafts[channel.id] ?? stored;
+              const length = editorialProfileLength(draft.trim());
+              const tooLong = length > EDITORIAL_PROFILE_MAX_LENGTH;
+              const changed = draft.trim() !== stored;
+              const busy = savingProfile.has(channel.id);
+              const buttonStyle = (primary: boolean, disabled: boolean) => ({
+                padding: '0.5rem 0.9rem',
+                border: primary ? 'none' : `1px solid ${theme.hint}`,
+                borderRadius: '0.5rem',
+                background: primary ? theme.button : 'transparent',
+                color: primary ? theme.buttonText : theme.text,
+                fontWeight: primary ? 600 : 400,
+                opacity: disabled ? 0.6 : 1,
+              });
+
+              return (
+                <div key={channel.id} style={{ marginTop: '0.5rem', opacity: busy ? 0.6 : 1 }}>
+                  {channels.length > 1 ? (
+                    <div style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>📢 {channel.name}</div>
+                  ) : null}
+                  <textarea
+                    value={draft}
+                    disabled={busy}
+                    rows={6}
+                    placeholder="e.g. Space science and exploration: missions, discoveries, striking images. Not rumours, not company PR, not minor updates."
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setProfileDrafts((all) => ({ ...all, [channel.id]: value }));
+                    }}
+                    style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.4 }}
+                  />
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: '0.5rem',
+                      alignItems: 'center',
+                      marginTop: '0.4rem',
+                    }}
+                  >
+                    <span style={{ flex: 1, fontSize: '0.75rem', color: tooLong ? '#e53935' : theme.hint }}>
+                      {length} / {EDITORIAL_PROFILE_MAX_LENGTH}
+                      {channel.autoPublish ? ' · published without review, so Radar does not run' : ''}
+                    </span>
+                    {changed ? (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() =>
+                          setProfileDrafts((all) => {
+                            const next = { ...all };
+                            delete next[channel.id];
+                            return next;
+                          })
+                        }
+                        style={buttonStyle(false, busy)}
+                      >
+                        Cancel
+                      </button>
+                    ) : null}
+                    {channel.editorialProfile !== null && !changed ? (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => {
+                          void clearProfile(channel);
+                        }}
+                        style={buttonStyle(false, busy)}
+                      >
+                        Clear
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      disabled={busy || !changed || tooLong}
+                      onClick={() => {
+                        void saveProfile(channel, draft);
+                      }}
+                      style={buttonStyle(true, busy || !changed || tooLong)}
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            {profileMessage ? (
+              <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: profileMessage.error ? '#e53935' : theme.hint }}>
+                {profileMessage.text}
+              </p>
             ) : null}
           </section>
 

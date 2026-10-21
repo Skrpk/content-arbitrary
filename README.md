@@ -1435,7 +1435,8 @@ shows `radar-v3`'s score.
 it), the predicted decision and rejection reason, three sub-scores, a one-sentence reason — in
 the channel's language, so the review message and the digest read in it (Ukrainian for a
 channel with none set; a Ukrainian channel's prompt is word for word what it was before) — which
-past decisions and which publication-history profile it was shown, the model and prompt version,
+past decisions, which editorial profile (as `editorial_profile_hash`, the first 16 hex characters
+of its SHA-256) and which publication-history profile it was shown, the model and prompt version,
 and the tokens it cost. The retrieval prompt's rows also record which past publications it was
 shown, with their similarity (`history_retrieval`), and what the model made of them
 (`historical_assessment`: relevant, possibly already covered, why). Failed and
@@ -1457,13 +1458,16 @@ compares them rather than mixing them. Luna's list price is a tenth of Haiku's.
    `RADAR_PROVIDER=anthropic`) to your local `.env` for the scripts below — and to Vercel only if
    you want posts scored live.
 2. Run `npm run db:migrate`.
-3. Write the channel's profile:
+3. Write the channel's profile on the settings page — **📡 Radar: what this channel publishes**,
+   in the Mini App and on the website alike, one box per channel. It is the one part of Radar's
+   prompt that is the editor's to write: the instructions around it stay fixed per prompt
+   version, so scores stay comparable. Up to 2000 characters; **Save** stores it,
+   **Cancel** puts back what is saved, and **Clear** (after a confirmation) empties it, which
+   turns Radar off for that channel. The post editor's AI assistant reads the same text.
 
-   ```sql
-   UPDATE workspaces SET editorial_profile = '...' WHERE id = 2;
-   ```
-
-   Setting it back to `NULL` turns Radar off for that tenant.
+   A new text applies from the next sync: posts already scored keep their scores, and each
+   score records which text it was made with (`editorial_profile_hash`), so scores made before
+   and after a rewrite can be told apart.
 
 ### Scoring past decisions
 
@@ -1493,6 +1497,7 @@ prompts need `OPENAI_API_KEY` for embeddings and the history embedded (`npm run 
 A post whose similarity search fails has its retrieval request held back and retried by the next
 run, so a retrieval score is never one made without retrieval by accident. Do not re-embed history
 while a batch is pending: what a result is recorded as having been shown is read again at ingest.
+The same goes for the editorial profile: its hash is recorded from the text as it is at ingest.
 
 A resumed batch is read with the provider it was submitted to, whatever `RADAR_PROVIDER` says now.
 

@@ -969,6 +969,56 @@ describeIfDb('POST /api/telegram/webapp/channels — publishing without review',
   });
 });
 
+describeIfDb('POST /api/telegram/webapp/channels — the editorial profile', () => {
+  it('saves it trimmed, and clears it — Radar off — with null or blank text', async () => {
+    const saved = await setInterval({ workspaceId: DEFAULT_WORKSPACE_ID, editorialProfile: '  Space news.\nNo rumours.  ' });
+    expect(await saved.json()).toEqual({ id: DEFAULT_WORKSPACE_ID, editorialProfile: 'Space news.\nNo rumours.' });
+    expect((await workspaceRow()).editorialProfile).toBe('Space news.\nNo rumours.');
+
+    await setInterval({ workspaceId: DEFAULT_WORKSPACE_ID, editorialProfile: '   ' });
+    expect((await workspaceRow()).editorialProfile).toBeNull();
+
+    await setInterval({ workspaceId: DEFAULT_WORKSPACE_ID, editorialProfile: 'Space.' });
+    const cleared = await setInterval({ workspaceId: DEFAULT_WORKSPACE_ID, editorialProfile: null });
+    expect(await cleared.json()).toEqual({ id: DEFAULT_WORKSPACE_ID, editorialProfile: null });
+    expect((await workspaceRow()).editorialProfile).toBeNull();
+    // Nothing else about the channel changes with it.
+    expect(await workspaceRow()).toMatchObject({ reviewDigestMinutes: 60, autoPublish: false });
+  });
+
+  it('takes up to 2000 characters, counting an emoji as one, and refuses more', async () => {
+    const longest = '🚀'.repeat(2000);
+    expect((await setInterval({ workspaceId: DEFAULT_WORKSPACE_ID, editorialProfile: longest })).status).toBe(200);
+    expect((await workspaceRow()).editorialProfile).toBe(longest);
+
+    expect((await setInterval({ workspaceId: DEFAULT_WORKSPACE_ID, editorialProfile: 'a'.repeat(2001) })).status).toBe(400);
+    expect((await workspaceRow()).editorialProfile).toBe(longest);
+  });
+
+  it('is held to that length by the database too', async () => {
+    await expect(
+      db.update(workspaces).set({ editorialProfile: 'a'.repeat(2001) }).where(eq(workspaces.id, DEFAULT_WORKSPACE_ID)),
+    ).rejects.toThrow();
+  });
+
+  it('refuses it with another change, and on another reviewer’s channel', async () => {
+    await db.insert(workspaces).values({
+      id: OTHER_WORKSPACE,
+      name: 'second',
+      telegramChatId: '-1002000000002',
+      telegramAdminChatId: String(OTHER_REVIEWER_ID),
+      editorialProfile: 'Theirs.',
+    });
+
+    expect(
+      (await setInterval({ workspaceId: DEFAULT_WORKSPACE_ID, editorialProfile: 'Space.', autoPublish: true })).status,
+    ).toBe(400);
+    expect((await setInterval({ workspaceId: DEFAULT_WORKSPACE_ID, editorialProfile: 42 })).status).toBe(400);
+    expect((await setInterval({ workspaceId: OTHER_WORKSPACE, editorialProfile: 'Mine now.' })).status).toBe(404);
+    expect((await workspaceRow(OTHER_WORKSPACE)).editorialProfile).toBe('Theirs.');
+  });
+});
+
 describeIfDb('/review', () => {
   it('counts what is waiting and offers the queue', async () => {
     await queuedPost();

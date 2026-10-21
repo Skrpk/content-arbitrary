@@ -75,12 +75,12 @@ async function main() {
   const logger = createLogger({ app: 'content-arbitrary', surface: 'radar-backfill' });
 
   let batchIds: string[];
+  const [workspace] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId));
+  if (!workspace) throw new Error(`No workspace ${workspaceId}`);
 
   if (resume) {
     batchIds = [resume];
   } else {
-    const [workspace] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId));
-    if (!workspace) throw new Error(`No workspace ${workspaceId}`);
     if (!workspace.editorialProfile?.trim()) {
       throw new Error(`Workspace ${workspaceId} has no editorial_profile; Radar needs one`);
     }
@@ -137,6 +137,8 @@ async function main() {
         workspaceId,
         embeddingModel: env.HISTORY_EMBEDDING_MODEL,
         mediaConfig: mediaUnderstandingConfig(env),
+        // Read now, as the examples are: do not edit the profile while a batch is pending.
+        editorialProfile: workspace.editorialProfile,
         logger,
       }),
     );

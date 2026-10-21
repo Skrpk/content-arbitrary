@@ -3,6 +3,7 @@ import type { Database } from '@/lib/db';
 import type { Env } from '@/lib/env';
 import type { Logger } from '@/lib/logger';
 import { DEFAULT_WORKSPACE_ID, processedPosts, workspaces, type Workspace } from '@/db/schema';
+import { normaliseEditorialProfile } from '@/lib/radar/editorial-profile';
 
 /**
  * A workspace is one tenant: a destination channel and the reviewer who
@@ -270,6 +271,25 @@ export async function setAutoPublish(
   const rows = await db
     .update(workspaces)
     .set({ autoPublish: input.autoPublish, updatedAt: new Date() })
+    .where(eq(workspaces.id, input.workspaceId))
+    .returning();
+  return rows[0] ?? null;
+}
+
+/**
+ * Set a channel's editorial profile — what Radar scores posts against — or
+ * null to turn Radar off for it. Scoped to the workspaces the caller reviews
+ * for; returns the updated row, or null for one that is not theirs. Scores
+ * already made stay as they are; the next sync scores with the new text.
+ */
+export async function setEditorialProfile(
+  db: Database,
+  input: { workspaceId: number; reviewerWorkspaceIds: number[]; editorialProfile: string | null },
+): Promise<Workspace | null> {
+  if (!input.reviewerWorkspaceIds.includes(input.workspaceId)) return null;
+  const rows = await db
+    .update(workspaces)
+    .set({ editorialProfile: normaliseEditorialProfile(input.editorialProfile), updatedAt: new Date() })
     .where(eq(workspaces.id, input.workspaceId))
     .returning();
   return rows[0] ?? null;
