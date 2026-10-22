@@ -15,6 +15,7 @@ import {
 } from '@/lib/sync/approval';
 import { findPostAwaitingReview, schedulePost } from '@/lib/sync/repository';
 import { channelLabelFor } from '@/lib/workspace';
+import { reviewCopiesOf } from '@/lib/review/copies';
 import { rejectRestOfStory, SAME_STORY_MAX } from '@/lib/review/same-story';
 
 /**
@@ -137,25 +138,21 @@ export async function POST(request: Request): Promise<Response> {
     timezone,
   });
 
-  // The decision is recorded; showing it in the chat is best effort.
-  if (row.adminChatId && row.adminMessageId) {
+  // The decision is recorded; showing it in the chats is best effort.
+  const noticeText = formatScheduledNotice({
+    scheduledFor,
+    timezone,
+    sourceLabel: sourceLabelOfPost(row.externalId, row.xAuthorUsername),
+    xPostUrl: row.xPostUrl,
+    channel: channelLabelFor(workspace, auth.workspaces.length),
+    radarNote: await loadRadarNote(auth.db, row.id).catch(() => null),
+  });
+  const keyboard = buildScheduledKeyboard(row.id, reviewLinks(auth.env.APP_BASE_URL, row.id));
+  for (const copy of await reviewCopiesOf(auth.db, row)) {
     await new TelegramClient({ logger: auth.logger })
-      .editMessageText(
-        row.adminChatId,
-        row.adminMessageId,
-        formatScheduledNotice({
-          scheduledFor,
-          timezone,
-          sourceLabel: sourceLabelOfPost(row.externalId, row.xAuthorUsername),
-          xPostUrl: row.xPostUrl,
-          channel: channelLabelFor(workspace, auth.workspaces.length),
-          radarNote: await loadRadarNote(auth.db, row.id).catch(() => null),
-        }),
-        TELEGRAM_PARSE_MODE,
-        buildScheduledKeyboard(row.id, reviewLinks(auth.env.APP_BASE_URL, row.id)),
-      )
+      .editMessageText(copy.chatId, copy.controlMessageId, noticeText, TELEGRAM_PARSE_MODE, keyboard)
       .catch((error: unknown) => {
-        auth.logger.warn('webapp.schedule_message_update_failed', { error: describeError(error) });
+        auth.logger.warn('webapp.schedule_message_update_failed', { chatId: copy.chatId, error: describeError(error) });
       });
   }
 

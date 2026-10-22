@@ -13,6 +13,7 @@ import {
 import { TELEGRAM_CAPTION_LIMIT, TELEGRAM_MESSAGE_TEXT_LIMIT } from '@/lib/telegram/limits';
 import { authorizeReviewer, json, reviewerWorkspaceForPost } from '@/lib/telegram/webapp-request';
 import { findPostAwaitingReview, updateApprovalCaption } from '@/lib/sync/repository';
+import { reviewCopiesOf } from '@/lib/review/copies';
 import { payloadMediaCount, type ApprovalPayload } from '@/db/schema';
 
 /**
@@ -180,36 +181,41 @@ export async function POST(request: Request): Promise<Response> {
     workspaceId: workspace.id,
     includeScheduled: true,
   });
-  const previewMessageId = post?.approvalPayload?.adminMediaMessageId;
   const client = new TelegramClient({ logger: auth.logger });
+  const copies = post ? await reviewCopiesOf(auth.db, post) : [];
+  const edit =
+    post?.approvalPayload?.method === 'sendMessage'
+      ? client.editMessageText.bind(client)
+      : client.editMessageCaption.bind(client);
   let previewUpdated = false;
 
-  if (post?.adminChatId && previewMessageId) {
+  // Every reviewer's preview of the post, not only the first.
+  for (const copy of copies) {
+    if (!copy.mediaMessageId) continue;
     try {
       // A text-only post's preview is a text message, which has no caption.
-      const edit =
-        post.approvalPayload?.method === 'sendMessage'
-          ? client.editMessageText.bind(client)
-          : client.editMessageCaption.bind(client);
-      await edit(post.adminChatId, previewMessageId, html, TELEGRAM_PARSE_MODE);
+      await edit(copy.chatId, copy.mediaMessageId, html, TELEGRAM_PARSE_MODE);
       previewUpdated = true;
     } catch (error) {
-      auth.logger.warn('webapp.preview_update_failed', { error: describeError(error) });
+      auth.logger.warn('webapp.preview_update_failed', { chatId: copy.chatId, error: describeError(error) });
     }
   }
 
   // The full-text follow-up will no longer be published; its preview must not
-  // go on suggesting otherwise.
-  if (post?.adminChatId && result.droppedOverflowPreviewId) {
+  // go on suggesting otherwise. The post's own was dropped from its payload
+  // just now, so its id comes from the update; the others' are still recorded.
+  for (const copy of copies) {
+    const overflowId = copy.chatId === post?.adminChatId ? result.droppedOverflowPreviewId : copy.overflowMessageId;
+    if (!overflowId) continue;
     await client
       .editMessageText(
-        post.adminChatId,
-        result.droppedOverflowPreviewId,
+        copy.chatId,
+        overflowId,
         '✂️ This full text will not be published: your edited caption replaces it.',
         TELEGRAM_PARSE_MODE,
       )
       .catch((error: unknown) => {
-        auth.logger.warn('webapp.overflow_preview_update_failed', { error: describeError(error) });
+        auth.logger.warn('webapp.overflow_preview_update_failed', { chatId: copy.chatId, error: describeError(error) });
       });
   }
 

@@ -18,7 +18,8 @@ import {
 } from '@/lib/telegram/send-media';
 import { acquireMedia, chosenMediaOf } from '@/lib/sync/acquire-media';
 import type { NormalizedMedia, NormalizedPost, TelegramMethod } from '@/types';
-import { reviewLinks, sendForApproval } from '@/lib/sync/approval';
+import { reviewLinks, sendForApproval, type ReviewRequest, type ReviewResult } from '@/lib/sync/approval';
+import type { ReviewCopy } from '@/lib/review/copies';
 import { formatSourceLabel } from '@/lib/sources/display';
 import type { ApprovalPayload } from '@/db/schema';
 import type { PostFooter } from '@/lib/telegram/post-footer';
@@ -40,8 +41,46 @@ export interface ProcessOutcome {
    * review queue, with no message at all.
    */
   approval?:
-    | { queued?: false; payload: ApprovalPayload; adminChatId: string; adminMessageId: number }
+    | {
+        queued?: false;
+        payload: ApprovalPayload;
+        adminChatId: string;
+        adminMessageId: number;
+        /** The review message in each other reviewer's chat, sent alongside. */
+        copies: ReviewCopy[];
+      }
     | { queued: true; payload: ApprovalPayload };
+}
+
+/**
+ * Sends a review to the named reviewer, then a copy to each other reviewer of
+ * the channel. One who cannot be reached (never started the bot, say) must not
+ * hold up the rest, so a failed copy is logged and left out.
+ */
+async function sendReviewToEveryReviewer(
+  context: SendContext,
+  request: ReviewRequest,
+  otherChatIds: string[],
+  options: { logger: Logger; sleep?: (ms: number) => Promise<void> },
+): Promise<{ review: ReviewResult; copies: ReviewCopy[] }> {
+  const review = await sendForApproval(context, request, options);
+
+  const copies: ReviewCopy[] = [];
+  for (const chatId of otherChatIds) {
+    try {
+      const copy = await sendForApproval({ ...context, chatId }, request, options);
+      copies.push({
+        chatId,
+        controlMessageId: copy.adminMessageId,
+        mediaMessageId: copy.payload.adminMediaMessageId,
+        overflowMessageId: copy.payload.adminOverflowMessageId,
+      });
+    } catch (error) {
+      options.logger.warn('approval.copy_failed', { chatId, error: describeError(error) });
+    }
+  }
+
+  return { review, copies };
 }
 
 /** What the send already holds of the post's media, for the pre-review hook to reuse. */
@@ -270,21 +309,24 @@ export async function processPost(
       mediaCount: payloads.length,
     });
 
+    const reviewRequest: ReviewRequest = {
+      postId: options.postId!,
+      xPostUrl: post.url,
+      sourceLabel: formatSourceLabel(post.platform ?? 'x', post.authorUsername),
+      method: method as 'sendPhoto' | 'sendVideo' | 'sendMediaGroup',
+      caption,
+      overflowMessage,
+      payloads,
+      ...reviewLinks(env.APP_BASE_URL, options.postId!),
+      channelLabel: options.destination.channelLabel,
+      radarNote,
+    };
+
     try {
-      const review = await sendForApproval(
+      const { review, copies } = await sendReviewToEveryReviewer(
         reviewContext,
-        {
-          postId: options.postId!,
-          xPostUrl: post.url,
-          sourceLabel: formatSourceLabel(post.platform ?? 'x', post.authorUsername),
-          method: method as 'sendPhoto' | 'sendVideo' | 'sendMediaGroup',
-          caption,
-          overflowMessage,
-          payloads,
-          ...reviewLinks(env.APP_BASE_URL, options.postId!),
-          channelLabel: options.destination.channelLabel,
-          radarNote,
-        },
+        reviewRequest,
+        options.destination.extraReviewerChatIds ?? [],
         { logger, sleep },
       );
 
@@ -292,6 +334,7 @@ export async function processPost(
         externalId: post.id,
         adminMessageId: review.adminMessageId,
         capturedFileIds: review.payload.items.length,
+        copies: copies.length,
       });
 
       return {
@@ -301,7 +344,7 @@ export async function processPost(
         caption,
         messages: [],
         primaryMessageId: null,
-        approval: review,
+        approval: { ...review, copies },
       };
     } catch (error) {
       const permanent = isPermanentTelegramError(error);
@@ -488,7 +531,7 @@ async function processTextPost(
         };
       }
 
-      const review = await sendForApproval(
+      const { review, copies } = await sendReviewToEveryReviewer(
         {
           client: options.client,
           chatId: options.destination.adminChatId!,
@@ -506,6 +549,7 @@ async function processTextPost(
           radarNote,
           linkPreviewUrl: linkPreviewOf(post),
         },
+        options.destination.extraReviewerChatIds ?? [],
         { logger, sleep: options.sleep },
       );
 
@@ -514,7 +558,7 @@ async function processTextPost(
         adminMessageId: review.adminMessageId,
         textOnly: true,
       });
-      return { ...base, status: 'awaiting-approval', messages: [], approval: review };
+      return { ...base, status: 'awaiting-approval', messages: [], approval: { ...review, copies } };
     }
 
     const translated = await translateText(options.translate, post.text, logger);

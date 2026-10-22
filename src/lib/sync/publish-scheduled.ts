@@ -14,7 +14,6 @@ import {
   formatReviewControlText,
   formatScheduleTime,
   reviewLinks,
-  settleReviewMessage,
 } from '@/lib/sync/approval';
 import { publishDecidedPost } from '@/lib/sync/publish';
 import {
@@ -24,6 +23,7 @@ import {
   returnToSchedule,
 } from '@/lib/sync/repository';
 import { defaultSleep } from '@/lib/sync/retry';
+import { reviewCopiesOf, settleAllReviewMessages } from '@/lib/review/copies';
 import {
   channelLabelFor,
   destinationFor,
@@ -101,30 +101,29 @@ export async function publishDueScheduledPosts(input: {
       summary.returnedToReview += 1;
       logger.error('scheduled.abandoned', { externalId: row.externalId, attempts });
 
-      // Tell the reviewer, and give them the decision back.
-      if (row.adminChatId && row.adminMessageId) {
+      // Tell the reviewers, and give them the decision back.
+      const copies = await reviewCopiesOf(db, row);
+      if (copies.length > 0) {
         const reviewerWorkspaces = await findWorkspacesByAdminChatId(db, row.adminChatId);
         const channel = reviewerWorkspaces.find((candidate) => candidate.id === row.workspaceId);
-        await client
-          .editMessageText(
-            row.adminChatId,
-            row.adminMessageId,
-            [
-              `⚠️ Scheduled publishing failed ${attempts} times: ${escapeHtml(error.slice(0, 300))}`,
-              'Back in review — approve or schedule it again.',
-              formatReviewControlText(
-                sourceLabelOfPost(row.externalId, row.xAuthorUsername),
-                row.xPostUrl,
-                channel ? channelLabelFor(channel, reviewerWorkspaces.length) : null,
-                await loadRadarNote(db, row.id).catch(() => null),
-              ),
-            ].join('\n'),
-            TELEGRAM_PARSE_MODE,
-            buildApprovalKeyboard(row.id, reviewLinks(env.APP_BASE_URL, row.id)),
-          )
-          .catch((notifyError: unknown) => {
-            logger.warn('scheduled.notify_failed', { error: describeError(notifyError) });
-          });
+        const text = [
+          `⚠️ Scheduled publishing failed ${attempts} times: ${escapeHtml(error.slice(0, 300))}`,
+          'Back in review — approve or schedule it again.',
+          formatReviewControlText(
+            sourceLabelOfPost(row.externalId, row.xAuthorUsername),
+            row.xPostUrl,
+            channel ? channelLabelFor(channel, reviewerWorkspaces.length) : null,
+            await loadRadarNote(db, row.id).catch(() => null),
+          ),
+        ].join('\n');
+        const keyboard = buildApprovalKeyboard(row.id, reviewLinks(env.APP_BASE_URL, row.id));
+        for (const copy of copies) {
+          await client
+            .editMessageText(copy.chatId, copy.controlMessageId, text, TELEGRAM_PARSE_MODE, keyboard)
+            .catch((notifyError: unknown) => {
+              logger.warn('scheduled.notify_failed', { chatId: copy.chatId, error: describeError(notifyError) });
+            });
+        }
       }
     };
 
@@ -160,14 +159,14 @@ export async function publishDueScheduledPosts(input: {
         telegramMessageIds: result.messages.map((message) => message.messageId),
       });
 
-      await settleReviewMessage(
+      await settleAllReviewMessages(
         client,
-        row.adminChatId,
-        row.adminMessageId,
+        await reviewCopiesOf(db, row),
         [
           `✅ Published as scheduled, ${escapeHtml(formatScheduleTime(row.scheduledFor ?? now, row.scheduledTimezone))}`,
           escapeHtml(row.xPostUrl),
         ].join('\n'),
+        logger,
       );
     } catch (error) {
       await fail(describeError(error));

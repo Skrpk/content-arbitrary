@@ -17,12 +17,16 @@ import {
   formatReviewControlText,
   parseCallbackData,
   reviewLinks,
-  settleReviewMessage,
 } from '@/lib/sync/approval';
 import { publishDecidedPost } from '@/lib/sync/publish';
 import { reviewQueueButton } from '@/lib/review/queue';
 import { YouTubeClient } from '@/lib/youtube/client';
 import { reviewLinkFor } from '@/lib/accounts/users';
+import {
+  reviewCopiesOf,
+  settleAllReviewMessages,
+  type ReviewCopy,
+} from '@/lib/review/copies';
 import type { InlineKeyboardButton, InlineKeyboardMarkup } from '@/lib/telegram/send-media';
 import {
   buildSettingsUrl,
@@ -246,8 +250,6 @@ export async function POST(request: Request): Promise<Response> {
       return ok();
     }
 
-    const chatId = post.adminChatId ?? String(query.message?.chat.id ?? '');
-    const messageId = post.adminMessageId ?? query.message?.message_id;
     const baseUrl = env.APP_BASE_URL;
     const keyboard =
       parsed.action === 'reject'
@@ -256,16 +258,23 @@ export async function POST(request: Request): Promise<Response> {
           })
         : buildApprovalKeyboard(post.id, reviewLinks(baseUrl, post.id));
 
-    try {
-      if (chatId && messageId) await client.editMessageReplyMarkup(chatId, messageId, keyboard);
-    } catch (error) {
-      const message = describeError(error);
-      // A repeated tap re-sends the keyboard already showing, which Telegram
-      // refuses as "not modified" — the screen is already right.
-      if (!/message is not modified/i.test(message)) {
-        postLogger.warn('webhook.keyboard_swap_failed', { error: message });
-        await client.answerCallbackQuery(query.id, 'Could not update the buttons — try again.').catch(() => {});
-        return ok();
+    // Every reviewer's copy swaps its buttons, but only the one pressed can
+    // fail the tap: another reviewer's chat being unreachable is not this one's.
+    const pressed = query.message ? { chatId: String(query.message.chat.id), messageId: query.message.message_id } : null;
+    for (const copy of await reviewCopiesFor(db, post, query)) {
+      try {
+        await client.editMessageReplyMarkup(copy.chatId, copy.controlMessageId, keyboard);
+      } catch (error) {
+        const message = describeError(error);
+        // A repeated tap re-sends the keyboard already showing, which Telegram
+        // refuses as "not modified" — the screen is already right.
+        if (/message is not modified/i.test(message)) continue;
+        postLogger.warn('webhook.keyboard_swap_failed', { chatId: copy.chatId, error: message });
+        const wasPressed = pressed?.chatId === copy.chatId && pressed.messageId === copy.controlMessageId;
+        if (wasPressed) {
+          await client.answerCallbackQuery(query.id, 'Could not update the buttons — try again.').catch(() => {});
+          return ok();
+        }
       }
     }
 
@@ -292,11 +301,11 @@ export async function POST(request: Request): Promise<Response> {
 
     postLogger.info('webhook.rejected', { externalId: result.row.externalId, reason: parsed.reason });
     await client.answerCallbackQuery(query.id, 'Rejected — not published.').catch(() => {});
-    await settleReviewMessage(
+    await settleAllReviewMessages(
       client,
-      result.row.adminChatId ?? String(query.message?.chat.id ?? ''),
-      result.row.adminMessageId ?? query.message?.message_id,
+      await reviewCopiesFor(db, result.row, query),
       formatRejectionNotice({ reason: parsed.reason, xPostUrl: result.row.xPostUrl }),
+      postLogger,
     );
     return ok();
   }
@@ -314,24 +323,18 @@ export async function POST(request: Request): Promise<Response> {
     postLogger.info('webhook.unscheduled', { externalId: result.row.externalId });
     await client.answerCallbackQuery(query.id, 'Unscheduled — back in review.').catch(() => {});
 
-    const chatId = result.row.adminChatId ?? String(query.message?.chat.id ?? '');
-    const messageId = result.row.adminMessageId ?? query.message?.message_id;
-    if (chatId && messageId) {
+    const controlText = formatReviewControlText(
+      sourceLabelOfPost(result.row.externalId, result.row.xAuthorUsername),
+      result.row.xPostUrl,
+      channelLabelFor(workspace, reviewerWorkspaces.length),
+      await loadRadarNote(db, result.row.id).catch(() => null),
+    );
+    const controlKeyboard = buildApprovalKeyboard(result.row.id, reviewLinks(env.APP_BASE_URL, result.row.id));
+    for (const copy of await reviewCopiesFor(db, result.row, query)) {
       await client
-        .editMessageText(
-          chatId,
-          messageId,
-          formatReviewControlText(
-            sourceLabelOfPost(result.row.externalId, result.row.xAuthorUsername),
-            result.row.xPostUrl,
-            channelLabelFor(workspace, reviewerWorkspaces.length),
-            await loadRadarNote(db, result.row.id).catch(() => null),
-          ),
-          TELEGRAM_PARSE_MODE,
-          buildApprovalKeyboard(result.row.id, reviewLinks(env.APP_BASE_URL, result.row.id)),
-        )
+        .editMessageText(copy.chatId, copy.controlMessageId, controlText, TELEGRAM_PARSE_MODE, controlKeyboard)
         .catch((error: unknown) => {
-          postLogger.warn('webhook.keyboard_swap_failed', { error: describeError(error) });
+          postLogger.warn('webhook.keyboard_swap_failed', { chatId: copy.chatId, error: describeError(error) });
         });
     }
     return ok();
@@ -357,9 +360,6 @@ export async function POST(request: Request): Promise<Response> {
     await client.answerCallbackQuery(query.id, alreadySettledNotice(claim.currentStatus)).catch(() => {});
     return ok();
   }
-
-  const adminChatId = claim.row.adminChatId ?? String(query.message?.chat.id ?? '');
-  const adminMessageId = claim.row.adminMessageId ?? query.message?.message_id;
 
   /** Return the post to where it was claimed from, so it can be tried again. */
   const putBack = (errorMessage: string) =>
@@ -403,11 +403,11 @@ export async function POST(request: Request): Promise<Response> {
     });
 
     await client.answerCallbackQuery(query.id, 'Published to the channel.').catch(() => {});
-    await settleReviewMessage(
+    await settleAllReviewMessages(
       client,
-      adminChatId,
-      adminMessageId,
+      await reviewCopiesFor(db, claim.row, query),
       `✅ Published\n${escapeHtml(claim.row.xPostUrl)}`,
+      postLogger,
     );
   } catch (error) {
     // Put it back so the reviewer can simply press the button again.
@@ -418,6 +418,21 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   return ok();
+}
+
+/**
+ * The review messages a button press acts on: every reviewer's copy of the
+ * post. A post with none recorded — the one from before copies existed — has
+ * only the message the button was pressed on.
+ */
+async function reviewCopiesFor(
+  db: Database,
+  post: Parameters<typeof reviewCopiesOf>[1],
+  query: { message?: { chat: { id: number }; message_id: number } },
+): Promise<ReviewCopy[]> {
+  const copies = await reviewCopiesOf(db, post);
+  if (copies.length > 0 || !query.message) return copies;
+  return [{ chatId: String(query.message.chat.id), controlMessageId: query.message.message_id }];
 }
 
 /**

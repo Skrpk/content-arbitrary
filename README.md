@@ -984,6 +984,28 @@ VALUES ('second channel', '-1001234567890', '123456789');
   Note that a channel id is negative and begins `-100`, while a user id is positive.
 - `name` — shown to a reviewer of more than one channel, so give it the channel's name.
 
+#### More reviewers for one channel
+
+A channel can have any number of reviewers. The one named by `telegram_admin_chat_id` is the
+owner; anyone added with the script is a reviewer, and each one may do everything the owner may:
+press the buttons, run the bot commands, and use the review website.
+
+```bash
+npm run reviewer -- list --workspace 2
+npm run reviewer -- add --workspace 2 --telegram-id 123456789 --name "Olena"
+npm run reviewer -- remove --workspace 2 --telegram-id 123456789
+```
+
+Every review goes to every reviewer's private chat: each gets its own copy, with the same buttons.
+A decision — approve, reject, schedule, an edited caption — applies to all copies at once, so
+nobody can act on a post that another reviewer has already settled. A reviewer who has never
+sent the bot `/start` gets no copy, and that does not stop the others. A digest of the review
+queue goes to each reviewer the same way.
+
+To take someone off a channel, remove their membership with the script. That is all it takes for
+a reviewer who was added. The owner has both: `telegram_admin_chat_id` and a membership, so to
+take the owner off, change the column and remove the membership.
+
 #### One reviewer for several channels
 
 The same person may be the reviewer of any number of workspaces — use the same
@@ -1150,7 +1172,7 @@ People, not Telegram accounts, are what the database knows:
 The migration makes every reviewer named by a workspace a user and a member, so nobody loses
 access. A workspace's reviewer is also made a member on their next sign-in, so setting
 `telegram_admin_chat_id` keeps granting access as it always did. Taking access away is both:
-change `telegram_admin_chat_id`, and delete the `workspace_members` row.
+change `telegram_admin_chat_id`, and delete the `workspace_members` row. For any other reviewer, deleting the membership is enough: `npm run reviewer -- remove`.
 
 ### Setting it up
 
