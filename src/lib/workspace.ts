@@ -1,8 +1,15 @@
-import { and, asc, eq, isNotNull, sql as rawSql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, or, sql as rawSql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import type { Env } from '@/lib/env';
 import type { Logger } from '@/lib/logger';
-import { DEFAULT_WORKSPACE_ID, processedPosts, workspaces, type Workspace } from '@/db/schema';
+import {
+  DEFAULT_WORKSPACE_ID,
+  processedPosts,
+  userIdentities,
+  workspaceMembers,
+  workspaces,
+  type Workspace,
+} from '@/db/schema';
 import { normaliseEditorialProfile } from '@/lib/radar/editorial-profile';
 
 /**
@@ -26,6 +33,12 @@ export interface TelegramDestination {
   chatId: string;
   /** The reviewer's private chat; null when this tenant has no reviewer. */
   adminChatId: string | null;
+  /**
+   * The private chats of the tenant's other reviewers — its members beyond
+   * `adminChatId`. Each gets its own copy of every review. Set by the caller,
+   * which has the database; destinationFor does not read it.
+   */
+  extraReviewerChatIds?: string[];
   disableNotification: boolean;
   /**
    * The channel's name, shown on its review messages — set only when the
@@ -123,24 +136,36 @@ export async function listAllWorkspaces(db: Database): Promise<Workspace[]> {
 /**
  * Every tenant a Telegram user reviews for, in a stable order.
  *
- * This is the whole authorisation rule: a user is an admin exactly when some
- * workspace names them as its reviewer, and only for those workspaces. One
- * person may review several channels; nobody else can manage sources or
- * publish, however a message reached them.
+ * This is the whole authorisation rule: a user is an admin of a workspace when
+ * it names them as its reviewer (`telegram_admin_chat_id`), or when they are one
+ * of its members (`workspace_members`) — added by the operator, or made one on
+ * their first sign-in. Nobody else can manage sources or publish, however a
+ * message reached them. Taking someone off a workspace means deleting their
+ * membership, and changing the column when they were its named reviewer.
  */
 export async function findWorkspacesByAdminChatId(
   db: Database,
   adminChatId: number | string | undefined | null,
 ): Promise<Workspace[]> {
   if (adminChatId === undefined || adminChatId === null || adminChatId === '') return [];
+  const subject = String(adminChatId);
+
+  const memberOf = db
+    .select({ workspaceId: workspaceMembers.workspaceId })
+    .from(workspaceMembers)
+    .innerJoin(
+      userIdentities,
+      and(eq(userIdentities.userId, workspaceMembers.userId), eq(userIdentities.provider, 'telegram')),
+    )
+    .where(eq(userIdentities.subject, subject));
 
   return db
     .select()
     .from(workspaces)
     .where(
       and(
-        eq(workspaces.telegramAdminChatId, String(adminChatId)),
         isNotNull(workspaces.telegramChatId),
+        or(eq(workspaces.telegramAdminChatId, subject), inArray(workspaces.id, memberOf)),
       ),
     )
     .orderBy(asc(workspaces.id));

@@ -11,7 +11,7 @@ import { publishedInStories, storiesOf } from '@/lib/review/same-story';
 import { platformOfPostId, sourceLabelOfPost } from '@/lib/sources/display';
 import type { TelegramClient } from '@/lib/telegram/client';
 import type { InlineKeyboardButton } from '@/lib/telegram/send-media';
-import { reviewLinkFor } from '@/lib/accounts/users';
+import { reviewLinkFor, telegramIdsOfMembers } from '@/lib/accounts/users';
 import { TELEGRAM_PARSE_MODE } from '@/lib/telegram/format-caption';
 import { captionToPlainText, parsePostFooter, stripFooter } from '@/lib/telegram/post-footer';
 import { reviewText } from '@/lib/review/text';
@@ -361,45 +361,60 @@ export async function sendReviewDigest(input: {
 
     logger.info('review_digest.started', { workspaceId: workspace.id, from: since, to: newestQueuedAt });
     const digest = await loadReviewDigest(db, { workspace, since });
-    const target = await reviewLinkFor(db, adminChatId);
-    const link = (extra: { postId?: number; text?: string }) =>
-      reviewQueueButton({
-        appBaseUrl: input.env.APP_BASE_URL,
-        webAppUrl: input.env.WEB_APP_URL,
-        target,
-        workspaceId: workspace.id,
-        ...extra,
-      })!;
-    const storyButtons = digest.top.map((story, index) => link({ postId: story.postId, text: String(index + 1) }));
+    const text = formatReviewDigest(digest, {
+      language: workspace.language,
+      channel: input.channelLabel,
+      since,
+      now,
+    });
 
-    const message = await client.call(
-      'sendMessage',
-      {
-        chat_id: adminChatId,
-        text: formatReviewDigest(digest, {
-          language: workspace.language,
-          channel: input.channelLabel,
-          since,
-          now,
-        }),
-        parse_mode: TELEGRAM_PARSE_MODE,
-        link_preview_options: { is_disabled: true },
-        reply_markup: {
-          inline_keyboard: [
-            ...(storyButtons.length > 0 ? [storyButtons] : []),
-            [link({ text: digestButtonText(workspace.language) })],
-          ],
-        },
-      },
-      z.object({ message_id: z.number() }),
-    );
+    // Every reviewer of the channel gets the digest, its named reviewer first.
+    // Only the named reviewer's copy is kept, as the digest's message.
+    const reviewers = [...new Set([adminChatId, ...(await telegramIdsOfMembers(db, workspace.id))])];
+    let sentMessageId: number | null = null;
+    for (const chatId of reviewers) {
+      const target = await reviewLinkFor(db, chatId);
+      const link = (extra: { postId?: number; text?: string }) =>
+        reviewQueueButton({
+          appBaseUrl: input.env.APP_BASE_URL,
+          webAppUrl: input.env.WEB_APP_URL,
+          target,
+          workspaceId: workspace.id,
+          ...extra,
+        })!;
+      const storyButtons = digest.top.map((story, index) => link({ postId: story.postId, text: String(index + 1) }));
+
+      try {
+        const message = await client.call(
+          'sendMessage',
+          {
+            chat_id: chatId,
+            text,
+            parse_mode: TELEGRAM_PARSE_MODE,
+            link_preview_options: { is_disabled: true },
+            reply_markup: {
+              inline_keyboard: [
+                ...(storyButtons.length > 0 ? [storyButtons] : []),
+                [link({ text: digestButtonText(workspace.language) })],
+              ],
+            },
+          },
+          z.object({ message_id: z.number() }),
+        );
+        if (chatId === adminChatId) sentMessageId = message.message_id;
+      } catch (error) {
+        if (chatId === adminChatId) throw error;
+        // Another reviewer who cannot be reached must not hold up the digest.
+        logger.warn('review_digest.copy_failed', { workspaceId: workspace.id, chatId, error: describeError(error) });
+      }
+    }
 
     await db
       .update(workspaces)
       .set({
         reviewDigestSentAt: now,
         reviewDigestCoveredUntil: newestQueuedAt,
-        reviewDigestMessageId: message.message_id,
+        reviewDigestMessageId: sentMessageId,
       })
       .where(eq(workspaces.id, workspace.id));
     await markDigested(

@@ -1,11 +1,13 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { eq } from 'drizzle-orm';
 import postgres from 'postgres';
 import * as schema from '@/db/schema';
-import { processedPosts, sources, syncState, telegramMessages } from '@/db/schema';
+import { processedPosts, reviewCopies, sources, syncState, telegramMessages, workspaceMembers } from '@/db/schema';
+import { addWorkspaceMember } from '@/lib/accounts/users';
+import { reviewCopiesOf, settleAllReviewMessages } from '@/lib/review/copies';
 import { syncPosts } from '@/lib/sync/sync-posts';
 import { XClient } from '@/lib/x/client';
 import { TelegramClient } from '@/lib/telegram/client';
@@ -898,5 +900,54 @@ describeIfDb('text-only posts', () => {
     expect(row.status).toBe('published');
     expect(row.telegramMethod).toBe('sendMessage');
     expect(row.caption).toContain('No pictures');
+  });
+});
+
+describeIfDb('reviewers of a channel', () => {
+  const OTHER_REVIEWER = '777003';
+
+  afterEach(async () => {
+    await db.delete(workspaceMembers).where(eq(workspaceMembers.workspaceId, DEFAULT_WORKSPACE_ID));
+  });
+
+  it('sends every other reviewer of the channel their own copy of the review', async () => {
+    await addWorkspaceMember(db, DEFAULT_WORKSPACE_ID, { id: OTHER_REVIEWER, name: 'Olena' });
+    const stack = makeStack();
+
+    const summary = await runSync(stack);
+    expect(summary.awaitingApproval).toBe(1);
+
+    const sendsTo = (chatId: string) => stack.sends.filter((send) => send.chatId === chatId).map((send) => send.method);
+    // The same review, in the same shape, in both private chats; the channel saw nothing.
+    expect(sendsTo(OTHER_REVIEWER)).toEqual(sendsTo(ADMIN_CHAT));
+    expect(sendsTo(OTHER_REVIEWER).length).toBeGreaterThan(0);
+    expect(stack.sends.some((send) => send.chatId === CHANNEL_CHAT)).toBe(false);
+
+    const row = (await db.select().from(processedPosts))[0]!;
+    const copies = await db.select().from(reviewCopies).where(eq(reviewCopies.processedPostId, row.id));
+    expect(copies.map((copy) => copy.chatId)).toEqual([OTHER_REVIEWER]);
+    expect(copies[0]?.controlMessageId).toBeGreaterThan(0);
+  });
+
+  it('settles every copy of a review at once', async () => {
+    await addWorkspaceMember(db, DEFAULT_WORKSPACE_ID, { id: OTHER_REVIEWER, name: 'Olena' });
+    const stack = makeStack();
+    await runSync(stack);
+
+    const row = (await db.select().from(processedPosts))[0]!;
+    stack.sends.length = 0;
+    await settleAllReviewMessages(stack.client, await reviewCopiesOf(db, row), 'Done', createTestLogger());
+
+    const settled = stack.sends.filter((send) => send.method === 'editMessageText').map((send) => send.chatId);
+    expect(settled.sort()).toEqual([ADMIN_CHAT, OTHER_REVIEWER].sort());
+  });
+
+  it('sends no copy to a reviewer who was never added', async () => {
+    const stack = makeStack();
+    await runSync(stack);
+
+    const row = (await db.select().from(processedPosts))[0]!;
+    expect(await reviewCopiesOf(db, row)).toHaveLength(1);
+    expect(stack.sends.some((send) => send.chatId === OTHER_REVIEWER)).toBe(false);
   });
 });

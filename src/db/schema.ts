@@ -633,6 +633,29 @@ export const telegramMessages = pgTable(
 );
 
 /**
+ * A review message in another reviewer's private chat. The post's own copy is
+ * `processed_posts.admin_chat_id` / `admin_message_id`; every other reviewer of
+ * its channel gets a row here, with their own media preview, overflow text and
+ * Approve/Reject buttons. A decision settles all of them.
+ */
+export const reviewCopies = pgTable(
+  'review_copies',
+  {
+    processedPostId: integer('processed_post_id')
+      .notNull()
+      .references(() => processedPosts.id, { onDelete: 'cascade' }),
+    /** The reviewer's private chat — their Telegram user id. */
+    chatId: text('chat_id').notNull(),
+    /** The message carrying the buttons. */
+    controlMessageId: bigint('control_message_id', { mode: 'number' }).notNull(),
+    mediaMessageId: bigint('media_message_id', { mode: 'number' }),
+    overflowMessageId: bigint('overflow_message_id', { mode: 'number' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.processedPostId, table.chatId] })],
+);
+
+/**
  * Cursor + health for each source. Keeping `lastSeenPostId` lets us pass
  * `since_id` to X, which both reduces our bill (X bills per post read) and
  * keeps us far away from the rate limit.

@@ -36,6 +36,7 @@ import { createSupadataProvider, type VideoTranscriptProvider } from '@/lib/yout
 import type { WebsiteFetchOptions } from '@/lib/website/http';
 import type { FetchChannelOptions } from '@/lib/telegram-channel/client';
 import { sendReviewDigest } from '@/lib/review/queue';
+import { telegramIdsOfMembers } from '@/lib/accounts/users';
 import { sweepUploads, uploadsAvailable, vercelBlobStore } from '@/lib/uploads/uploads';
 import {
   channelLabelFor,
@@ -257,6 +258,12 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
         skippedWorkspaces.push({ workspaceId: tenant.id, reason: resolved.reason });
         continue;
       }
+
+      // Every reviewer of the channel gets its own copy of each review.
+      const reviewers = await telegramIdsOfMembers(db, tenant.id);
+      resolved.destination.extraReviewerChatIds = reviewers.filter(
+        (id) => id !== tenant.telegramAdminChatId,
+      );
 
       resolved.destination.channelLabel = channelLabelFor(
         tenant,

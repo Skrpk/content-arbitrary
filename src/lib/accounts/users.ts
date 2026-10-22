@@ -7,6 +7,7 @@ import {
   type ReviewLinkTarget,
   type User,
   type Workspace,
+  type WorkspaceRole,
 } from '@/db/schema';
 import type { Database } from '@/lib/db';
 
@@ -149,4 +150,59 @@ async function createUserWithIdentity(
   const existing = await findUserByIdentity(db, provider, subject);
   if (!existing) throw new Error('identity vanished while signing in');
   return existing;
+}
+
+/**
+ * The Telegram user ids of everyone who may review a workspace — its own
+ * reviewer and every member added since. A reviewer's private chat is their
+ * user id, so these are where its review messages go, the reviewer named by
+ * `telegram_admin_chat_id` first.
+ */
+export async function telegramIdsOfMembers(db: Database, workspaceId: number): Promise<string[]> {
+  const rows = await db
+    .select({ subject: userIdentities.subject })
+    .from(workspaceMembers)
+    .innerJoin(
+      userIdentities,
+      and(eq(userIdentities.userId, workspaceMembers.userId), eq(userIdentities.provider, 'telegram')),
+    )
+    .where(eq(workspaceMembers.workspaceId, workspaceId))
+    .orderBy(asc(workspaceMembers.createdAt));
+  return rows.map((row) => row.subject);
+}
+
+/**
+ * Makes a person a member of a workspace: a user on first, with their Telegram
+ * identity, then the membership. Adding someone twice changes nothing.
+ */
+export async function addWorkspaceMember(
+  db: Database,
+  workspaceId: number,
+  account: TelegramAccount,
+  role: WorkspaceRole = 'reviewer',
+): Promise<User> {
+  const subject = String(account.id);
+  const user =
+    (await findUserByIdentity(db, 'telegram', subject)) ??
+    (await createUserWithIdentity(db, 'telegram', subject, account));
+  await db
+    .insert(workspaceMembers)
+    .values({ workspaceId, userId: user.id, role })
+    .onConflictDoNothing();
+  return user;
+}
+
+/**
+ * Takes a person's membership of a workspace away. Their user and sign-in stay:
+ * they may still review the other workspaces they belong to. Returns false when
+ * they were not a member.
+ */
+export async function removeWorkspaceMember(db: Database, workspaceId: number, telegramId: number | string): Promise<boolean> {
+  const user = await findUserByIdentity(db, 'telegram', String(telegramId));
+  if (!user) return false;
+  const removed = await db
+    .delete(workspaceMembers)
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, user.id)))
+    .returning({ userId: workspaceMembers.userId });
+  return removed.length > 0;
 }

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-7.35 -7.35 38.7 38.7" width="640" height="640">
+  <!-- The landing page's brand mark (src/marketing/chrome.tsx), full-bleed:
+       Telegram crops an avatar to a circle, so no rounded corners here. -->
+  <rect x="-7.35" y="-7.35" width="38.7" height="38.7" fill="#229ed9"/>
+  <g fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round">
+    <circle cx="5" cy="6" r="1" fill="#ffffff"/>
+    <path d="M9 6h10"/>
+    <path d="M9 12h7"/>
+    <path d="M9 18h4"/>
+    <circle cx="5" cy="12" r="1" fill="#ffffff"/>
+    <circle cx="5" cy="18" r="1" fill="#ffffff"/>
+  </g>
+</svg>

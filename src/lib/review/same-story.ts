@@ -4,7 +4,8 @@ import { processedPosts, storyPosts, type RejectionReason } from '@/db/schema';
 import { APPROVED_STATUSES } from '@/lib/radar/repository';
 import { sourceLabelOfPost } from '@/lib/sources/display';
 import type { Logger } from '@/lib/logger';
-import { formatRejectionNotice, settleReviewMessage } from '@/lib/sync/approval';
+import { formatRejectionNotice } from '@/lib/sync/approval';
+import { reviewCopiesOf, settleAllReviewMessages } from '@/lib/review/copies';
 import { rejectWithReason } from '@/lib/sync/repository';
 import type { TelegramClient } from '@/lib/telegram/client';
 
@@ -56,11 +57,11 @@ export async function rejectRestOfStory(input: {
     });
     if (!result.rejected || !result.row) continue;
     rejected.push(processedPostId);
-    await settleReviewMessage(
+    await settleAllReviewMessages(
       input.client,
-      result.row.adminChatId,
-      result.row.adminMessageId,
+      await reviewCopiesOf(input.db, result.row),
       formatRejectionNotice({ reason: input.reason, note: input.note ?? '', xPostUrl: result.row.xPostUrl }),
+      input.logger,
     );
   }
   input.logger.info('review.same_story_rejected', {

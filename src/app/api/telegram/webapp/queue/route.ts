@@ -10,8 +10,8 @@ import {
   formatRejectionNotice,
   REJECTION_NOTE_MAX_LENGTH,
   REJECTION_REASON_LABELS,
-  settleReviewMessage,
 } from '@/lib/sync/approval';
+import { reviewCopiesOf, settleAllReviewMessages } from '@/lib/review/copies';
 import { publishDecidedPost } from '@/lib/sync/publish';
 import { claimForDecision, rejectWithReason, releaseToApproval } from '@/lib/sync/repository';
 import { destinationFor } from '@/lib/workspace';
@@ -124,11 +124,11 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     logger.info('webapp.queue_rejected', { reason: body.reason, noteLength: note.length });
-    await settleReviewMessage(
+    await settleAllReviewMessages(
       client,
-      result.row.adminChatId,
-      result.row.adminMessageId,
+      await reviewCopiesOf(auth.db, result.row),
       formatRejectionNotice({ reason: body.reason, note, xPostUrl: result.row.xPostUrl }),
+      logger,
     );
     // The story turned down: the rest of its card for the same reason.
     const alsoRejected = await rejectRestOfStory({
@@ -188,7 +188,12 @@ export async function POST(request: Request): Promise<Response> {
     return json({ error: `Publishing failed: ${message.slice(0, 300)}` }, 502);
   }
 
-  await settleReviewMessage(client, row.adminChatId, row.adminMessageId, `✅ Published\n${escapeHtml(row.xPostUrl)}`);
+  await settleAllReviewMessages(
+    client,
+    await reviewCopiesOf(auth.db, row),
+    `✅ Published\n${escapeHtml(row.xPostUrl)}`,
+    logger,
+  );
   // The story is out: the rest of its card is already covered.
   const alsoRejected = await rejectRestOfStory({
     db: auth.db,

@@ -27,6 +27,7 @@ import { radarSourceMark } from '@/lib/sources/display';
 import { placeInStory } from '@/lib/stories/cluster';
 import { translateForReview, type Translator } from '@/lib/translation/translate';
 import type { TelegramDestination } from '@/lib/workspace';
+import { recordReviewCopies } from '@/lib/review/copies';
 import type { NormalizedPost, SourceSyncSummary } from '@/types';
 import type { ImageUnderstanding } from '@/lib/media/understanding';
 
@@ -181,6 +182,7 @@ export async function processCandidate(
         adminMessageId: approval.queued ? null : approval.adminMessageId,
         reviewMedia: approval.queued ? queuedReviewMediaOf(post) : reviewMediaOf(post, approval.payload.items),
       });
+      if (!approval.queued) await recordReviewCopies(db, row.id, approval.copies);
       summary.awaitingApproval += 1;
       return { kind: 'awaiting-approval', settled: true };
     }

@@ -7,8 +7,8 @@ import { authorizeReviewer, json, reviewerWorkspaceForPost } from '@/lib/telegra
 import {
   formatRejectionNotice,
   REJECTION_NOTE_MAX_LENGTH,
-  settleReviewMessage,
 } from '@/lib/sync/approval';
+import { reviewCopiesOf, settleAllReviewMessages } from '@/lib/review/copies';
 import { findPostAwaitingReview, rejectWithReason } from '@/lib/sync/repository';
 
 /**
@@ -112,11 +112,11 @@ export async function POST(request: Request): Promise<Response> {
   });
 
   // The decision is recorded; replacing the buttons in the chat is best effort.
-  await settleReviewMessage(
+  await settleAllReviewMessages(
     new TelegramClient({ logger: auth.logger }),
-    result.row.adminChatId,
-    result.row.adminMessageId,
+    await reviewCopiesOf(auth.db, result.row),
     formatRejectionNotice({ reason: 'other', note, xPostUrl: result.row.xPostUrl }),
+    auth.logger,
   );
 
   return json({ ok: true });

@@ -9,6 +9,7 @@ import { TelegramClient } from '@/lib/telegram/client';
 import { TELEGRAM_PARSE_MODE } from '@/lib/telegram/format-caption';
 import { authorizeReviewer, json, reviewerWorkspaceForPost } from '@/lib/telegram/webapp-request';
 import { channelLabelFor } from '@/lib/workspace';
+import { reviewCopiesOf } from '@/lib/review/copies';
 
 /**
  * The Scheduled page's API: every post waiting for its time in the reviewer's
@@ -74,23 +75,19 @@ export async function POST(request: Request): Promise<Response> {
   const row = result.row;
   logger.info('webapp.unscheduled', { externalId: row.externalId });
 
-  // Its message in the chat, if it has one, gets its review buttons back — best effort.
-  if (row.adminChatId && row.adminMessageId) {
+  // Its messages in the chats, if it has any, get their review buttons back — best effort.
+  const controlText = formatReviewControlText(
+    sourceLabelOfPost(row.externalId, row.xAuthorUsername),
+    row.xPostUrl,
+    channelLabelFor(workspace, auth.workspaces.length),
+    await loadRadarNote(auth.db, row.id).catch(() => null),
+  );
+  const keyboard = buildApprovalKeyboard(row.id, reviewLinks(auth.env.APP_BASE_URL, row.id));
+  for (const copy of await reviewCopiesOf(auth.db, row)) {
     await new TelegramClient({ logger })
-      .editMessageText(
-        row.adminChatId,
-        row.adminMessageId,
-        formatReviewControlText(
-          sourceLabelOfPost(row.externalId, row.xAuthorUsername),
-          row.xPostUrl,
-          channelLabelFor(workspace, auth.workspaces.length),
-          await loadRadarNote(auth.db, row.id).catch(() => null),
-        ),
-        TELEGRAM_PARSE_MODE,
-        buildApprovalKeyboard(row.id, reviewLinks(auth.env.APP_BASE_URL, row.id)),
-      )
+      .editMessageText(copy.chatId, copy.controlMessageId, controlText, TELEGRAM_PARSE_MODE, keyboard)
       .catch((error: unknown) => {
-        logger.warn('webapp.unschedule_message_update_failed', { error: describeError(error) });
+        logger.warn('webapp.unschedule_message_update_failed', { chatId: copy.chatId, error: describeError(error) });
       });
   }
 
