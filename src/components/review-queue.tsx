@@ -268,10 +268,14 @@ function ScoreBadges({ score, small = false }: { score: VersionScore & { compare
   );
 }
 
-/** Green for a likely approval, amber for a maybe, grey for a likely no. */
+/**
+ * Green for a likely approval, amber for a maybe, grey for a likely no. Set for
+ * v5's scale, which runs lower than v3's: live, the editor took 67% of what v5
+ * scored 75–89, 28% of 50–74, 10% of 25–49 and 4% below that.
+ */
 function scoreColour(score: number): string {
-  if (score >= 70) return '#2e9e4f';
-  if (score >= 45) return '#d08a00';
+  if (score >= 60) return '#2e9e4f';
+  if (score >= 30) return '#d08a00';
   return '#8a8f94';
 }
 

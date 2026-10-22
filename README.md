@@ -1538,13 +1538,13 @@ are any good is measured against the decisions the editor makes.
 
 **On the review message.** Under the link, the message with the buttons shows the score, the
 predicted decision, Radar's one-line reason, and a ♻️ flag when it thinks the channel may have
-covered this already — e.g. `📡 Radar v3: 82/100 · likely approve`. It is the live score from
-`radar-v3-retrieval-approved` on the text alone when there is one (the best match so far),
-falling back to the other versions; a post Radar could not score shows no note. Under it comes
-the live score of `radar-v5-similar-rejected`, the version being compared with it, with its own
-reason — `📡 Radar v5: 41/100 · likely reject` — so the two can be read side by side; the review
-queue shows both as badges named `v3` and `v5`. The queue's order and the review notification
-still follow the first. A hint only:
+covered this already — e.g. `📡 Radar v5: 62/100 · likely approve`. It is the live score from
+`radar-v5-similar-rejected` on the text alone when there is one (the best match so far),
+falling back to `radar-v2-history-retrieval` and then `radar-v1`; a post Radar could not score
+shows no note. The review queue shows it as a badge named `v5`, green from 60 and amber from 30,
+and orders by it; the review notification's recommendations follow it too. `radar-v3` is still
+scored live, so the report can go on comparing the two, but it is not shown and nothing is
+ordered by it: its scale runs higher, and a post scored by it alone would jump the queue. A hint only:
 every post still comes to review. Seeing it can sway a decision, so decisions made since it was
 shown (8 October 2026) are a little less independent a test of Radar than those before.
 
@@ -1892,8 +1892,13 @@ galaxy photos scored high, and missing approvals with a bare caption too. On the
 after them, though, it ordered each day far better: 10 of 24 approvals in each day's top against
 `radar-v3`'s 4 (chance: 3.5), AUC 0.74 against 0.69 — over all 418, a daily hit rate of 41%
 against 32%. The likely reason is that later posts have more rejections behind them to be found.
-Three days and 24 approvals are not proof, so it now runs live beside `radar-v3`. Its scores sit
+Three days and 24 approvals are not proof, so it ran live beside `radar-v3`. Its scores sit
 lower (27 approvals under 50 against 15), so read its threshold lower too.
+
+Live, on the same 332 posts over 11 days, it did better still: 19 of 33 approvals in each day's
+top against `radar-v3`'s 8 (chance: 17%), AUC 0.79 against 0.68. So since 22 October 2026 the
+review queue, its colours and the digest's recommendations follow `radar-v5`, and `radar-v3` is
+scored live but no longer shown.
 
 ### Nearest decisions
 

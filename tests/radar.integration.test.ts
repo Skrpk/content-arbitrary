@@ -892,48 +892,52 @@ describeIfDb('the score on the review message', () => {
     }
   }
 
-  it('is the live score from the most trusted prompt, on the text alone', async () => {
+  it('is the live score from the most trusted prompt, v5, on the text alone', async () => {
     const post = await decidedPost({ decision: 'pending' });
     await scored(post.id, [
       { version: RADAR_PROMPT_BASELINE, score: 20 },
-      { version: RADAR_PROMPT_APPROVED, score: 70 },
-      { version: RADAR_PROMPT_APPROVED, variant: 'text_image', score: 40 },
+      { version: RADAR_PROMPT_APPROVED, score: 90 },
+      { version: RADAR_PROMPT_REJECTED, score: 65 },
+      { version: RADAR_PROMPT_REJECTED, variant: 'text_image', score: 40 },
       { version: RADAR_PROMPT_RETRIEVAL, score: 60 },
-      { version: RADAR_PROMPT_APPROVED, mode: 'backfill', variant: 'text_image', score: 99 },
+      { version: RADAR_PROMPT_REJECTED, mode: 'backfill', variant: 'text_image', score: 99 },
     ]);
 
     expect(await findReviewScore(db, post.id)).toMatchObject({
-      version: 'v3',
-      score: 70,
+      version: 'v5',
+      score: 65,
       predictedDecision: 'approve',
       compared: [],
     });
   });
 
-  it('comes with the compared prompt’s live score beside it, each named', async () => {
+  it('never shows v3, nor orders by it, though it is still scored', async () => {
+    // v3's scale runs higher than v5's: shown, it would put its posts first.
     const post = await decidedPost({ decision: 'pending' });
     await scored(post.id, [
       { version: RADAR_PROMPT_APPROVED, score: 70 },
       { version: RADAR_PROMPT_REJECTED, score: 41 },
-      { version: RADAR_PROMPT_REJECTED, variant: 'text_image', score: 90 },
       { version: RADAR_PROMPT_NEAREST, score: 10 },
     ]);
     expect(await findReviewScore(db, post.id)).toMatchObject({
-      version: 'v3',
-      score: 70,
-      compared: [{ version: 'v5', score: 41, predictedDecision: 'reject', reason: `scored by ${RADAR_PROMPT_REJECTED}` }],
+      version: 'v5',
+      score: 41,
+      predictedDecision: 'reject',
+      reason: `scored by ${RADAR_PROMPT_REJECTED}`,
+      compared: [],
     });
 
-    // Only the compared prompt scored it: that score, shown alone.
-    const onlyV5 = await decidedPost({ decision: 'pending' });
-    await scored(onlyV5.id, [{ version: RADAR_PROMPT_REJECTED, score: 55 }]);
-    expect(await findReviewScore(db, onlyV5.id)).toMatchObject({ version: 'v5', score: 55, compared: [] });
+    // Scored by v3 alone: no score to show at all.
+    const onlyV3 = await decidedPost({ decision: 'pending' });
+    await scored(onlyV3.id, [{ version: RADAR_PROMPT_APPROVED, score: 88 }]);
+    expect(await findReviewScore(db, onlyV3.id)).toBeNull();
   });
 
   it('falls back to what there is, and is nothing without a score that came back', async () => {
     const post = await decidedPost({ decision: 'pending' });
     await scored(post.id, [
-      { version: RADAR_PROMPT_APPROVED, score: 0, ok: false },
+      { version: RADAR_PROMPT_REJECTED, score: 0, ok: false },
+      { version: RADAR_PROMPT_APPROVED, score: 80 },
       { version: RADAR_PROMPT_BASELINE, variant: 'text_image', score: 35 },
     ]);
     expect(await findReviewScore(db, post.id)).toMatchObject({ version: 'v1', score: 35, predictedDecision: 'reject' });

@@ -263,7 +263,8 @@ async function score(processedPostId: number, value: number) {
     variant: 'text',
     status: 'ok',
     model: 'gpt-6-luna',
-    promptVersion: 'radar-v3-retrieval-approved',
+    // The version the queue is ordered by.
+    promptVersion: 'radar-v5-similar-rejected',
     score: value,
     predictedDecision: value >= 50 ? 'approve' : 'reject',
     reason: `scored ${value}`,
