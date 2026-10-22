@@ -58,7 +58,7 @@ const en: LandingContent = {
   meta: {
     title: 'An AI editorial desk for Telegram channels: your sources, ranked and rewritten in your voice',
     description:
-      'Zmistik follows the X accounts, RSS feeds and Telegram channels you choose, ranks every new ' +
+      'Zmistik follows the X accounts, RSS feeds, Telegram and YouTube channels and websites you choose, ranks every new ' +
       'post by how likely you are to publish it, groups the same story from several sources into ' +
       'one card and rewrites it in your channel’s language and voice. You approve, edit with an AI ' +
       'assistant, schedule or reject — in Telegram or in the browser.',
@@ -80,7 +80,7 @@ const en: LandingContent = {
     eyebrow: 'An AI editorial desk for Telegram channels',
     title: 'Everything your sources publish, sorted by what your channel would run',
     lead:
-      'Zmistik follows the X accounts, RSS feeds and Telegram channels you pick. Each new post is ' +
+      'Zmistik follows the X accounts, RSS feeds, Telegram and YouTube channels and websites you pick. Each new post is ' +
       'scored by how likely you are to publish it, the same story from several sources becomes one ' +
       'card, and the text is rewritten in your channel’s language and voice. You only make the ' +
       'call: approve, edit, schedule or reject.',
@@ -103,7 +103,7 @@ const en: LandingContent = {
       {
         icon: '📡',
         title: 'Best posts first',
-        text: 'Every post gets a score: how likely you are to publish it. It learns from what you approve, the reasons you give when you reject, and what your channel has published before. It sorts the queue; it never decides for you.',
+        text: 'Every post gets a score: how likely you are to publish it. It learns from what you approve, the reasons you give when you reject, and what your channel has published before. You can also describe in Settings what your channel publishes and what it turns down. It sorts the queue; it never decides for you.',
       },
       {
         icon: '📚',
@@ -127,8 +127,8 @@ const en: LandingContent = {
       },
       {
         icon: '🔌',
-        title: 'X, RSS and Telegram',
-        text: 'Follow X accounts, any site’s RSS or Atom feed and public Telegram channels — as many as you need for each channel, added in a click or with a command in the bot.',
+        title: 'Sources of every kind',
+        text: 'Follow X accounts, RSS and Atom feeds, public Telegram and YouTube channels, and websites through their sitemaps — as many as you need for each channel, added in a click or with a command in the bot.',
       },
       {
         icon: '🗂',
@@ -138,7 +138,7 @@ const en: LandingContent = {
       {
         icon: '🖼',
         title: 'Photos, videos, albums, no duplicates',
-        text: 'Albums arrive as albums and videos in the best quality Telegram accepts. Nothing is published twice, and every post links back to its source.',
+        text: 'Albums arrive as albums and videos in the best quality Telegram accepts. Add your own photo or video to any post in the editor. Nothing is published twice, and every post links back to its source.',
       },
     ],
   },
@@ -150,7 +150,7 @@ const en: LandingContent = {
       { title: 'Add the bot to your channel', text: 'Make the bot an admin of your Telegram channel with the right to post.' },
       {
         title: 'Pick sources, share your channel',
-        text: 'Add X accounts, RSS feeds and Telegram channels on the website or in the bot. Send us your channel’s export from Telegram Desktop, so ranking and rewriting learn from it.',
+        text: 'Add X accounts, RSS feeds, Telegram and YouTube channels, and websites on the website or in the bot. Send us your channel’s export from Telegram Desktop, so ranking and rewriting learn from it.',
       },
       {
         title: 'Review and publish',
@@ -186,7 +186,7 @@ const en: LandingContent = {
       {
         question: 'How does it know what my channel would publish?',
         answer:
-          'From you: the posts you approve, the ones you reject and the reasons you pick, and your channel’s past posts if you share its history. The more you review, the better it sorts. We measure it against your own decisions.',
+          'From you: the posts you approve, the ones you reject and the reasons you pick, and your channel’s past posts if you share its history. You can also write down in Settings what your channel publishes and what it turns down. The more you review, the better it sorts. We measure it against your own decisions.',
       },
       {
         question: 'What happens when several sources post the same news?',
@@ -206,7 +206,7 @@ const en: LandingContent = {
       {
         question: 'Which sources can I follow?',
         answer:
-          'Public X accounts, RSS and Atom feeds of any site, and public Telegram channels. From X, posts with photos and videos come in, and posts without media can be switched on per account; reposts and replies are skipped.',
+          'Public X accounts, RSS and Atom feeds of any site, public Telegram and YouTube channels, and websites through their sitemaps: a new article on the site arrives as a post that links to it. From X, posts with photos and videos come in, and posts without media can be switched on per account; reposts and replies are skipped.',
       },
       {
         question: 'Can posts go out without review?',
@@ -250,7 +250,7 @@ const uk: LandingContent = {
   meta: {
     title: 'AI-редакція для Telegram-каналу: ваші джерела, відсортовані й переписані вашим голосом',
     description:
-      'Zmistik стежить за обраними акаунтами в X, RSS-стрічками й Telegram-каналами, оцінює кожен ' +
+      'Zmistik стежить за обраними акаунтами в X, RSS-стрічками, Telegram- і YouTube-каналами та сайтами, оцінює кожен ' +
       'новий пост за тим, наскільки ймовірно ви його опублікуєте, збирає ту саму історію з кількох ' +
       'джерел в одну картку й переписує її мовою та голосом вашого каналу. Ви погоджуєте, редагуєте ' +
       'з AI-асистентом, плануєте чи відхиляєте — у Telegram або в браузері.',
@@ -272,7 +272,7 @@ const uk: LandingContent = {
     eyebrow: 'AI-редакція для Telegram-каналів',
     title: 'Усе з ваших джерел — у порядку, який обрав би ваш канал',
     lead:
-      'Zmistik стежить за обраними акаунтами в X, RSS-стрічками й Telegram-каналами. Кожен новий ' +
+      'Zmistik стежить за обраними акаунтами в X, RSS-стрічками, Telegram- і YouTube-каналами та сайтами. Кожен новий ' +
       'пост отримує оцінку — наскільки ймовірно ви його опублікуєте, — та сама історія з кількох ' +
       'джерел стає однією карткою, а текст переписується мовою й голосом вашого каналу. Вам ' +
       'лишається тільки рішення: погодити, відредагувати, запланувати чи відхилити.',
@@ -295,7 +295,7 @@ const uk: LandingContent = {
       {
         icon: '📡',
         title: 'Найкращі пости — першими',
-        text: 'Кожен пост отримує оцінку: наскільки ймовірно ви його опублікуєте. Вона вчиться на тому, що ви погоджуєте, на причинах відмов і на тому, що канал публікував раніше. Оцінка лише сортує чергу — рішень за вас не ухвалює.',
+        text: 'Кожен пост отримує оцінку: наскільки ймовірно ви його опублікуєте. Вона вчиться на тому, що ви погоджуєте, на причинах відмов і на тому, що канал публікував раніше. Свій канал ви також можете описати в налаштуваннях: що він публікує і що відсіває. Оцінка лише сортує чергу — рішень за вас не ухвалює.',
       },
       {
         icon: '📚',
@@ -319,8 +319,8 @@ const uk: LandingContent = {
       },
       {
         icon: '🔌',
-        title: 'X, RSS і Telegram',
-        text: 'Стежте за акаунтами X, RSS- чи Atom-стрічкою будь-якого сайту й публічними Telegram-каналами — скільки треба для кожного каналу. Додаються одним кліком або командою в боті.',
+        title: 'Джерела будь-якого типу',
+        text: 'Стежте за акаунтами X, RSS- і Atom-стрічками, публічними Telegram- і YouTube-каналами та сайтами через їхні sitemap — скільки треба для кожного каналу. Додаються одним кліком або командою в боті.',
       },
       {
         icon: '🗂',
@@ -330,7 +330,7 @@ const uk: LandingContent = {
       {
         icon: '🖼',
         title: 'Фото, відео, альбоми, без дублів',
-        text: 'Альбоми приходять альбомами, відео — у найкращій якості, яку приймає Telegram. Нічого не вийде двічі, а під кожним постом — посилання на джерело.',
+        text: 'Альбоми приходять альбомами, відео — у найкращій якості, яку приймає Telegram. Додати власне фото чи відео можна прямо в редакторі поста. Нічого не вийде двічі, а під кожним постом — посилання на джерело.',
       },
     ],
   },
@@ -342,7 +342,7 @@ const uk: LandingContent = {
       { title: 'Додайте бота в канал', text: 'Зробіть бота адміністратором свого Telegram-каналу з правом публікації.' },
       {
         title: 'Оберіть джерела й покажіть канал',
-        text: 'Додайте акаунти X, RSS-стрічки й Telegram-канали на сайті або в боті. Надішліть нам експорт каналу з Telegram Desktop — оцінка й переписування вчитимуться на ньому.',
+        text: 'Додайте акаунти X, RSS-стрічки, Telegram- і YouTube-канали та сайти на сайті або в боті. Надішліть нам експорт каналу з Telegram Desktop — оцінка й переписування вчитимуться на ньому.',
       },
       {
         title: 'Погоджуйте й публікуйте',
@@ -378,7 +378,7 @@ const uk: LandingContent = {
       {
         question: 'Звідки він знає, що опублікував би мій канал?',
         answer:
-          'Від вас: з постів, які ви погоджуєте, з тих, що відхиляєте, і з причин, які обираєте, — а також з минулих постів каналу, якщо ви поділитеся його історією. Що більше ви розглядаєте, то краще він сортує. Ми перевіряємо це на ваших власних рішеннях.',
+          'Від вас: з постів, які ви погоджуєте, з тих, що відхиляєте, і з причин, які обираєте, — а також з минулих постів каналу, якщо ви поділитеся його історією. Ще в налаштуваннях можна описати, що канал публікує і що відсіває, і змінити це будь-коли. Що більше ви розглядаєте, то краще він сортує. Ми перевіряємо це на ваших власних рішеннях.',
       },
       {
         question: 'Що, як кілька джерел пишуть ту саму новину?',
@@ -398,7 +398,7 @@ const uk: LandingContent = {
       {
         question: 'За якими джерелами можна стежити?',
         answer:
-          'За публічними акаунтами X, RSS- і Atom-стрічками будь-яких сайтів і публічними Telegram-каналами. З X приходять пости з фото й відео, а пости без медіа можна ввімкнути для кожного акаунта окремо; репости й відповіді пропускаються.',
+          'За публічними акаунтами X, RSS- і Atom-стрічками будь-яких сайтів, публічними Telegram- і YouTube-каналами та сайтами через їхні sitemap: нова стаття на сайті приходить постом із посиланням на неї. З X приходять пости з фото й відео, а пости без медіа можна ввімкнути для кожного акаунта окремо; репости й відповіді пропускаються.',
       },
       {
         question: 'Чи можуть пости виходити без розгляду?',
