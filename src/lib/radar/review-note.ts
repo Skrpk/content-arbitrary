@@ -1,12 +1,7 @@
 import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import { radarEvaluations } from '@/db/schema';
-import {
-  RADAR_PROMPT_APPROVED,
-  RADAR_PROMPT_BASELINE,
-  RADAR_PROMPT_REJECTED,
-  RADAR_PROMPT_RETRIEVAL,
-} from '@/lib/radar/prompt';
+import { RADAR_PROMPT_BASELINE, RADAR_PROMPT_REJECTED, RADAR_PROMPT_RETRIEVAL } from '@/lib/radar/prompt';
 import { findRepeat, formatRepeatNote, type Repeat } from '@/lib/stories/repeats';
 
 /**
@@ -15,16 +10,21 @@ import { findRepeat, formatRepeatNote, type Repeat } from '@/lib/stories/repeats
  * comes to review, whatever it scored, and nothing is decided for them.
  *
  * Of the live scores a post has, the one shown first — and the one the queue
- * is ordered by — is from the prompt version that has matched the editor
- * best so far (radar:report), on the text alone, which has separated better
- * live than text with the image. The versions being compared with it are
- * shown beside it, each named, so the reviewer can see them side by side.
+ * and the digest's recommendations follow — is from the prompt version that
+ * has matched the editor best so far (radar:report), on the text alone, which
+ * has separated better live than text with the image. That is v5: on the same
+ * live posts it put 19 of 33 approvals in each day's top, where v3 put 8.
+ *
+ * v3 is still scored live, so the two can go on being compared in the report,
+ * but it is neither shown nor sorted by: its scale is higher than v5's, and a
+ * post scored only by it would jump the queue. Versions to set beside the
+ * first, each under its own name, go in COMPARED_VERSIONS.
  */
 
-/** Most trusted first. */
-const SHOWN_VERSIONS = [RADAR_PROMPT_APPROVED, RADAR_PROMPT_RETRIEVAL, RADAR_PROMPT_BASELINE];
-/** Shown beside the first, each under its own name. */
-const COMPARED_VERSIONS = [RADAR_PROMPT_REJECTED];
+/** Most trusted first; the next one only where a post has none of those before it. */
+const SHOWN_VERSIONS = [RADAR_PROMPT_REJECTED, RADAR_PROMPT_RETRIEVAL, RADAR_PROMPT_BASELINE];
+/** Shown beside the first, each under its own name. None while v5 is the one shown. */
+const COMPARED_VERSIONS: string[] = [];
 
 /** Long enough for Radar's one-line why, short enough to stay under the buttons' URL. */
 const REASON_MAX = 200;
