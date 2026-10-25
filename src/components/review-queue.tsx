@@ -279,6 +279,19 @@ function scoreColour(score: number): string {
   return '#8a8f94';
 }
 
+/**
+ * TEMPORARY, for a demo: counts shown on these demo channels' buttons in place
+ * of their real (empty) queues. Every other channel shows its real count.
+ * TODO: remove with the demo workspaces.
+ */
+const DEMO_WAITING: Record<string, number> = {
+  freegame_ua: 12,
+  graphic_designerisss: 81,
+  piznavach: 45,
+  naukaua: 121,
+  alphacentaurichannel: 22,
+};
+
 export function ReviewQueue({
   surface,
   request,
@@ -505,7 +518,7 @@ export function ReviewQueue({
                   fontWeight: active ? 600 : 400,
                 }}
               >
-                📢 {candidate.name} · {candidate.waiting}
+                📢 {candidate.name} · {DEMO_WAITING[candidate.name] ?? candidate.waiting}
               </button>
             );
           })}
