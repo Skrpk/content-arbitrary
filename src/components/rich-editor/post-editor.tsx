@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { readJson, type PanelTools } from '@/components/panel-tools';
 import { ASSISTANT_CSS, AssistantPanel } from '@/components/rich-editor/assistant-panel';
 import { EditorMediaContext, PostMedia, type EditorMedia } from '@/components/rich-editor/post-media';
+import { richDocumentAsPlainPost, type RichDocument } from '@/lib/rich/document';
 import { theme } from '@/lib/telegram/webapp-client';
 
 /**
@@ -400,6 +401,16 @@ function LoadedEditor({
               </button>
             ) : null}
             <span style={{ marginLeft: 'auto', color: length > data.limits.text ? '#e53935' : theme.hint, fontSize: '0.8rem' }}>
+              <span
+                title={
+                  state?.ordinary
+                    ? 'Nothing here needs a rich message: it goes out as a usual post, its pictures with the text as their caption.'
+                    : 'Headings, lists, dividers, highlighting, or a picture placed in the text or captioned: it goes out as a Telegram rich message.'
+                }
+              >
+                {state?.ordinary ? 'Usual post' : 'Rich message'}
+              </span>
+              {' · '}
               {length.toLocaleString('en')} / {data.limits.text.toLocaleString('en')} characters
             </span>
           </div>
@@ -460,6 +471,11 @@ function toolbarState(editor: Editor) {
     canRedo: editor.can().redo(),
     mediaRefs: refs,
     length: editor.state.doc.textContent.length,
+    // How it will go out: an ordinary post when nothing needs a rich message (src/lib/sync/publish.ts).
+    ordinary:
+      refs.length <= 10 &&
+      editor.state.doc.textContent.length <= 4096 &&
+      richDocumentAsPlainPost(editor.getJSON() as RichDocument) !== null,
   };
 }
 

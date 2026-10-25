@@ -298,6 +298,75 @@ function escapeAttribute(value: string): string {
 }
 
 /**
+ * The document as an ordinary post — its pictures as a photo, a video or an
+ * album, its text as their caption (or a text message) — when nothing in it
+ * needs a rich message; null when something does.
+ *
+ * A rich message is for layout: headings, lists, dividers, highlighting, a
+ * picture between paragraphs or with a caption of its own. A post edited
+ * only for its words has none of that, and sent as a rich message it reads
+ * worse — Telegram sets its paragraphs flush, and copying it carries the
+ * rich formatting along. So such a post goes out the ordinary way, laid out
+ * as the editor shows it: a paragraph after an empty line, however many
+ * empty paragraphs were left between, and a line break as a line break.
+ * Bold, italic, underline, strikethrough, links and quotations are kept:
+ * Telegram's ordinary HTML has them all.
+ *
+ * `html` is the text alone, without the channel's footer; `text` is what a
+ * reader sees of it, for the length limits.
+ */
+export function richDocumentAsPlainPost(doc: RichDocument): { mediaRefs: string[]; html: string; text: string } | null {
+  const mediaRefs: string[] = [];
+  const paragraphs: { html: string; text: string }[] = [];
+
+  for (const block of doc.content) {
+    if (block.type === 'postMedia') {
+      // Pictures go above the text, or the post needs a rich message's layout.
+      if (paragraphs.length > 0 || block.attrs.caption?.trim()) return null;
+      mediaRefs.push(block.attrs.ref);
+      continue;
+    }
+    if (block.type === 'paragraph') {
+      if (isBlankParagraph(block)) continue;
+      if (hasHighlight(block.content)) return null;
+      paragraphs.push({ html: inlineHtml(block.content), text: inlineText(block.content) });
+      continue;
+    }
+    if (block.type === 'blockquote') {
+      const lines = plainQuoteLines(block.content);
+      if (!lines) return null;
+      paragraphs.push({
+        html: `<blockquote>${lines.map((line) => line.html).join('\n')}</blockquote>`,
+        text: lines.map((line) => line.text).join('\n'),
+      });
+      continue;
+    }
+    return null;
+  }
+
+  return {
+    mediaRefs,
+    html: paragraphs.map((paragraph) => paragraph.html.replace(/<br\/>/g, '\n')).join('\n\n'),
+    text: paragraphs.map((paragraph) => paragraph.text).join('\n\n'),
+  };
+}
+
+/** A quotation's lines, when it holds only paragraphs without highlighting. */
+function plainQuoteLines(blocks: RichBlock[]): { html: string; text: string }[] | null {
+  const lines: { html: string; text: string }[] = [];
+  for (const block of blocks) {
+    if (block.type !== 'paragraph' || hasHighlight(block.content)) return null;
+    if (isBlankParagraph(block)) continue;
+    lines.push({ html: inlineHtml(block.content).replace(/<br\/>/g, '\n'), text: inlineText(block.content) });
+  }
+  return lines.length > 0 ? lines : null;
+}
+
+function hasHighlight(content: RichInline[] | undefined): boolean {
+  return (content ?? []).some((node) => node.marks?.some((mark) => mark.type === 'highlight'));
+}
+
+/**
  * Where the editor starts for a post never opened in it: its pictures first,
  * as they are in the post now, then its text — a paragraph per blank-line
  * break, a line break per newline.

@@ -1087,6 +1087,16 @@ of media with a caption — so its text is no longer held to a caption's 1,024 c
 message takes up to 32,768 and 50 media. **Back to the plain post** drops the layout. A post
 never opened there is published exactly as before.
 
+Only when the layout needs one, though. A post edited just for its words — its pictures left
+above the text, without captions of their own, and nothing but paragraphs, **bold**, *italic*,
+underline, strikethrough, links and quotations — goes out as an ordinary post: the pictures as a
+photo, a video or an album, the text as their caption, paragraphs an empty line apart as the
+editor shows them (a rich message would set them flush, and copying it would carry the rich
+formatting along). Over a caption's 1,024 characters the pictures carry the start of the text
+and the whole of it follows, as for a long X post. Headings, lists, dividers, highlighting, a
+picture placed in the text or captioned, more than 10 pictures or more than 4,096 characters
+make it a rich message; the editor says which it will be beside the character count.
+
 The editor's document is stored as it is (`processed_posts.rich_doc`) and turned into Telegram's
 rich HTML on the server when the post is published: only the nodes and marks above are accepted,
 every bit of text is escaped, a link must be http(s), and a picture must be one of the post's

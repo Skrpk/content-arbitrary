@@ -7,8 +7,10 @@ import type { TelegramClient } from '@/lib/telegram/client';
 import type { TelegramDestination } from '@/lib/workspace';
 import { publishApprovedPayload, type PublishResult } from '@/lib/sync/approval';
 import { markPublished } from '@/lib/sync/repository';
-import { mediaRefsOf, richDocumentToHtml, type RichDocument } from '@/lib/rich/document';
-import type { PostFooter } from '@/lib/telegram/post-footer';
+import { mediaRefsOf, richDocumentAsPlainPost, richDocumentToHtml, type RichDocument } from '@/lib/rich/document';
+import { escapeHtml, truncateForDisplay } from '@/lib/telegram/format-caption';
+import { TELEGRAM_CAPTION_LIMIT, TELEGRAM_MEDIA_GROUP_MAX, TELEGRAM_MESSAGE_TEXT_LIMIT } from '@/lib/telegram/limits';
+import { footerLength, withFooter, type PostFooter } from '@/lib/telegram/post-footer';
 import { sendRichMessage, type MediaPayload } from '@/lib/telegram/send-media';
 import { refreshChannelMedia } from '@/lib/telegram-channel/refresh-media';
 import {
@@ -37,7 +39,9 @@ import {
  * (src/lib/telegram-channel/refresh-media.ts).
  *
  * A post written in the website's editor goes out as one rich message —
- * its own text and layout, with the channel's footer — instead.
+ * its own text and layout, with the channel's footer — instead; or, when
+ * its document uses nothing a rich message is needed for, as an ordinary
+ * post built from it (plainPostFrom).
  */
 export async function publishDecidedPost(input: {
   db: Database;
@@ -146,19 +150,30 @@ async function publishRichPost(
     media.push({ ref, payload: acquired! });
   }
 
-  const message = await sendRichMessage(
-    { client: input.client, chatId: input.destination.chatId, disableNotification: input.destination.disableNotification },
-    richDocumentToHtml(input.doc, {
-      mediaKinds: { own: kinds, uploads: new Map(uploads.map((upload) => [uploadRef(upload), upload.kind])) },
-      footerHtml: input.footer?.html,
-    }),
-    media,
-  );
-  const result: PublishResult = {
-    messages: [{ messageId: message.message_id, mediaIndex: null, kind: 'rich' }],
-    primaryMessageId: message.message_id,
-    method: 'sendRichMessage',
+  const context = {
+    client: input.client,
+    chatId: input.destination.chatId,
+    disableNotification: input.destination.disableNotification,
   };
+  const plain = plainPostFrom(input.doc, media.map((item) => item.payload), input.footer);
+  let result: PublishResult;
+  if (plain) {
+    result = await publishApprovedPayload(context, plain, { logger, media: media.map((item) => item.payload) });
+  } else {
+    const message = await sendRichMessage(
+      context,
+      richDocumentToHtml(input.doc, {
+        mediaKinds: { own: kinds, uploads: new Map(uploads.map((upload) => [uploadRef(upload), upload.kind])) },
+        footerHtml: input.footer?.html,
+      }),
+      media,
+    );
+    result = {
+      messages: [{ messageId: message.message_id, mediaIndex: null, kind: 'rich' }],
+      primaryMessageId: message.message_id,
+      method: 'sendRichMessage',
+    };
+  }
 
   await markPublished(input.db, {
     id: input.row.id,
@@ -179,4 +194,31 @@ async function publishRichPost(
         : null;
   if (store) await deleteUploads(input.db, store, await loadUploads(input.db, input.row.id), logger).catch(() => 0);
   return result;
+}
+
+/**
+ * An editor's post as an ordinary one — when its document needs no rich
+ * message (richDocumentAsPlainPost) and fits what an ordinary post may hold:
+ * at most an album's worth of pictures, and text a message can carry. Over
+ * a caption's length, the pictures carry the start of it and the whole text
+ * follows, as a long X post's does. Null when it must go out rich.
+ */
+function plainPostFrom(doc: RichDocument, media: MediaPayload[], footer: PostFooter | null | undefined): ApprovalPayload | null {
+  const plain = richDocumentAsPlainPost(doc);
+  if (!plain || media.length !== plain.mediaRefs.length || media.length > TELEGRAM_MEDIA_GROUP_MAX) return null;
+
+  const length = plain.text.length + (plain.text === '' ? (footer?.text.length ?? 0) : footerLength(footer));
+  if (length > TELEGRAM_MESSAGE_TEXT_LIMIT || (media.length === 0 && length === 0)) return null;
+
+  const full = withFooter(plain.html, footer);
+  const kinds = media.map((item) => (item.mode === 'multipart' ? item.downloaded.media.kind : item.media.kind));
+  const method = media.length === 0 ? 'sendMessage' : media.length > 1 ? 'sendMediaGroup' : kinds[0] === 'video' ? 'sendVideo' : 'sendPhoto';
+
+  if (method === 'sendMessage' || length <= TELEGRAM_CAPTION_LIMIT) return { method, caption: full, items: [] };
+  return {
+    method,
+    caption: withFooter(escapeHtml(truncateForDisplay(plain.text, TELEGRAM_CAPTION_LIMIT - footerLength(footer))), footer),
+    overflowMessage: full,
+    items: [],
+  };
 }

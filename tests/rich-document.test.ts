@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   initialRichDocument,
   mediaRefsOf,
+  richDocumentAsPlainPost,
   parseRichDocument,
   richDocumentPlainText,
   richDocumentToHtml,
@@ -144,5 +145,51 @@ describe('a post opened in the editor for the first time', () => {
     expect(doc.content.map((block) => block.type)).toEqual(['postMedia', 'postMedia', 'paragraph', 'paragraph']);
     expect(richDocumentPlainText(doc)).toBe('First line\nsecond line\n\nNext paragraph');
     expect(parseRichDocument(doc, { mediaCount: 2 }).ok).toBe(true);
+  });
+});
+
+describe('a post edited only for its words', () => {
+  const paragraph = (value: string, marks?: { type: string; attrs?: Record<string, unknown> }[]) => ({
+    type: 'paragraph',
+    content: [text(value, marks)],
+  });
+  const plainOf = (content: unknown[]) => {
+    const parsed = parseRichDocument({ type: 'doc', content }, { mediaCount: 3 }) as { ok: true; doc: RichDocument };
+    return richDocumentAsPlainPost(parsed.doc);
+  };
+
+  it('is an ordinary post: pictures above, paragraphs an empty line apart, formatting kept', () => {
+    expect(
+      plainOf([
+        { type: 'postMedia', attrs: { ref: 'm2', caption: null } },
+        { type: 'postMedia', attrs: { ref: 'm0', caption: '  ' } },
+        { type: 'paragraph' },
+        { type: 'paragraph', content: [text('Bold', [{ type: 'bold' }]), { type: 'hardBreak' }, text('and <plain>')] },
+        paragraph('Next'),
+        { type: 'paragraph' },
+        { type: 'paragraph' },
+        { type: 'blockquote', content: [paragraph('Quoted'), paragraph('lines')] },
+        paragraph('a link', [{ type: 'link', attrs: { href: 'https://esa.int/' } }]),
+        { type: 'paragraph' },
+      ]),
+    ).toEqual({
+      mediaRefs: ['m2', 'm0'],
+      html:
+        '<b>Bold</b>\nand &lt;plain&gt;\n\nNext\n\n<blockquote>Quoted\nlines</blockquote>\n\n<a href="https://esa.int/">a link</a>',
+      text: 'Bold\nand <plain>\n\nNext\n\nQuoted\nlines\n\na link',
+    });
+  });
+
+  it('needs a rich message for headings, lists, dividers, highlighting, or a picture placed in the text or captioned', () => {
+    const media = (caption: string | null = null) => ({ type: 'postMedia', attrs: { ref: 'm0', caption } });
+    const needsRich = [
+      [{ type: 'heading', attrs: { level: 2 }, content: [text('Title')] }],
+      [{ type: 'bulletList', content: [{ type: 'listItem', content: [paragraph('One')] }] }],
+      [paragraph('Above'), { type: 'horizontalRule' }],
+      [paragraph('Marked', [{ type: 'highlight' }])],
+      [paragraph('Above'), media()],
+      [media('Under the picture'), paragraph('Text')],
+    ];
+    for (const content of needsRich) expect(plainOf(content)).toBeNull();
   });
 });

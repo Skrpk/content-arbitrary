@@ -1162,6 +1162,63 @@ describeIfDb('the website editor', () => {
     expect(row).toMatchObject({ status: 'published', telegramMethod: 'sendRichMessage', mediaCount: 1 });
   });
 
+  it('publishes a post edited only for its words as an ordinary album with its caption, not a rich message', async () => {
+    const stack = makeStack();
+    vi.stubGlobal('fetch', stack.fetchImpl);
+    await db.update(workspaces).set({ postFooter: '[Bears](https://t.me/bears)' }).where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+    const words = {
+      type: 'doc',
+      content: [
+        { type: 'postMedia', attrs: { ref: 'm1', caption: null } },
+        { type: 'postMedia', attrs: { ref: 'm0', caption: null } },
+        { type: 'paragraph', content: [{ type: 'text', text: 'Bears', marks: [{ type: 'bold' }] }, { type: 'hardBreak' }, { type: 'text', text: 'by the lake.' }] },
+        { type: 'paragraph' },
+        { type: 'paragraph', content: [{ type: 'text', text: 'Second paragraph.' }] },
+        { type: 'paragraph' },
+      ],
+    };
+    const post = await queuedPost({ approvalPayload: twoPhotos, richDoc: words as never });
+
+    expect((await decide({ action: 'approve', postId: post.id })).status).toBe(200);
+
+    expect(stack.calls.map((call) => call.method)).toEqual(['sendMediaGroup']);
+    const album = JSON.parse(String(stack.calls[0]!.body.media)) as { caption?: string; parse_mode?: string }[];
+    expect(album[0]).toMatchObject({
+      caption: '<b>Bears</b>\nby the lake.\n\nSecond paragraph.\n\n<a href="https://t.me/bears">Bears</a>',
+      parse_mode: 'HTML',
+    });
+    // In the order the editor placed them.
+    const downloads = vi
+      .mocked(stack.fetchImpl)
+      .mock.calls.map(([url]) => String(url))
+      .filter((url) => !url.includes('/bot'));
+    expect(downloads).toEqual(['https://cdn.example/b.jpg', 'https://cdn.example/a.jpg']);
+    expect(await reload(post.id)).toMatchObject({ status: 'published', telegramMethod: 'sendMediaGroup', mediaCount: 2 });
+  });
+
+  it('sends a long word-only post as pictures with the start of it, then the whole text', async () => {
+    const stack = makeStack();
+    vi.stubGlobal('fetch', stack.fetchImpl);
+    const long = 'A sentence about bears. '.repeat(60).trim();
+    const post = await queuedPost({
+      approvalPayload: { ...twoPhotos, method: 'sendPhoto', sourceMedia: twoPhotos.sourceMedia!.slice(0, 1) },
+      richDoc: {
+        type: 'doc',
+        content: [
+          { type: 'postMedia', attrs: { ref: 'm0', caption: null } },
+          { type: 'paragraph', content: [{ type: 'text', text: long, marks: [{ type: 'italic' }] }] },
+        ],
+      } as never,
+    });
+
+    expect((await decide({ action: 'approve', postId: post.id })).status).toBe(200);
+
+    expect(stack.calls.map((call) => call.method)).toEqual(['sendPhoto', 'sendMessage']);
+    expect(String(stack.calls[0]!.body.caption).length).toBeLessThanOrEqual(1024);
+    expect(String(stack.calls[0]!.body.caption)).toMatch(/^A sentence about bears\..*…$/s);
+    expect(stack.calls[1]!.body.text).toBe(`<i>${long}</i>`);
+  });
+
   it('publishes a laid-out post reviewed in the chat from Telegram’s own copies', async () => {
     const stack = makeStack();
     vi.stubGlobal('fetch', stack.fetchImpl);
