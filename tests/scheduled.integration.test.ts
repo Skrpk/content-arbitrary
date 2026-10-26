@@ -17,10 +17,10 @@ import { publishDueScheduledPosts } from '@/lib/sync/publish-scheduled';
 import {
   claimScheduledForPublishing,
   schedulePost,
+  setRichDocument,
   unschedulePost,
-  updateApprovalCaption,
 } from '@/lib/sync/repository';
-import { createTestLogger, ensureTestWorkspace, instantSleep, telegramError, telegramOk, withEnv } from './helpers';
+import { createTestLogger, editCaption, ensureTestWorkspace, instantSleep, telegramError, telegramOk, withEnv } from './helpers';
 
 /**
  * The scheduler against a real database: posts approved for later are
@@ -226,17 +226,14 @@ describeIfDb('scheduling a post', () => {
     const post = await queuePost({ caption: 'A' });
     await scheduleAt(post.id, new Date(Date.now() + 60 * MINUTE));
 
-    const result = await updateApprovalCaption(db, {
-      id: post.id,
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      caption: 'B',
-    });
+    const doc = { type: 'doc' as const, content: [{ type: 'paragraph' as const, content: [{ type: 'text' as const, text: 'B' }] }] };
+    const result = await setRichDocument(db, { id: post.id, workspaceId: DEFAULT_WORKSPACE_ID, doc });
 
     expect(result.updated).toBe(true);
     const after = await reload(post.id);
     expect(after.status).toBe('scheduled');
-    expect(after.caption).toBe('B');
-    expect(after.originalCaption).toBe('A');
+    expect(after.richDoc).toEqual(doc);
+    expect(after.captionEditedAt).toBeInstanceOf(Date);
   });
 });
 
@@ -293,7 +290,7 @@ describeIfDb('the scheduler', () => {
   it('publishes the text as last edited, not as it was when scheduled', async () => {
     const post = await queuePost({ caption: 'A' });
     await scheduleAt(post.id, new Date(Date.now() + MINUTE));
-    await updateApprovalCaption(db, { id: post.id, workspaceId: DEFAULT_WORKSPACE_ID, caption: 'C' });
+    await editCaption(db, post.id, 'C');
     const telegram = makeTelegram();
 
     await run(telegram, new Date(Date.now() + 2 * MINUTE));

@@ -373,69 +373,10 @@ function openStatuses(includeScheduled = false): PostStatus[] {
 }
 
 /**
- * Replace the caption an approved post will be published with.
- *
- * One guarded UPDATE, for the same reason the approval claim is one: the
- * reviewer may be pressing Approve in the chat while the Mini App is open, and
- * an edit must not land on a post that has already left the queue.
- *
- * The overflow follow-up is dropped. It held the untruncated original, which a
- * hand-written caption contradicts rather than completes.
- *
- * `original_caption` is never written here — every edit, however many, is
- * measured against what was first reviewed. The only exception fills it in for
- * a post queued before the column existed, from the payload's caption as it
- * stood before this edit.
- */
-export async function updateApprovalCaption(
-  db: Database,
-  input: { id: number; workspaceId: number; caption: string },
-): Promise<{
-  updated: boolean;
-  currentStatus?: PostStatus;
-  /** The reviewer's preview of the follow-up this edit dropped, if there was one. */
-  droppedOverflowPreviewId?: number;
-}> {
-  // A scheduled post is still unpublished, so its text may still change.
-  const existing = await findPostAwaitingReview(db, { ...input, includeScheduled: true });
-  if (!existing || !existing.approvalPayload) {
-    return { updated: false, currentStatus: await findStatusInWorkspace(db, input) };
-  }
-
-  const payload: ApprovalPayload = {
-    ...existing.approvalPayload,
-    caption: input.caption,
-    overflowMessage: undefined,
-    adminOverflowMessageId: undefined,
-  };
-
-  const rows = await db
-    .update(processedPosts)
-    .set({
-      approvalPayload: payload,
-      originalCaption: rawSql`coalesce(${processedPosts.originalCaption}, ${existing.approvalPayload.caption})`,
-      caption: input.caption,
-      captionEditedAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(processedPosts.id, input.id),
-        eq(processedPosts.workspaceId, input.workspaceId),
-        inArray(processedPosts.status, openStatuses(true)),
-      ),
-    )
-    .returning({ id: processedPosts.id });
-
-  return rows.length > 0
-    ? { updated: true, droppedOverflowPreviewId: existing.approvalPayload.adminOverflowMessageId }
-    : { updated: false, currentStatus: existing.status };
-}
-
-/**
  * Store what the reviewer wrote in the website's editor — or, with null, go
- * back to the plain post. Like a caption edit: one guarded UPDATE, only while
- * the post has not gone out.
+ * back to the plain post. One guarded UPDATE, only while the post has not
+ * gone out: the reviewer may be pressing Approve in the chat while the editor
+ * is open, and a save must not land on a post that has already left the queue.
  */
 export async function setRichDocument(
   db: Database,

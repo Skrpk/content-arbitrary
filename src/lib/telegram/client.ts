@@ -335,20 +335,6 @@ export class TelegramClient {
     );
   }
 
-  editMessageCaption(chatId: string, messageId: number, caption: string, parseMode: string) {
-    return this.call(
-      'editMessageCaption',
-      {
-        chat_id: chatId,
-        message_id: messageId,
-        caption,
-        parse_mode: parseMode,
-        reply_markup: { inline_keyboard: [] },
-      },
-      z.union([telegramMessageSchema, z.boolean()]),
-    );
-  }
-
   setWebhook(url: string, secretToken: string) {
     return this.call(
       'setWebhook',

@@ -1,7 +1,7 @@
-import { ne } from 'drizzle-orm';
+import { eq, ne, sql } from 'drizzle-orm';
 import { resetEnvCache, type Env, getEnv } from '@/lib/env';
 import type { Database } from '@/lib/db';
-import { DEFAULT_WORKSPACE_ID, publicationHistoryProfiles, stories, workspaces } from '@/db/schema';
+import { DEFAULT_WORKSPACE_ID, processedPosts, publicationHistoryProfiles, stories, workspaces } from '@/db/schema';
 import type { TelegramDestination } from '@/lib/workspace';
 import { createLogger, type Logger } from '@/lib/logger';
 
@@ -136,4 +136,25 @@ export function testDestination(
     disableNotification: env.TELEGRAM_DISABLE_NOTIFICATION,
     ...overrides,
   };
+}
+
+/**
+ * A caption rewritten by hand, stored as the Mini App's old plain caption
+ * editor stored it: the payload's caption and the current one replaced, the
+ * overflow follow-up dropped, the first original kept. Posts edited that way
+ * may still be in the queue, so publishing must keep honouring them.
+ */
+export async function editCaption(db: Database, id: number, caption: string): Promise<void> {
+  const [row] = await db.select().from(processedPosts).where(eq(processedPosts.id, id));
+  const payload = row!.approvalPayload!;
+  await db
+    .update(processedPosts)
+    .set({
+      approvalPayload: { ...payload, caption, overflowMessage: undefined, adminOverflowMessageId: undefined },
+      originalCaption: sql`coalesce(${processedPosts.originalCaption}, ${payload.caption})`,
+      caption,
+      captionEditedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(processedPosts.id, id));
 }

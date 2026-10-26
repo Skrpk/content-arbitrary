@@ -12,8 +12,7 @@ import {
   workspaces,
 } from '@/db/schema';
 import { POST } from '@/app/api/telegram/webhook/route';
-import { updateApprovalCaption } from '@/lib/sync/repository';
-import { ensureTestWorkspace, telegramError, telegramOk, withEnv } from './helpers';
+import { editCaption, ensureTestWorkspace, telegramError, telegramOk, withEnv } from './helpers';
 
 /**
  * The review buttons end to end: a Telegram update goes through the webhook
@@ -384,8 +383,8 @@ describeIfDb('Approve', () => {
 
   it('publishes the latest edit and keeps the original on record', async () => {
     const post = await queuePost({ caption: 'A' });
-    await updateApprovalCaption(db, { id: post.id, workspaceId: DEFAULT_WORKSPACE_ID, caption: 'B' });
-    await updateApprovalCaption(db, { id: post.id, workspaceId: DEFAULT_WORKSPACE_ID, caption: 'C' });
+    await editCaption(db, post.id, 'B');
+    await editCaption(db, post.id, 'C');
 
     await press(`ap:${post.id}`);
 

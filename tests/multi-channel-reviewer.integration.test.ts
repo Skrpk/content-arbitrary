@@ -13,7 +13,7 @@ import {
   workspaces,
 } from '@/db/schema';
 import { POST as webhook } from '@/app/api/telegram/webhook/route';
-import { GET as getCaption } from '@/app/api/telegram/webapp/caption/route';
+import { GET as getRichPost } from '@/app/api/telegram/webapp/rich/route';
 import { POST as schedule } from '@/app/api/telegram/webapp/schedule/route';
 import {
   GET as getSourceSettings,
@@ -305,8 +305,8 @@ describeIfDb('Mini Apps for two channels', () => {
     const gamma = await queuePost(GAMMA);
     const open = (postId: number) =>
       withEnv(routeEnv, () =>
-        getCaption(
-          new Request(`https://example.vercel.app/api/telegram/webapp/caption?post=${postId}`, {
+        getRichPost(
+          new Request(`https://example.vercel.app/api/telegram/webapp/rich?post=${postId}`, {
             headers: auth(),
           }),
         ),

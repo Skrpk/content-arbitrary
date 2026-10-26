@@ -14,7 +14,7 @@ import { findPostAwaitingReview, rejectWithReason } from '@/lib/sync/repository'
 /**
  * The "Other" Mini App's API: reject a post with the reviewer's own reason.
  *
- * Guarded exactly like the caption editor — signed `initData`, a known
+ * Guarded exactly like the post editor — signed `initData`, a known
  * reviewer, a post of their own tenant still awaiting review — and settled by
  * the same single guarded UPDATE as the reason buttons, so it races Approve,
  * a reason tap and a second submit safely: the first to land wins.

@@ -22,10 +22,9 @@ import {
   markAwaitingApproval,
   markPublished,
   rejectWithReason,
-  updateApprovalCaption,
 } from '@/lib/sync/repository';
 import { DEFAULT_WORKSPACE_ID } from '@/db/schema';
-import { createTestLogger, instantSleep, withEnv, ensureTestWorkspace, POSTED_AT } from './helpers';
+import { createTestLogger, editCaption, instantSleep, withEnv, ensureTestWorkspace, POSTED_AT } from './helpers';
 
 /**
  * The whole review journey against a real database: a sync run parks a post in
@@ -345,12 +344,7 @@ describeIfDb('editing the caption before approval', () => {
     const { row } = await queueOne();
     const original = row.approvalPayload!.caption;
 
-    const result = await updateApprovalCaption(db, {
-      id: row.id,
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      caption: edited,
-    });
-    expect(result.updated).toBe(true);
+    await editCaption(db, row.id, edited);
 
     // Approve, and watch which caption actually goes out.
     const publishStack = makeStack();
@@ -373,111 +367,11 @@ describeIfDb('editing the caption before approval', () => {
     expect(captions).toEqual(['sendPhoto']);
   });
 
-  it('leaves the stored media untouched', async () => {
-    const { row } = await queueOne();
-    const fileIds = row.approvalPayload!.items.map((item) => item.fileId);
-
-    await updateApprovalCaption(db, {
-      id: row.id,
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      caption: edited,
-    });
-
-    const after = await findPostAwaitingReview(db, {
-      id: row.id,
-      workspaceId: DEFAULT_WORKSPACE_ID,
-    });
-
-    // Only the text changes: the file_ids are what make approval cheap, and
-    // re-deriving them would mean downloading from X again.
-    expect(after!.approvalPayload!.items.map((item) => item.fileId)).toEqual(fileIds);
-    expect(after!.approvalPayload!.method).toBe('sendPhoto');
-    expect(after!.captionEditedAt).toBeInstanceOf(Date);
-  });
-
   it('records the preview message so the chat can be refreshed', async () => {
     const { row } = await queueOne();
     // sendPhoto returned message_id 30; the control message is 12.
     expect(row.approvalPayload!.adminMediaMessageId).toBe(30);
     expect(row.adminMessageId).toBe(12);
-  });
-
-  it('drops the overflow follow-up, which the new text replaces', async () => {
-    const { row } = await queueOne();
-
-    await db
-      .update(processedPosts)
-      .set({
-        approvalPayload: { ...row.approvalPayload!, overflowMessage: 'the full original text' },
-      })
-      .where(eq(processedPosts.id, row.id));
-
-    await updateApprovalCaption(db, {
-      id: row.id,
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      caption: edited,
-    });
-
-    const after = await findPostAwaitingReview(db, {
-      id: row.id,
-      workspaceId: DEFAULT_WORKSPACE_ID,
-    });
-    expect(after!.approvalPayload!.overflowMessage).toBeUndefined();
-  });
-
-  it('refuses to edit a post that is already published', async () => {
-    const { row } = await queueOne();
-
-    await claimForDecision(db, row.id, DEFAULT_WORKSPACE_ID);
-    await markPublished(db, {
-      id: row.id,
-      telegramChatId: CHANNEL_CHAT,
-      primaryMessageId: 30,
-      telegramMethod: 'sendPhoto',
-      mediaCount: 1,
-      messages: [],
-    });
-
-    const result = await updateApprovalCaption(db, {
-      id: row.id,
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      caption: edited,
-    });
-
-    expect(result).toEqual({ updated: false, currentStatus: 'published' });
-  });
-
-  it('refuses to edit a post that was rejected', async () => {
-    const { row } = await queueOne();
-
-    await rejectWithReason(db, { id: row.id, workspaceId: DEFAULT_WORKSPACE_ID, reason: 'other' });
-
-    const result = await updateApprovalCaption(db, {
-      id: row.id,
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      caption: edited,
-    });
-
-    expect(result.updated).toBe(false);
-    expect(result.currentStatus).toBe('rejected');
-  });
-
-  it('refuses an edit from another tenant', async () => {
-    const { row } = await queueOne();
-
-    const result = await updateApprovalCaption(db, {
-      id: row.id,
-      workspaceId: 999,
-      caption: 'not yours',
-    });
-
-    expect(result.updated).toBe(false);
-
-    const after = await findPostAwaitingReview(db, {
-      id: row.id,
-      workspaceId: DEFAULT_WORKSPACE_ID,
-    });
-    expect(after!.approvalPayload!.caption).not.toBe('not yours');
   });
 
   it('finds nothing for a post id that does not exist', async () => {
@@ -498,8 +392,7 @@ describeIfDb('original and current caption', () => {
     return (await db.select().from(processedPosts).where(eq(processedPosts.id, id)))[0]!;
   }
 
-  const edit = (id: number, caption: string) =>
-    updateApprovalCaption(db, { id, workspaceId: DEFAULT_WORKSPACE_ID, caption });
+  const edit = (id: number, caption: string) => editCaption(db, id, caption);
 
   it('starts a new review item with both captions equal to what was sent', async () => {
     const row = await queueOne();

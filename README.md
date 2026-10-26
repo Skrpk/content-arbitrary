@@ -1102,8 +1102,8 @@ rich HTML on the server when the post is published: only the nodes and marks abo
 every bit of text is escaped, a link must be http(s), and a picture must be one of the post's
 own or one of its uploads (`src/lib/rich/document.ts`). Media go out the same way as for any
 approval: Telegram's own copies for a post reviewed in the chat, fetched again from X for a queued
-one. The Mini App keeps its plain caption editor, and refuses to edit a post laid out on the
-website, where its layout is what will be published.
+one. The Mini App's **✏️ Edit text** opens this same editor on the same endpoint
+(`/api/telegram/webapp/rich`), so a post laid out in one is opened as it was left in the other.
 
 **Uploading photos and videos.** With a public [Vercel Blob](https://vercel.com/docs/vercel-blob)
 store connected to the project (**Storage → Create → Blob → Connect to project**, which sets

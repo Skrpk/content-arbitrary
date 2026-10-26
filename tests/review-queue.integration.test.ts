@@ -21,7 +21,6 @@ import { GET as loadQueueRoute, POST as decideRoute } from '@/app/api/telegram/w
 import { POST as channelsRoute } from '@/app/api/telegram/webapp/channels/route';
 import * as accountRoute from '@/app/api/account/route';
 import * as richRoute from '@/app/api/telegram/webapp/rich/route';
-import * as captionRoute from '@/app/api/telegram/webapp/caption/route';
 import * as scheduledRoute from '@/app/api/telegram/webapp/scheduled/route';
 import { POST as scheduleRoute } from '@/app/api/telegram/webapp/schedule/route';
 import { loadRadarNote } from '@/lib/radar/review-note';
@@ -1130,14 +1129,20 @@ describeIfDb('the website editor', () => {
     expect((await rich('POST', { postId: post.id, doc: bad })).status).toBe(422);
     expect((await reload(post.id)).richDoc).toEqual(laidOut);
 
-    // The Mini App's caption editor would be overwritten by it, so it says where to go.
-    const caption = await withEnv(queueEnv, () =>
-      captionRoute.GET(new Request(`https://example.vercel.app/api/telegram/webapp/caption?post=${post.id}`, { headers: { authorization: auth() } })),
-    );
-    expect(caption.status).toBe(409);
+    // Opened again, the editor shows the saved layout, not one made from the caption.
+    expect(await (await rich('GET', undefined, post.id)).json()).toMatchObject({ isRich: true, doc: laidOut });
 
     expect((await rich('DELETE', { postId: post.id })).status).toBe(200);
     expect((await reload(post.id)).richDoc).toBeNull();
+  });
+
+  it('refuses a post that has gone out, and a post id that is not one', async () => {
+    const post = await queuedPost({ approvalPayload: twoPhotos, status: 'published' });
+
+    expect((await rich('GET', undefined, post.id)).status).toBe(404);
+    expect((await rich('POST', { postId: post.id, doc: laidOut })).status).toBe(409);
+    expect((await reload(post.id)).richDoc).toBeNull();
+    expect((await rich('GET')).status).toBe(400);
   });
 
   it('publishes a laid-out queued post as one rich message, uploading only the pictures it places', async () => {
