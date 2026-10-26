@@ -1078,7 +1078,7 @@ in two frames, so both use the same API, the same rules and the same screens.
 
 ### The post editor
 
-On the website, **✏️ Edit text** opens a full editor: headings, **bold**, *italic*,
+**✏️ Edit text** opens a full editor, in the Mini App and on the website alike: headings, **bold**, *italic*,
 underline, strikethrough, highlight, links, lists, quotations and dividers — and the post's own
 photos and videos, which can be dragged anywhere between paragraphs, each with a caption, or
 taken out. A post saved there goes out as one Telegram **rich message** (Bot API
@@ -1384,35 +1384,31 @@ reply underneath the album.
 Without step 5 the buttons appear but nothing happens when pressed — Telegram has nowhere to
 deliver the callback.
 
-### Editing the caption before publishing
+### Editing the post before publishing
 
 With `APP_BASE_URL` set, the review message also carries **✏️ Edit text**, which opens a Mini
-App — a small web page inside Telegram — holding the caption the post will be published with.
-Save, then Approve as usual.
+App — a small web page inside Telegram — holding [the post editor](#the-post-editor), the
+website's own, AI assistant included. Save, then Approve as usual; **Save and back to the chat**
+closes the Mini App, and opened from the review queue it returns there.
 
 ```
-X ──► cron ──► your private chat ──[Edit]──► Mini App ──save──► caption replaced
+X ──► cron ──► your private chat ──[Edit]──► Mini App ──save──► post's layout stored
                       │
-                      └──[Approve]──►  channel, with whatever the caption now says
+                      └──[Approve]──►  channel, as the editor last saved it
 ```
 
 What editing does and does not touch:
 
-- only the **text** changes; the media is left alone. Approval re-sends by `file_id`, and
-  re-deriving those would mean downloading from X again;
-- the caption is stored escaped, so anything that looks like markup is published as the
-  characters you typed. There is no way to break Telegram's parser from the editor;
-- the limit is Telegram's own 1024 characters, counted as you see them. The editor shows the
-  count and refuses to save over it, and the server checks again;
-- if the original post was too long for a caption, the follow-up message carrying the
-  untruncated text is **dropped** on edit: a hand-written caption replaces the original rather
-  than summarising it. The editor says so when that applies;
+- what goes out is the saved layout — the words, and the post's own photos and videos placed,
+  taken out or joined by uploads — published as an ordinary post when it can be and a rich
+  message when it must (see [The post editor](#the-post-editor));
+- the preview in the chat is not rewritten to match: what Approve publishes is the editor's
+  version, which the review queue shows;
 - a post that has already been published or rejected cannot be edited. Approve and Edit race
   safely — whichever lands first wins, and the other is refused;
 - the text first sent for review is kept in `original_caption` and never changes, however many
-  times you edit; `caption` holds the current text and is what gets published, and
-  `caption_edited_at` the time of the last save. Both survive the decision, so what was
-  published can always be compared with what came in.
+  times you edit, and **Back to the plain post** in the editor drops the layout to publish the
+  post as it came in.
 
 Setup is one variable:
 
@@ -1533,7 +1529,7 @@ become links, everything else is shown as typed. At most 200 visible characters.
 
 It goes last, under the text (and the source line, if any), on the review message and on the
 published post — and under a long post's full-text follow-up too. It is never cut: a long post
-is shortened to leave room for it. In the Edit Mini App it is shown under the text box but is not
+is shortened to leave room for it. In the editor it is shown under the text but is not
 part of it, so editing cannot break its link, and the character counter allows for it.
 
 A post already waiting for review keeps the footer it was sent with; a footer set or changed
@@ -2131,8 +2127,8 @@ by the whole text as its own message. A text longer than even that message may b
 shortened there too, with an ellipsis; in both, only the author's text is cut — `CAPTION_PREFIX`,
 the source link and `CAPTION_SUFFIX` are always kept. With approval on, the reviewer's preview
 shows that follow-up message too, exactly as it will be sent, between the media and the
-buttons. Editing the caption drops the follow-up, and its preview is then marked as not to be
-published.
+buttons. A post changed in the editor goes out as laid out there, with a follow-up of its own
+when its text needs one.
 
 ---
 

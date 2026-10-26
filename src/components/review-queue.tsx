@@ -69,7 +69,7 @@ export interface ReviewQueueProps extends PanelTools {
   initialWorkspaceId: number | null;
   /** The post whose card to open at — a digest's story — when it is still waiting. */
   initialPostId?: number | null;
-  /** Open a post in the frame's editor; without it, the Mini App's caption editor. */
+  /** Open a post in the frame's editor; without it, the Edit Mini App's. */
   onEdit?: (postId: number, workspaceId: number) => void;
 }
 

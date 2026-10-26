@@ -107,7 +107,7 @@ export function parseCallbackData(data: string | undefined): ApprovalCallback | 
 }
 
 /**
- * Absolute URL of the Mini App that edits this post's caption.
+ * Absolute URL of the Mini App that edits this post: the full editor, with its AI assistant.
  *
  * Absolute because Telegram opens it itself, not the chat client's current
  * origin; the post id travels in the query string, which is safe — it is an
