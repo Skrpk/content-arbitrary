@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { PlatformBadge } from '@/app/(app)/platform-badge';
 import { readJson, type PanelTools } from '@/components/panel-tools';
 import { fromQueue, theme } from '@/lib/telegram/webapp-client';
@@ -81,6 +81,12 @@ type CardState =
   | { kind: 'scheduling' }
   | { kind: 'sending'; what: 'approve' | 'reject' }
   | { kind: 'done'; outcome: string };
+
+/** Reject all: picking the reason, writing an "Other" note, or on its way, card by card. */
+type BulkState = { kind: 'choosing-reason' } | { kind: 'writing-note'; note: string } | { kind: 'sending'; done: number; total: number };
+
+/** Cards Reject all decides at once: each is its own request, as a single Reject is. */
+const BULK_CONCURRENCY = 3;
 
 /** Characters of text a card shows before "More". */
 const PREVIEW_CHARS = 420;
@@ -313,6 +319,7 @@ export function ReviewQueue({
   const [openedAt, setOpenedAt] = useState<number | null>(null);
   /** For a story's card, the post picked to publish in place of its best-scored one. */
   const [chosen, setChosen] = useState<Record<number, number>>({});
+  const [bulk, setBulk] = useState<BulkState | null>(null);
   const website = surface === 'website';
 
   useEffect(() => {
@@ -405,6 +412,39 @@ export function ReviewQueue({
   );
 
   const channel = data?.channels.find((candidate) => candidate.id === channelId) ?? null;
+
+  /** The channel's cards still to decide: not settled, and not on their way. */
+  const undecided = useMemo(
+    () => channel?.items.filter((card) => !['done', 'sending'].includes(cards[card.id]?.kind ?? 'open')) ?? [],
+    [cards, channel],
+  );
+
+  /**
+   * Reject every card shown and still undecided, for one reason — the cards
+   * on the page, not whatever has come in since. Each goes as its own
+   * Reject, so each settles, or shows its error, on its own card.
+   */
+  const rejectAll = useCallback(
+    async (reason: string, note?: string) => {
+      if (!channel || undecided.length === 0) return;
+      const label = data?.reasons.find((option) => option.value === reason)?.label ?? reason;
+      const posts = undecided.reduce((total, card) => total + 1 + card.alsoInStory.length, 0);
+      const what = posts === 1 ? 'the 1 post' : `all ${posts} posts`;
+      if (!(await confirm(`Reject ${what} shown in ${channel.name} as “${label}”? This cannot be undone.`))) return;
+
+      const queue = [...undecided];
+      setBulk({ kind: 'sending', done: 0, total: queue.length });
+      const work = async () => {
+        for (let card = queue.shift(); card; card = queue.shift()) {
+          await decide(card, { action: 'reject', reason, ...(note ? { note } : {}) });
+          setBulk((state) => (state?.kind === 'sending' ? { ...state, done: state.done + 1 } : state));
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(BULK_CONCURRENCY, queue.length) }, work));
+      setBulk(null);
+    },
+    [channel, confirm, data, decide, undecided],
+  );
 
   const approve = useCallback(
     async (card: QueueItem) => {
@@ -509,6 +549,7 @@ export function ReviewQueue({
                 onClick={() => {
                   setChannelId(candidate.id);
                   setFocused(null);
+                  if (bulk?.kind !== 'sending') setBulk(null);
                 }}
                 style={{
                   ...smallButton,
@@ -538,6 +579,19 @@ export function ReviewQueue({
             </span>
           ) : null}
         </p>
+      ) : null}
+
+      {channel && (undecided.length > 0 || bulk) ? (
+        <BulkReject
+          state={bulk}
+          setState={setBulk}
+          posts={undecided.reduce((total, card) => total + 1 + card.alsoInStory.length, 0)}
+          reasons={data.reasons}
+          noteLimit={data.noteLimit}
+          onReject={(reason, note) => {
+            void rejectAll(reason, note);
+          }}
+        />
       ) : null}
 
       {channel?.items.map((card) => {
@@ -804,6 +858,92 @@ function activeCard(items: QueueItem[], cards: Record<number, CardState>, focuse
 export function localInputValue(at: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}`;
+}
+
+/** Reject all: the button above the list, then why, as for one post. */
+function BulkReject({
+  state,
+  setState,
+  posts,
+  reasons,
+  noteLimit,
+  onReject,
+}: {
+  state: BulkState | null;
+  setState: (state: BulkState | null) => void;
+  /** Posts still undecided on the page, a story's counted in full. */
+  posts: number;
+  reasons: { value: string; label: string }[];
+  noteLimit: number;
+  onReject: (reason: string, note?: string) => void;
+}) {
+  if (state?.kind === 'sending') {
+    return (
+      <p style={{ color: theme.hint, fontSize: '0.85rem', margin: '0 0 0.9rem' }}>
+        Rejecting… {state.done} / {state.total}
+      </p>
+    );
+  }
+
+  if (!state) {
+    return (
+      <div style={{ margin: '0 0 0.9rem' }}>
+        <button type="button" onClick={() => setState({ kind: 'choosing-reason' })} style={smallButton}>
+          🚫 Reject all {posts}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <section style={{ background: theme.secondaryBg, borderRadius: '0.6rem', padding: '0.75rem 0.9rem', marginBottom: '0.9rem' }}>
+      <div style={{ fontSize: '0.85rem', marginBottom: '0.35rem' }}>
+        Reject all {posts} {posts === 1 ? 'post' : 'posts'} shown — why do they not fit?
+      </div>
+      {state.kind === 'choosing-reason' ? (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem' }}>
+          {reasons.map((reason) => (
+            <button
+              key={reason.value}
+              type="button"
+              onClick={() => {
+                if (reason.value === 'other') setState({ kind: 'writing-note', note: '' });
+                else onReject(reason.value);
+              }}
+              style={{ ...smallButton, fontSize: '0.85rem', padding: '0.5rem 0.4rem' }}
+            >
+              {reason.label}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <>
+          <textarea
+            value={state.note}
+            maxLength={noteLimit}
+            placeholder="In your own words (optional)"
+            onChange={(event) => setState({ kind: 'writing-note', note: event.target.value })}
+            rows={3}
+            style={fieldStyle}
+          />
+          <button
+            type="button"
+            onClick={() => onReject('other', state.note)}
+            style={{ ...button, width: '100%', marginTop: '0.4rem', background: '#e53935', color: '#ffffff' }}
+          >
+            Reject all {posts}
+          </button>
+        </>
+      )}
+      <button
+        type="button"
+        onClick={() => setState(null)}
+        style={{ ...smallButton, border: 'none', marginTop: '0.3rem', color: theme.link }}
+      >
+        ↩️ Back
+      </button>
+    </section>
+  );
 }
 
 /** Approve a post for later, on the website: a time in this browser's zone, sent as an exact moment. */
