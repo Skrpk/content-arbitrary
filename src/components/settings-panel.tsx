@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { PlatformBadge } from '@/app/(app)/platform-badge';
 import { readJson, type PanelTools } from '@/components/panel-tools';
 import { EDITORIAL_PROFILE_MAX_LENGTH, editorialProfileLength } from '@/lib/radar/editorial-profile';
+import { RADAR_THRESHOLD_MAX, RADAR_THRESHOLD_MIN } from '@/lib/radar/threshold';
 import { theme } from '@/lib/telegram/webapp-client';
 
 /**
@@ -12,7 +13,8 @@ import { theme } from '@/lib/telegram/webapp-client';
  * Sets how often each channel's reviewer hears about the review queue, and
  * what each channel publishes in the editor's words — the editorial profile
  * Radar scores posts against, saved with its own button. It also lists the reviewer's own sources — channel by channel when they review
- * several — with their switches; each switch saves as soon as it is flipped.
+ * several — with their switches, each saved as soon as it is flipped, and
+ * their Radar threshold.
  * It also adds an RSS / Atom feed, by URL, to the channel picked. Every
  * request goes through the frame's `request`, which proves who is asking, and
  * the server alone decides which sources are theirs.
@@ -29,6 +31,8 @@ interface SourceView {
   channelUrl: string | null;
   enabled: boolean;
   includeTextOnly: boolean;
+  /** Radar's lowest score for its posts to reach review; null for none. */
+  radarThreshold: number | null;
 }
 
 interface ChannelView {
@@ -161,6 +165,41 @@ export function SettingsPanel({ request, confirm }: Pick<PanelTools, 'request' |
     return () => {
       cancelled = true;
     };
+  }, [request]);
+
+  /** Set or clear a source's Radar threshold: shown at once, put back if the server refuses. */
+  const saveThreshold = useCallback(async (source: SourceView, value: number | null) => {
+    const key = `${source.id}:radarThreshold`;
+    const apply = (next: number | null) =>
+      setChannels((all) =>
+        all.map((channel) => ({
+          ...channel,
+          sources: channel.sources.map((item) => (item.id === source.id ? { ...item, radarThreshold: next } : item)),
+        })),
+      );
+
+    apply(value);
+    setSaving((current) => new Set(current).add(key));
+    setMessage(null);
+
+    try {
+      await readJson(
+        await request('/api/telegram/webapp/sources', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ sourceId: source.id, radarThreshold: value }),
+        }),
+      );
+    } catch (error: unknown) {
+      apply(source.radarThreshold);
+      setMessage(`${source.label}: ${error instanceof Error ? error.message : 'could not save'}`);
+    } finally {
+      setSaving((current) => {
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
+    }
   }, [request]);
 
   /** Flip one switch: shown at once, put back if the server refuses. */
@@ -744,6 +783,17 @@ export function SettingsPanel({ request, confirm }: Pick<PanelTools, 'request' |
                         </label>
                       );
                     })}
+
+                    <ThresholdField
+                      // Typed afresh whenever the saved value changes, or is put back.
+                      key={`${source.id}:${source.radarThreshold ?? 'off'}`}
+                      threshold={source.radarThreshold}
+                      busy={saving.has(`${source.id}:radarThreshold`)}
+                      radarOn={channel.editorialProfile !== null && !channel.autoPublish}
+                      onSave={(value) => {
+                        void saveThreshold(source, value);
+                      }}
+                    />
                   </section>
                 ))}
               </div>
@@ -752,5 +802,81 @@ export function SettingsPanel({ request, confirm }: Pick<PanelTools, 'request' |
         </>
       ) : null}
     </>
+  );
+}
+
+/**
+ * A source's Radar threshold: a score from 1 to 100, saved when the field is
+ * left or Enter is pressed; empty takes it off.
+ */
+function ThresholdField({
+  threshold,
+  busy,
+  radarOn,
+  onSave,
+}: {
+  threshold: number | null;
+  busy: boolean;
+  /** Radar scores this channel's posts before review: it has an editorial profile, and is reviewed. */
+  radarOn: boolean;
+  onSave: (value: number | null) => void;
+}) {
+  const [draft, setDraft] = useState(threshold === null ? '' : String(threshold));
+  const typed = draft.trim() === '' ? null : Number(draft);
+  const valid = typed === null || (Number.isInteger(typed) && typed >= RADAR_THRESHOLD_MIN && typed <= RADAR_THRESHOLD_MAX);
+
+  const save = () => {
+    if (!valid || typed === threshold) return;
+    onSave(typed);
+  };
+
+  return (
+    <label
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'space-between',
+        gap: '0.75rem',
+        padding: '0.45rem 0',
+        opacity: busy ? 0.6 : 1,
+      }}
+    >
+      <span>
+        <span style={{ display: 'block' }}>Radar threshold</span>
+        <span style={{ display: 'block', color: valid ? theme.hint : '#e53935', fontSize: '0.8rem' }}>
+          {!valid
+            ? `A score from ${RADAR_THRESHOLD_MIN} to ${RADAR_THRESHOLD_MAX}, or empty for none.`
+            : radarOn
+              ? 'Posts Radar scores under it are passed over and never reach review. Empty sends every post. Applies to new posts.'
+              : 'Takes effect once Radar scores this channel’s posts: it needs an editorial profile, and review on.'}
+        </span>
+      </span>
+      <input
+        type="number"
+        inputMode="numeric"
+        min={RADAR_THRESHOLD_MIN}
+        max={RADAR_THRESHOLD_MAX}
+        step={1}
+        placeholder="Off"
+        value={draft}
+        disabled={busy}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={save}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') save();
+        }}
+        style={{
+          width: '4.5rem',
+          flexShrink: 0,
+          boxSizing: 'border-box',
+          padding: '0.35rem 0.5rem',
+          borderRadius: '0.45rem',
+          border: `1px solid ${valid ? theme.hint : '#e53935'}`,
+          background: theme.bg,
+          color: theme.text,
+          fontSize: '0.95rem',
+        }}
+      />
+    </label>
   );
 }

@@ -340,10 +340,18 @@ export const sources = pgTable(
      * each time it is resumed, so neither brings in a backlog.
      */
     followingSince: timestamp('following_since', { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * Radar's lowest score, 1–100, for the source's posts to reach review: a
+     * post scored under it is passed over without a reviewer seeing it
+     * (src/lib/radar/threshold.ts). Null, the default, sends every post on —
+     * and so does a post Radar could not score.
+     */
+    radarThreshold: integer('radar_threshold'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    check('sources_radar_threshold_check', sql`${table.radarThreshold} IS NULL OR ${table.radarThreshold} BETWEEN 1 AND 100`),
     // Scoped per workspace: two tenants may legitimately watch the same account.
     uniqueIndex('sources_workspace_platform_external_id_key').on(
       table.workspaceId,

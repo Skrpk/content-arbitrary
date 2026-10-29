@@ -35,6 +35,8 @@ interface SourceView {
   approved: number;
   rejected: number;
   waiting: number;
+  /** Under the source's Radar threshold: never reached review. */
+  passedOver: number;
   notSent: number;
   approvalRate: number | null;
   rejectionReasons: { reason: string | null; count: number }[];
@@ -389,6 +391,7 @@ export function SourceStatsPanel({ request, confirm }: Pick<PanelTools, 'request
                     <div style={{ fontSize: '0.85rem' }}>
                       {source.posts} posts · ✅ {source.approved} · ❌ {source.rejected}
                       {source.waiting > 0 ? ` · ⏳ ${source.waiting}` : ''}
+                      {source.passedOver > 0 ? ` · 📡 under threshold ${source.passedOver}` : ''}
                       {source.notSent > 0 ? ` · not sent ${source.notSent}` : ''}
                     </div>
 

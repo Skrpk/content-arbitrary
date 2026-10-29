@@ -158,6 +158,8 @@ export async function setSourceEnabled(
 export interface SourceSettings {
   enabled?: boolean;
   includeTextOnly?: boolean;
+  /** Radar's lowest score for review, 1–100; null for none. */
+  radarThreshold?: number | null;
 }
 
 /**

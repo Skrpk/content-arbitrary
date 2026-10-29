@@ -620,6 +620,7 @@ they are flipped:
 | --- | --- | --- |
 | Active | on | Off pauses the source, like ⏸ Pause on the `/sourcestats` page. |
 | Posts without media | off | Also mirror the account's text-only posts, as text messages (`sendMessage`, up to 4096 characters, with the same prefix, source link and suffix as a caption). |
+| Radar threshold | none | A score from 1 to 100: a post Radar scores under it is passed over before review, never reaching the chat or the queue — see [Shadow Radar](#shadow-radar). |
 
 A new source mirrors media posts only, as every source always has. Turning **Posts without
 media** on applies to posts that arrive from then on — ones the cursor has already passed are
@@ -1268,7 +1269,8 @@ X ──► cron ──► review queue ──(at most once an hour)──► "�
   Earlier digests stay in the chat: each lists its own stories.
 - **The page** shows each post's picture (X's own photo, or a video's still), its text as it
   will be published, Radar's score and one-line why. Radar only orders the list: every post is
-  on it, whatever it scored, and the decision is yours.
+  on it, whatever it scored, and the decision is yours — unless its source has a
+  [threshold](#shadow-radar), which keeps posts scored under it out.
 - **✅ Approve** publishes there and then. **🚫 Reject** asks why, with the same reasons as the
   chat, and **••• Other** takes your own words. **✏️ Edit text** and **🕒 Schedule** open their
   pages and come back to the queue.
@@ -1539,7 +1541,8 @@ later applies to posts that arrive after.
 
 An experiment: can a model predict which posts the editor will publish? Radar scores each post
 on its way to the reviewer and records the prediction. Nothing is filtered, reordered or
-delayed, and a Radar failure leaves the post exactly as it would have been. Whether the scores
+delayed — except where the editor set a source a [threshold](#shadow-radar) — and a Radar
+failure leaves the post exactly as it would have been. Whether the scores
 are any good is measured against the decisions the editor makes.
 
 **On the review message.** Under the link, the message with the buttons shows the score, the
@@ -1553,6 +1556,17 @@ scored live, so the report can go on comparing the two, but it is not shown and 
 ordered by it: its scale runs higher, and a post scored by it alone would jump the queue. A hint only:
 every post still comes to review. Seeing it can sway a decision, so decisions made since it was
 shown (8 October 2026) are a little less independent a test of Radar than those before.
+
+**A source's threshold.** In the source settings, a source may be given a Radar threshold from
+1 to 100 (`sources.radar_threshold`; none by default). A post of that source scored under it —
+the same score the queue shows — is passed over: it is never sent to the chat or put in the
+queue, and is recorded as `skipped`, with `error_message` saying `radar threshold: scored 23,
+under the source's 40`. Not as `rejected`: no one turned it down, so it is never one of the
+decisions Radar is shown or measured against, and the source's approval rate leaves it out. The
+Sources page counts these posts as **📡 under threshold**. A post Radar could not score — it
+failed, timed out, ran out of the run's budget — goes to review as always, and a threshold does
+nothing for a channel Radar does not score (no editorial profile, or published without review).
+It applies to posts that arrive after it is set.
 
 **What it sees.** The tenant's `editorial_profile` (a few lines, in the editor's words, on what the
 channel publishes and what it turns down), the

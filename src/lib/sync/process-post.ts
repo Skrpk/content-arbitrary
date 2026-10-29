@@ -26,6 +26,9 @@ import type { PostFooter } from '@/lib/telegram/post-footer';
 import { defaultSleep } from '@/lib/sync/retry';
 import type { TelegramDestination } from '@/lib/workspace';
 
+/** What the beforeReview hook hands back: the note for the review message, or a reason to pass the post over. */
+export type BeforeReviewResult = string | null | void | { skip: string };
+
 export interface ProcessOutcome {
   status: 'published' | 'failed' | 'skipped' | 'dry-run' | 'awaiting-approval';
   method: TelegramMethod;
@@ -130,11 +133,12 @@ export async function processPost(
      * Run just before the post is sent for review — Shadow Radar's moment to
      * score it, ahead of any decision. It is handed the first photo's bytes
      * when they were already downloaded for the send, so nothing fetches them
-     * twice. What it returns is shown under the link on the review message.
-     * It must not throw; if it does anyway, the post still goes to review,
-     * without a note.
+     * twice. What it returns is shown under the link on the review message —
+     * or, returned as `{ skip }`, the post is passed over for that reason and
+     * never reaches review (a source's Radar threshold). It must not throw;
+     * if it does anyway, the post still goes to review, without a note.
      */
-    beforeReview?: (media: ReviewMedia) => Promise<string | null | void>;
+    beforeReview?: (media: ReviewMedia) => Promise<BeforeReviewResult>;
     /**
      * The post's text in the channel's language, or null to keep it as it is.
      * Asked only for a post about to be sent — alongside beforeReview — and it
@@ -272,13 +276,17 @@ export async function processPost(
     };
 
     // Scored on the original, translated meanwhile: neither waits for the other.
-    const [translated, radarNote] = await Promise.all([
+    const [translated, { note: radarNote, skip }] = await Promise.all([
       translateText(options.translate, post.text, logger),
       runBeforeReview(options.beforeReview, logger, {
         firstPhotoBytes:
           media[0]?.kind === 'photo' && payloads[0]?.mode === 'multipart' ? payloads[0].downloaded.bytes : undefined,
       }),
     ]);
+    if (skip) {
+      logger.info('approval.passed_over', { externalId: post.id, reason: skip });
+      return { status: 'skipped', method, mediaCount: media.length, caption, messages: [], primaryMessageId: null, error: skip, permanent: true };
+    }
     if (translated) ({ caption, overflowMessage } = captionFor(translated));
 
     if (options.queueForReview) {
@@ -481,7 +489,7 @@ async function processTextPost(
     sleep?: (ms: number) => Promise<void>;
     postId?: number;
     destination: TelegramDestination;
-    beforeReview?: (media: ReviewMedia) => Promise<string | null | void>;
+    beforeReview?: (media: ReviewMedia) => Promise<BeforeReviewResult>;
     translate?: (text: string) => Promise<string | null>;
     footer?: PostFooter | null;
     queueForReview?: boolean;
@@ -511,10 +519,14 @@ async function processTextPost(
 
   try {
     if (review) {
-      const [translated, radarNote] = await Promise.all([
+      const [translated, { note: radarNote, skip }] = await Promise.all([
         translateText(options.translate, post.text, logger),
         runBeforeReview(options.beforeReview, logger, {}),
       ]);
+      if (skip) {
+        logger.info('approval.passed_over', { externalId: post.id, reason: skip });
+        return { ...base, status: 'skipped', messages: [], error: skip, permanent: true };
+      }
       if (translated) base.caption = text = textFor(translated);
 
       if (options.queueForReview) {
@@ -667,16 +679,18 @@ async function translateText(
 
 /** Run the pre-review hook; its note for the review message, or null — whatever goes wrong. */
 async function runBeforeReview(
-  hook: ((media: ReviewMedia) => Promise<string | null | void>) | undefined,
+  hook: ((media: ReviewMedia) => Promise<BeforeReviewResult>) | undefined,
   logger: Logger,
   media: ReviewMedia,
-): Promise<string | null> {
-  if (!hook) return null;
+): Promise<{ note: string | null; skip: string | null }> {
+  if (!hook) return { note: null, skip: null };
   try {
-    return (await hook(media)) ?? null;
+    const result = await hook(media);
+    if (result && typeof result === 'object') return { note: null, skip: result.skip };
+    return { note: result ?? null, skip: null };
   } catch (error) {
     logger.error('approval.before_review_failed', { error: describeError(error) });
-    return null;
+    return { note: null, skip: null };
   }
 }
 

@@ -28,6 +28,8 @@ import { setEditorialProfile } from '@/lib/workspace';
 const BASELINE_ONLY = [RADAR_PROMPT_BASELINE] as const;
 import { formatRadarReport, loadReportRows } from '@/lib/radar/report';
 import { createRadarRun, runLiveRadar, type RadarSubject } from '@/lib/radar/shadow';
+import { RADAR_THRESHOLD_REASON_PREFIX } from '@/lib/radar/threshold';
+import { loadSourceStats } from '@/lib/sources/stats';
 import { markAwaitingApproval, rejectWithReason } from '@/lib/sync/repository';
 import { syncPosts } from '@/lib/sync/sync-posts';
 import { TelegramClient } from '@/lib/telegram/client';
@@ -389,10 +391,10 @@ describeIfDb('Radar in the sync', () => {
     return { xClient, telegramClient, fetchImpl: fetchImpl as unknown as typeof fetch };
   }
 
-  async function seed(profile: string | null) {
+  async function seed(profile: string | null, radarThreshold: number | null = null) {
     await db
       .insert(sources)
-      .values({ workspaceId: DEFAULT_WORKSPACE_ID, platform: 'x', externalId: '999', username: 'esa' });
+      .values({ workspaceId: DEFAULT_WORKSPACE_ID, platform: 'x', externalId: '999', username: 'esa', radarThreshold });
     await db
       .update(workspaces)
       .set({ editorialProfile: profile })
@@ -442,6 +444,49 @@ describeIfDb('Radar in the sync', () => {
     const rows = await evaluations();
     expect(rows.map((row) => [row.variant, row.score])).toEqual([['text', 91]]);
     expect(rows.every((row) => row.processedPostId === post!.id)).toBe(true);
+  });
+
+  it('passes over a post scored under its source’s threshold: never sent, and not taken for a decision', async () => {
+    await seed('Space and sci-fi.', 50);
+    const order: string[] = [];
+
+    await sync(order, () => messageResponse(radarOutput({ score: 49 })));
+
+    expect(order).toEqual(['radar']);
+    const [post] = await db.select().from(processedPosts);
+    expect(post!.status).toBe('skipped');
+    expect(post!.errorMessage).toBe(`${RADAR_THRESHOLD_REASON_PREFIX}scored 49, under the source's 50`);
+
+    // No one turned it down: Radar never learns from it as a rejection.
+    const history = await loadRadarHistory(db, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      before: new Date(Date.now() + 60_000),
+      perClass: 10,
+    });
+    expect(history.decisions).toBe(0);
+
+    const [stats] = await loadSourceStats(db, { workspaceIds: [DEFAULT_WORKSPACE_ID], since: null });
+    expect(stats).toMatchObject({ posts: 1, rejected: 0, passedOver: 1, notSent: 0 });
+  });
+
+  it('sends a post scored at its source’s threshold for review', async () => {
+    await seed('Space and sci-fi.', 50);
+    const order: string[] = [];
+
+    await sync(order, () => messageResponse(radarOutput({ score: 50 })));
+
+    expect(order).toContain('telegram:sendPhoto');
+    const [post] = await db.select().from(processedPosts);
+    expect(post!.status).toBe('awaiting_approval');
+  });
+
+  it('sends a post Radar could not score for review, whatever its source’s threshold', async () => {
+    await seed('Space and sci-fi.', 90);
+
+    await sync([], () => new Response('{}', { status: 500 }));
+
+    const [post] = await db.select().from(processedPosts);
+    expect(post!.status).toBe('awaiting_approval');
   });
 
   it('shows its score on the message with the buttons, escaped like any text', async () => {

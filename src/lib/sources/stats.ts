@@ -1,6 +1,7 @@
 import { and, desc, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
 import { processedPosts, sources, type RejectionReason, type SourcePlatform } from '@/db/schema';
+import { RADAR_THRESHOLD_REASON_PREFIX } from '@/lib/radar/threshold';
 import { formatSourceLabel } from '@/lib/sources/display';
 import { sourceChannelUrl } from '@/lib/sources/view';
 import { RSS_BACKLOG_REASON, WEBSITE_PAGE_REASON_PREFIX } from '@/lib/sync/repository';
@@ -48,7 +49,9 @@ export interface SourceStats {
   rejected: number;
   /** Still in review. */
   waiting: number;
-  /** Never reached review: skipped (no sendable media), failed, or not yet sent. */
+  /** Scored under the source's Radar threshold, and so passed over before review. */
+  passedOver: number;
+  /** Never reached review otherwise: skipped (no sendable media), failed, or not yet sent. */
   notSent: number;
   /** approved / (approved + rejected); null before anything was decided. */
   approvalRate: number | null;
@@ -96,6 +99,7 @@ export async function loadSourceStats(
       approved: withStatus(['published', 'scheduled']),
       rejected: withStatus(['rejected']),
       waiting: withStatus(['awaiting_approval']),
+      passedOver: sql<number>`(count(*) filter (where ${processedPosts.status} = 'skipped' and ${processedPosts.errorMessage} like ${`${RADAR_THRESHOLD_REASON_PREFIX}%`}))::int`,
       lastPostAt: sql<Date | null>`max(${processedPosts.createdAt})`.mapWith(processedPosts.createdAt),
     })
     .from(sources)
@@ -131,7 +135,7 @@ export async function loadSourceStats(
       label: formatSourceLabel(row.platform, row.username),
       feedUrl: row.platform === 'rss' || row.platform === 'website' ? externalId : null,
       channelUrl: sourceChannelUrl(row.platform, externalId),
-      notSent: row.posts - row.approved - row.rejected - row.waiting,
+      notSent: row.posts - row.approved - row.rejected - row.waiting - row.passedOver,
       approvalRate: decided > 0 ? row.approved / decided : null,
       rejectionReasons: reasons
         .filter((entry) => entry.sourceId === row.sourceId)

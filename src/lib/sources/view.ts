@@ -26,5 +26,6 @@ export function sourceView(source: Source) {
     channelUrl: sourceChannelUrl(source.platform, source.externalId),
     enabled: source.enabled,
     includeTextOnly: source.includeTextOnly,
+    radarThreshold: source.radarThreshold,
   };
 }

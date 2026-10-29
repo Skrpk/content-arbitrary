@@ -20,7 +20,8 @@ import type { ImageUnderstander } from '@/lib/media/provider';
 import { downloadImage, understandImage } from '@/lib/media/understand';
 import type { ReviewMedia } from '@/lib/sync/process-post';
 import { describeMedia, type RadarImage } from '@/lib/radar/prompt';
-import { loadRadarNote } from '@/lib/radar/review-note';
+import { findReviewScore, loadRadarNote } from '@/lib/radar/review-note';
+import { belowThresholdReason } from '@/lib/radar/threshold';
 import { radarAnalysisOf, radarMediaOf } from '@/lib/radar/analysis';
 import { runLiveRadar, type RadarRun } from '@/lib/radar/shadow';
 import { radarSourceMark } from '@/lib/sources/display';
@@ -148,6 +149,11 @@ export async function processCandidate(
             );
             // By the vector Radar's retrieval just made: no call of its own.
             await placeInStoryQuietly(db, source.workspaceId, row.id, context.radar!.run, postLogger);
+            // Under the source's threshold, it goes no further (src/lib/radar/threshold.ts).
+            if (source.radarThreshold !== null) {
+              const skip = belowThresholdReason((await findReviewScore(db, row.id))?.score, source.radarThreshold);
+              if (skip) return { skip };
+            }
             // The score just recorded, for the reviewer to see beside the buttons.
             return loadRadarNote(db, row.id);
           }

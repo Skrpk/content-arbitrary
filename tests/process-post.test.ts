@@ -864,6 +864,28 @@ describe('processPost beforeReview hook', () => {
     expect(hook).not.toHaveBeenCalled();
   });
 
+  it('passes the post over, sending nothing, when the hook says to skip it', async () => {
+    for (const post of [makePost([photo('a')]), makePost([], 'Just words')]) {
+      const stack = makeFetch();
+      const outcome = await withEnv({ DRY_RUN: 'false', ...approval }, (parsed) =>
+        processPost(post, {
+          client: makeClient(stack.fetchImpl),
+          logger: createTestLogger(),
+          env: parsed,
+          fetchImpl: stack.fetchImpl,
+          sleep: instantSleep,
+          postId: 7,
+          destination: testDestination(parsed, { adminChatId: '555001' }),
+          textOnly: true,
+          beforeReview: async () => ({ skip: 'under the threshold' }),
+        }),
+      );
+
+      expect(stack.telegramCalls).toHaveLength(0);
+      expect(outcome).toMatchObject({ status: 'skipped', error: 'under the threshold', permanent: true });
+    }
+  });
+
   it('sends the post for review even if the hook throws', async () => {
     const { outcome } = await run(
       makePost([photo('a')]),

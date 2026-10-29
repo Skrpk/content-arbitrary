@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import { describeError } from '@/lib/errors';
 import { deleteSource, listSources, updateSourceSettings } from '@/lib/sources/repository';
+import { RADAR_THRESHOLD_MAX, RADAR_THRESHOLD_MIN } from '@/lib/radar/threshold';
 import { authorizeReviewer, json } from '@/lib/telegram/webapp-request';
 import { sourceView } from '@/lib/sources/view';
 
 /**
  * The source Mini Apps' API: list the reviewer's sources, channel by
- * channel, change their per-source switches, and remove one.
+ * channel, change their per-source switches and Radar threshold, and remove one.
  *
  * Guarded like the other Mini App endpoints — signed `initData` naming a
  * workspace's reviewer — and every read and write is scoped to the workspaces
@@ -23,11 +24,14 @@ const updateSchema = z
     sourceId: z.number().int().positive(),
     enabled: z.boolean().optional(),
     includeTextOnly: z.boolean().optional(),
+    /** Null takes the threshold off. */
+    radarThreshold: z.number().int().min(RADAR_THRESHOLD_MIN).max(RADAR_THRESHOLD_MAX).nullable().optional(),
   })
   .strict()
-  .refine((body) => body.enabled !== undefined || body.includeTextOnly !== undefined, {
-    message: 'nothing to change',
-  });
+  .refine(
+    (body) => body.enabled !== undefined || body.includeTextOnly !== undefined || body.radarThreshold !== undefined,
+    { message: 'nothing to change' },
+  );
 
 const deleteSchema = z.object({ sourceId: z.number().int().positive() }).strict();
 

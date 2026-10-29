@@ -1,0 +1,2 @@
+ALTER TABLE "sources" ADD COLUMN "radar_threshold" integer;--> statement-breakpoint
+ALTER TABLE "sources" ADD CONSTRAINT "sources_radar_threshold_check" CHECK ("sources"."radar_threshold" IS NULL OR "sources"."radar_threshold" BETWEEN 1 AND 100);

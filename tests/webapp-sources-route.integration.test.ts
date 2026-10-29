@@ -199,6 +199,7 @@ describeIfDb('GET /api/telegram/webapp/sources', () => {
               channelUrl: null,
               enabled: true,
               includeTextOnly: false,
+              radarThreshold: null,
             },
           ],
         },
@@ -227,6 +228,7 @@ describeIfDb('POST /api/telegram/webapp/sources', () => {
         channelUrl: null,
         enabled: true,
         includeTextOnly: true,
+        radarThreshold: null,
       },
     });
     expect((await reload(source.id)).includeTextOnly).toBe(true);
@@ -244,6 +246,23 @@ describeIfDb('POST /api/telegram/webapp/sources', () => {
     const after = await reload(source.id);
     expect(after.enabled).toBe(false);
     expect(after.includeTextOnly).toBe(true);
+  });
+
+  it('sets a Radar threshold, takes it off, and refuses one outside 1–100', async () => {
+    const source = await addSource('alpha');
+
+    const set = await change({ sourceId: source.id, radarThreshold: 40 });
+    expect(set.status).toBe(200);
+    expect(((await set.json()) as { source: { radarThreshold: number } }).source.radarThreshold).toBe(40);
+    expect((await reload(source.id)).radarThreshold).toBe(40);
+
+    for (const radarThreshold of [0, 101, 40.5, '40']) {
+      expect((await change({ sourceId: source.id, radarThreshold })).status).toBe(400);
+    }
+    expect((await reload(source.id)).radarThreshold).toBe(40);
+
+    await change({ sourceId: source.id, radarThreshold: null });
+    expect((await reload(source.id)).radarThreshold).toBeNull();
   });
 
   it('cannot change another tenant\'s source', async () => {
