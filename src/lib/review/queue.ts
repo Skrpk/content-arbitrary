@@ -17,6 +17,7 @@ import { captionToPlainText, parsePostFooter, stripFooter } from '@/lib/telegram
 import { reviewText } from '@/lib/review/text';
 import { digestButtonText, formatReviewDigest, loadReviewDigest, markDigested } from '@/lib/review/digest';
 import { usesReviewQueue } from '@/lib/workspace';
+import { shownMediaUrl } from '@/lib/telegram-channel/media-link';
 
 /**
  * The review queue: posts waiting for a decision, gathered on one Mini App
@@ -186,9 +187,9 @@ export async function loadReviewQueue(
       postedAt: (row.xCreatedAt ?? row.createdAt).toISOString(),
       text: reviewText(row, footer),
       fullText: !row.richDoc && overflowBody ? captionToPlainText(overflowBody) : null,
-      media: (row.reviewMedia ?? []).map((item) => ({
+      media: (row.reviewMedia ?? []).map((item, index) => ({
         kind: item.kind,
-        imageUrl: (item.kind === 'photo' ? item.url : item.previewUrl) ?? null,
+        imageUrl: shownMediaUrl(row.externalId, index, item),
       })),
       score: scores.get(row.id) ?? null,
       repeat: repeatOf(repeats.get(row.id)),

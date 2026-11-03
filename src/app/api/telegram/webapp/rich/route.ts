@@ -13,6 +13,7 @@ import { findPostAwaitingReview, setRichDocument } from '@/lib/sync/repository';
 import { captionToPlainText, parsePostFooter, stripFooter } from '@/lib/telegram/post-footer';
 import { authorizeReviewer, json, reviewerWorkspaceForPost } from '@/lib/telegram/webapp-request';
 import { loadUploads, uploadMaxBytes, uploadPathPrefix, uploadRef, uploadsAvailable, type UploadRow } from '@/lib/uploads/uploads';
+import { shownMediaUrl } from '@/lib/telegram-channel/media-link';
 
 /**
  * The website editor's API: the post as a document to edit — the one saved,
@@ -157,7 +158,7 @@ function mediaOf(post: ProcessedPost) {
     return {
       ref: `m${index}`,
       kind,
-      previewUrl: (shown?.kind === 'photo' ? shown.url : shown?.previewUrl) ?? null,
+      previewUrl: shown ? shownMediaUrl(post.externalId, index, shown) : null,
     };
   });
 }

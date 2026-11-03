@@ -759,6 +759,12 @@ in the queue for days. So when a queued channel post is approved, its media are 
 on the post's own page (`t.me/<channel>/<id>?embed=1`) and fetched from there. A post the channel
 deleted meanwhile fails to publish and stays in the queue, as a deleted X post does.
 
+The pictures the queue, the scheduled list and the editor show are looked up the same way: their
+`<img>` points at `/api/media/telegram`, which reads the post's page again and redirects to the
+link it has now (remembered by the browser for an hour). The link is signed with an HMAC keyed
+on `CRON_SECRET`, as an `<img>` carries no proof of who is asking, so the route only looks up
+posts the app itself handed out (`src/lib/telegram-channel/media-link.ts`).
+
 **Safety.** Only `t.me` is ever fetched for pages, with a username already checked to be one, and
 redirects are not followed. Media are fetched only from Telegram's own content hosts, whatever a
 page says.

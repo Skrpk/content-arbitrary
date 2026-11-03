@@ -5,6 +5,7 @@ import { reviewText } from '@/lib/review/text';
 import { platformOfPostId, sourceLabelOfPost } from '@/lib/sources/display';
 import { formatScheduleTime } from '@/lib/sync/approval';
 import { parsePostFooter } from '@/lib/telegram/post-footer';
+import { shownMediaUrl } from '@/lib/telegram-channel/media-link';
 
 /**
  * A channel's scheduled posts as the website's Scheduled page shows them:
@@ -66,9 +67,9 @@ export async function loadScheduledPosts(
         sourceLabel: sourceLabelOfPost(row.externalId, row.xAuthorUsername),
         url: row.xPostUrl,
         text: reviewText(row, footer),
-        media: (row.reviewMedia ?? []).map((item) => ({
+        media: (row.reviewMedia ?? []).map((item, index) => ({
           kind: item.kind,
-          imageUrl: (item.kind === 'photo' ? item.url : item.previewUrl) ?? null,
+          imageUrl: shownMediaUrl(row.externalId, index, item),
         })),
         scheduledFor: row.scheduledFor.toISOString(),
         display: formatScheduleTime(row.scheduledFor, row.scheduledTimezone),
