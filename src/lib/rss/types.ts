@@ -32,4 +32,10 @@ export interface ParsedFeedEntry {
   author: string | null;
   publishedAt: Date | null;
   updatedAt: Date | null;
+  /**
+   * The entry's picture, as the feed names it: an image enclosure, a Media
+   * RSS image or thumbnail, or else the first picture in its content or
+   * summary. Only shown to the reviewer — never downloaded or published.
+   */
+  imageUrl: string | null;
 }

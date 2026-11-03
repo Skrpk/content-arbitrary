@@ -262,6 +262,12 @@ export const DEFAULT_WORKSPACE_ID = 1;
  * same shape for every platform that has any, each field optional.
  */
 export interface SourceMetadata {
+  /**
+   * A feed entry's picture, as the feed named it (src/lib/rss/parser.ts):
+   * shown to the reviewer in place of the link preview Telegram will make,
+   * never downloaded or sent.
+   */
+  previewImageUrl?: string | null;
   /** Its length, for a video. */
   durationSeconds?: number | null;
   views?: number | null;

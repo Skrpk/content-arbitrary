@@ -48,7 +48,7 @@ describe('GET /api/media/telegram', () => {
   const get = (link: string) => withEnv(env, () => GET(new Request(new URL(link, 'https://example.vercel.app'))));
 
   it('sends the browser on to the picture as the post’s page has it now', async () => {
-    const fetchImpl = vi.fn(async () =>
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL) =>
       new Response(channelEmbed({ id: 42, photos: [`${CDN}/fresh-a.jpg`, `${CDN}/fresh-b.jpg`] }), {
         headers: { 'content-type': 'text/html' },
       }),

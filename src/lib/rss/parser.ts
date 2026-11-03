@@ -1,4 +1,5 @@
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
+import { parse as parseHtml } from 'node-html-parser';
 import { FeedError } from '@/lib/errors';
 import { entryStableKey } from '@/lib/rss/identity';
 import { decodeXmlEntities, htmlToText } from '@/lib/rss/text';
@@ -165,6 +166,7 @@ function parseRss(rss: Element, feedUrl: string): ParsedFeed {
     );
     const guid = ownText(item.guid);
     const publishedAt = parseDate(ownText(item.pubDate) ?? ownText(item['dc:date']));
+    const imageUrl = entryImage(item, [content, summary], url ?? feedUrl);
 
     return [
       toEntry({
@@ -176,6 +178,7 @@ function parseRss(rss: Element, feedUrl: string): ParsedFeed {
         author: ownText(item['dc:creator']) ?? ownText(item.author),
         publishedAt,
         updatedAt: null,
+        imageUrl,
       }),
     ];
   });
@@ -198,16 +201,26 @@ function parseAtom(feed: Element, feedUrl: string): ParsedFeed {
       .map((value) => ownText(asElement(value)?.name))
       .find(Boolean);
 
+    const url = atomLink(entry.link, feedUrl);
+    const summary = markup(entry.summary);
+    const content = markup(entry.content);
+    const enclosure = asList(entry.link).find(
+      (link) => attribute(link, 'rel') === 'enclosure' && attribute(link, 'type')?.startsWith('image/'),
+    );
+
     return [
       toEntry({
         atomId: ownText(entry.id),
-        url: atomLink(entry.link, feedUrl),
+        url,
         title: titleText(entry.title),
-        summary: markup(entry.summary),
-        content: markup(entry.content),
+        summary,
+        content,
         author: author ?? null,
         publishedAt: parseDate(ownText(entry.published)),
         updatedAt: parseDate(ownText(entry.updated)),
+        imageUrl:
+          absoluteUrl(enclosure ? attribute(enclosure, 'href') : null, url ?? feedUrl) ??
+          entryImage(entry, [content, summary], url ?? feedUrl),
       }),
     ];
   });
@@ -219,6 +232,40 @@ function parseAtom(feed: Element, feedUrl: string): ParsedFeed {
     feedUrl,
     entries,
   };
+}
+
+/**
+ * The entry's picture: an RSS image enclosure, then a Media RSS image (in a
+ * media:group too) or thumbnail, then the first picture in its markup that is
+ * not a tracking pixel. Resolved against the article's address, as its
+ * markup's relative links are.
+ */
+function entryImage(item: Element, markups: (string | null)[], base: string): string | null {
+  const enclosure = asList(item.enclosure).find((node) => attribute(node, 'type')?.startsWith('image/'));
+  if (enclosure) {
+    const url = absoluteUrl(attribute(enclosure, 'url'), base);
+    if (url) return url;
+  }
+
+  const media = [...asList(item['media:content']), ...asList(asElement(item['media:group'])?.['media:content'])];
+  const image = media.find(
+    (node) => attribute(node, 'medium') === 'image' || attribute(node, 'type')?.startsWith('image/'),
+  );
+  const thumbnail = [...asList(item['media:thumbnail']), ...asList(asElement(item['media:group'])?.['media:thumbnail'])][0];
+  for (const candidate of [image ? attribute(image, 'url') : null, thumbnail ? attribute(thumbnail, 'url') : null]) {
+    const url = absoluteUrl(candidate, base);
+    if (url) return url;
+  }
+
+  for (const html of markups) {
+    if (!html || !/<img\b/i.test(html)) continue;
+    for (const img of parseHtml(html).querySelectorAll('img')) {
+      const tiny = ['width', 'height'].some((side) => Number(img.getAttribute(side)) === 1);
+      const url = tiny ? null : absoluteUrl(img.getAttribute('src') ?? null, base);
+      if (url) return url;
+    }
+  }
+  return null;
 }
 
 /** The entry's page: its rel="alternate" link, or one with no rel at all. */
@@ -240,6 +287,7 @@ function toEntry(fields: {
   author: string | null;
   publishedAt: Date | null;
   updatedAt: Date | null;
+  imageUrl: string | null;
 }): ParsedFeedEntry {
   const { atomId, guid, ...entry } = fields;
   return {

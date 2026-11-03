@@ -34,6 +34,7 @@ describe('parsing a feed', () => {
       author: 'ESA',
       publishedAt: new Date('2026-10-07T09:00:00Z'),
       updatedAt: null,
+      imageUrl: null,
     });
   });
 
@@ -104,6 +105,60 @@ describe('parsing a feed', () => {
   });
 });
 
+describe('an entry’s picture', () => {
+  const rss = (item: string, namespaces = '') =>
+    `<?xml version="1.0"?><rss version="2.0" ${namespaces}><channel><title>T</title><item><title>A</title><link>https://site.example/news/a</link>${item}</item></channel></rss>`;
+  const imageOf = (xml: string) => parseFeed(xml, FEED).entries[0]!.imageUrl;
+  const MEDIA = 'xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/"';
+
+  it('is an image enclosure first, then a Media RSS image, then a thumbnail', () => {
+    expect(
+      imageOf(
+        rss(
+          '<enclosure url="https://cdn.example/audio.mp3" type="audio/mpeg"/><enclosure url="https://cdn.example/e.jpg" type="image/jpeg"/><media:content url="https://cdn.example/m.jpg" medium="image"/>',
+          MEDIA,
+        ),
+      ),
+    ).toBe('https://cdn.example/e.jpg');
+    expect(imageOf(rss('<media:group><media:content url="https://cdn.example/m.jpg" type="image/jpeg"/></media:group>', MEDIA))).toBe(
+      'https://cdn.example/m.jpg',
+    );
+    expect(imageOf(rss('<media:thumbnail url="https://cdn.example/t.jpg"/>', MEDIA))).toBe('https://cdn.example/t.jpg');
+  });
+
+  it('is otherwise the first picture in the content or the summary, skipping tracking pixels, resolved against the article', () => {
+    expect(
+      imageOf(
+        rss(
+          '<description>Short</description><content:encoded><![CDATA[<p><img src="https://track.example/p.gif" width="1" height="1"><img src="/images/mars.jpg?w=1280&amp;q=80" alt=""></p>]]></content:encoded>',
+          MEDIA,
+        ),
+      ),
+    ).toBe('https://site.example/images/mars.jpg?w=1280&q=80');
+    expect(imageOf(rss('<description>&lt;img src="https://cdn.example/s.jpg"&gt; Words</description>'))).toBe('https://cdn.example/s.jpg');
+  });
+
+  it('is none for an entry without one, or with only a picture that is not http(s)', () => {
+    expect(imageOf(rss('<description>Just words</description>'))).toBeNull();
+    expect(imageOf(rss('<description><![CDATA[<img src="data:image/png;base64,AAAA">]]></description>'))).toBeNull();
+  });
+
+  it('is an Atom image enclosure link, or the first picture in its content', () => {
+    const atom = (entry: string) =>
+      `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>T</title><entry><id>x</id><title>A</title><link href="https://site.example/a"/>${entry}</entry></feed>`;
+    expect(imageOf(atom('<link rel="enclosure" type="image/png" href="https://cdn.example/a.png"/>'))).toBe('https://cdn.example/a.png');
+    expect(imageOf(atom('<content type="html">&lt;img src="pics/b.jpg"&gt;</content>'))).toBe('https://site.example/pics/b.jpg');
+  });
+
+  it('is kept with the candidate post for the reviewer, and never made one of its media', () => {
+    const [entry] = parseFeed(rss('<media:thumbnail url="https://cdn.example/t.jpg"/>', MEDIA), FEED).entries;
+    const post = entryToPost(entry!, { feedUrl: FEED, displayName: 'T' });
+
+    expect(post.media).toEqual([]);
+    expect(post.sourceMetadata).toEqual({ previewImageUrl: 'https://cdn.example/t.jpg' });
+  });
+});
+
 describe('who an entry is', () => {
   it('prefers the Atom id, then the guid, then the link, then a hash', () => {
     expect(entryStableKey({ atomId: 'tag:1', guid: 'g', link: 'https://a' })).toBe('id:tag:1');
@@ -169,6 +224,7 @@ describe('an entry as a candidate post', () => {
       isRepost: false,
       isQuote: false,
       metrics: null,
+      sourceMetadata: null,
     });
   });
 

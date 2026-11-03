@@ -11,6 +11,7 @@ import type { NormalizedPost } from '@/types';
  * Only what the feed itself says: its title and summary (or content). The
  * article is never fetched, and the entry carries no media — RSS candidates
  * are text posts, with the article's link kept alongside, not in the text.
+ * The picture the feed names is kept for the reviewer to see, nothing more.
  */
 
 /** Most text a feed entry brings in: a summary, not a 100 KB article body. */
@@ -56,6 +57,7 @@ export function entryToPost(
     isRepost: false,
     isQuote: false,
     metrics: null,
+    sourceMetadata: entry.imageUrl ? { previewImageUrl: entry.imageUrl } : null,
   };
 }
 

@@ -685,10 +685,17 @@ npm run rss:check -- https://www.esa.int/rssfeed/Our_Activities/Space_Science
 
 **What a candidate is.** The entry's title and summary — or its content, when the summary says
 too little — as plain text, capped at 6000 characters. The article itself is never fetched: no
-scraping, no images, no enclosures. RSS candidates are text posts, whatever the source's **Posts
+scraping, and no media downloaded. RSS candidates are text posts, whatever the source's **Posts
 without media** switch (Settings shows it only for X and Telegram channels). Under the text, the published post carries
 the article's link, and Telegram's preview card of it is the post's picture. The review message
 names the feed — `Source: ESA Space Science` — and links the article; an entry with no link says so.
+
+**Its picture, for the reviewer.** Where the feed names a picture for the entry — an image
+`<enclosure>`, a Media RSS `media:content` image or `media:thumbnail`, an Atom image enclosure
+link, or else the first `<img>` in its content or summary that is not a tracking pixel — the
+review queue and the scheduled list show it on the post's card, in place of the preview card
+Telegram will make (`source_metadata.previewImageUrl`). It is only shown, never downloaded or
+sent, and the post stays a text post. A website source's page shows its og:image the same way.
 
 **From now on, not the backlog.** The first sync after a feed is added — or resumed from a pause —
 records everything already in it as backlog: no review, no Radar, no message. Only entries that
