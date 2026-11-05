@@ -739,13 +739,14 @@ export async function markPending(
 
 export async function markSkipped(
   db: Database,
-  input: { id: number; reason: string },
+  input: { id: number; reason: string; mediaCount?: number },
 ): Promise<void> {
   await db
     .update(processedPosts)
     .set({
       status: 'skipped',
       errorMessage: input.reason.slice(0, 2000),
+      ...(input.mediaCount === undefined ? {} : { mediaCount: input.mediaCount }),
       processedAt: new Date(),
       updatedAt: new Date(),
       lockedAt: null,

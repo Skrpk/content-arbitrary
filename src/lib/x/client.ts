@@ -16,7 +16,7 @@ import {
  *   GET /2/users/by/username/{username}
  *   GET /2/users/{id}/tweets
  *
- * Cost note: X bills per post read. `since_id` is therefore not just a
+ * Cost note: X bills per post read, and for what expansions return. `since_id` is therefore not just a
  * correctness tool but a billing one — it keeps each run to the handful of
  * posts published since the previous run.
  */
@@ -49,6 +49,7 @@ const POST_FIELDS = [
   'public_metrics',
 ];
 const MEDIA_FIELDS = ['media_key', 'type', 'url', 'preview_image_url', 'width', 'height', 'duration_ms', 'variants', 'alt_text'];
+/** Billed per object from 2026-11-22: README → "The X API is paid, per post read". */
 const EXPANSIONS = ['attachments.media_keys', 'author_id'];
 
 function parseRetryAfter(response: Response): number | undefined {

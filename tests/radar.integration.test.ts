@@ -456,6 +456,8 @@ describeIfDb('Radar in the sync', () => {
     const [post] = await db.select().from(processedPosts);
     expect(post!.status).toBe('skipped');
     expect(post!.errorMessage).toBe(`${RADAR_THRESHOLD_REASON_PREFIX}scored 49, under the source's 50`);
+    // X billed its media all the same, so /sourcestats has to see it.
+    expect(post!.mediaCount).toBe(1);
 
     // No one turned it down: Radar never learns from it as a rejection.
     const history = await loadRadarHistory(db, {

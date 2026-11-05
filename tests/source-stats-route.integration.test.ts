@@ -59,6 +59,8 @@ function initDataFor(userId: number): string {
 interface StatsBody {
   period: string;
   postReadUsd: number;
+  mediaReadUsd: number;
+  userReadUsd: number;
   reasonLabels: Record<string, string>;
   channels: {
     id: number;
@@ -109,7 +111,7 @@ let nextPostId = 1_900_000_000_000_000_000n;
 async function addPost(
   source: { id: number; workspaceId: number },
   status: PostStatus,
-  options: { reason?: RejectionReason; daysAgo?: number } = {},
+  options: { reason?: RejectionReason; daysAgo?: number; at?: string; mediaCount?: number } = {},
 ) {
   nextPostId += 1n;
   await db.insert(processedPosts).values({
@@ -119,7 +121,8 @@ async function addPost(
     xPostUrl: `https://x.com/someone/status/${nextPostId}`,
     status,
     rejectionReason: status === 'rejected' ? (options.reason ?? null) : null,
-    createdAt: new Date(Date.now() - (options.daysAgo ?? 1) * 24 * 60 * 60 * 1000),
+    mediaCount: options.mediaCount ?? 0,
+    createdAt: options.at ? new Date(options.at) : new Date(Date.now() - (options.daysAgo ?? 1) * 24 * 60 * 60 * 1000),
   });
 }
 
@@ -156,16 +159,18 @@ beforeEach(async () => {
 describeIfDb('GET /api/telegram/webapp/source-stats', () => {
   it('counts what each source brought in and what became of it', async () => {
     const busy = await addSource('busy');
-    await addPost(busy, 'published');
-    await addPost(busy, 'scheduled');
-    await addPost(busy, 'rejected', { reason: 'wrong_topic' });
-    await addPost(busy, 'rejected', { reason: 'wrong_topic' });
-    await addPost(busy, 'rejected', { reason: 'too_minor' });
-    await addPost(busy, 'rejected');
-    await addPost(busy, 'awaiting_approval');
-    await addPost(busy, 'skipped');
+    // Before X billed expansions, so the cost is the posts alone whenever this runs.
+    const at = '2026-11-01T12:00:00Z';
+    await addPost(busy, 'published', { at, mediaCount: 2 });
+    await addPost(busy, 'scheduled', { at });
+    await addPost(busy, 'rejected', { at, reason: 'wrong_topic' });
+    await addPost(busy, 'rejected', { at, reason: 'wrong_topic' });
+    await addPost(busy, 'rejected', { at, reason: 'too_minor' });
+    await addPost(busy, 'rejected', { at });
+    await addPost(busy, 'awaiting_approval', { at });
+    await addPost(busy, 'skipped', { at });
 
-    const response = await stats();
+    const response = await stats('?period=all');
     expect(response.status).toBe(200);
     const body = (await response.json()) as StatsBody;
 
@@ -191,6 +196,20 @@ describeIfDb('GET /api/telegram/webapp/source-stats', () => {
     );
     expect(new Date(entry!.lastPostAt!).getTime()).toBeLessThan(Date.now());
     expect(body.reasonLabels.wrong_topic).toBeTruthy();
+  });
+
+  it('adds media and one account a day from the day X bills expansions', async () => {
+    const source = await addSource('pictures');
+    await addPost(source, 'published', { at: '2026-11-21T23:59:00Z', mediaCount: 4 });
+    await addPost(source, 'rejected', { at: '2026-11-22T00:00:00Z', mediaCount: 2 });
+    await addPost(source, 'published', { at: '2026-11-22T23:59:00Z', mediaCount: 1 });
+    await addPost(source, 'skipped', { at: '2026-11-23T00:00:00Z' });
+
+    const body = (await (await stats('?period=all')).json()) as StatsBody;
+
+    const [entry] = body.channels[0]!.sources;
+    expect(entry!.readCostUsd).toBeCloseTo(4 * body.postReadUsd + 3 * body.mediaReadUsd + 2 * body.userReadUsd, 10);
+    expect(entry!.costPerApprovedUsd).toBeCloseTo(entry!.readCostUsd / 2, 10);
   });
 
   it('lists an idle or paused source too, with nothing to rate yet', async () => {

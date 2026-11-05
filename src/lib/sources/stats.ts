@@ -13,7 +13,8 @@ import { RSS_BACKLOG_REASON, WEBSITE_PAGE_REASON_PREFIX } from '@/lib/sync/repos
  *
  * Counted from `processed_posts`, so only posts the bot kept a row for. Posts
  * X returned that the bot passed over (a quote, a post with no usable media)
- * leave no row but were still read, which makes the read cost a floor. A
+ * leave no row but were still read, which makes the read cost a floor; so does
+ * counting an account once a day, when X may bill it more often. A
  * feed's or a website's backlog — what it held when it was followed — is left
  * out: it was never a candidate; and so is a website's page that was not an
  * article, or never loaded. Reading a feed costs nothing, so a feed shows no cost.
@@ -21,6 +22,12 @@ import { RSS_BACKLOG_REASON, WEBSITE_PAGE_REASON_PREFIX } from '@/lib/sync/repos
 
 /** X's price per post read, pay-per-use. See README → "The X API is paid, per post read". */
 export const X_POST_READ_USD = 0.005;
+/** Each photo or video returned beside a post, from the day below. */
+export const X_MEDIA_READ_USD = 0.005;
+/** The account returned beside its posts, from the day below; counted once a UTC day. */
+export const X_USER_READ_USD = 0.01;
+/** Until this day X did not bill what expansions return, so earlier media and accounts cost nothing. */
+export const X_EXPANSIONS_BILLED_FROM = '2026-11-22T00:00:00Z';
 
 export const STATS_PERIODS = ['7d', '30d', 'all'] as const;
 export type StatsPeriod = (typeof STATS_PERIODS)[number];
@@ -87,6 +94,8 @@ export async function loadSourceStats(
       sql`, `,
     )})))::int`;
 
+  const expansionsBilled = sql`${processedPosts.createdAt} >= ${X_EXPANSIONS_BILLED_FROM}::timestamptz`;
+
   const rows = await db
     .select({
       sourceId: sources.id,
@@ -100,6 +109,8 @@ export async function loadSourceStats(
       rejected: withStatus(['rejected']),
       waiting: withStatus(['awaiting_approval']),
       passedOver: sql<number>`(count(*) filter (where ${processedPosts.status} = 'skipped' and ${processedPosts.errorMessage} like ${`${RADAR_THRESHOLD_REASON_PREFIX}%`}))::int`,
+      billedMedia: sql<number>`(coalesce(sum(${processedPosts.mediaCount}) filter (where ${expansionsBilled}), 0))::int`,
+      billedAuthorDays: sql<number>`(count(distinct date_trunc('day', ${processedPosts.createdAt}, 'UTC')) filter (where ${expansionsBilled}))::int`,
       lastPostAt: sql<Date | null>`max(${processedPosts.createdAt})`.mapWith(processedPosts.createdAt),
     })
     .from(sources)
@@ -126,10 +137,13 @@ export async function loadSourceStats(
     .groupBy(processedPosts.sourceId, processedPosts.rejectionReason)
     .orderBy(desc(sql`count(*)`));
 
-  return rows.map(({ externalId, ...row }) => {
+  return rows.map(({ externalId, billedMedia, billedAuthorDays, ...row }) => {
     const decided = row.approved + row.rejected;
-    // Feeds, channel pages, websites and YouTube's quota cost nothing per read; only X bills per post read.
-    const readCostUsd = row.platform === 'x' ? row.posts * X_POST_READ_USD : null;
+    // Feeds, channel pages, websites and YouTube's quota cost nothing per read; only X bills per read.
+    const readCostUsd =
+      row.platform === 'x'
+        ? row.posts * X_POST_READ_USD + billedMedia * X_MEDIA_READ_USD + billedAuthorDays * X_USER_READ_USD
+        : null;
     return {
       ...row,
       label: formatSourceLabel(row.platform, row.username),

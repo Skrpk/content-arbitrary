@@ -206,7 +206,7 @@ export async function processCandidate(
     }
 
     if (outcome.status === 'skipped') {
-      await markSkipped(db, { id: row.id, reason: outcome.error ?? 'skipped' });
+      await markSkipped(db, { id: row.id, reason: outcome.error ?? 'skipped', mediaCount: outcome.mediaCount });
       summary.newPosts -= 1;
       summary.skipped += 1;
       return { kind: 'skipped', settled: true };

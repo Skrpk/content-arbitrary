@@ -1,5 +1,13 @@
 import { describeError } from '@/lib/errors';
-import { loadSourceStats, periodStart, STATS_PERIODS, type StatsPeriod, X_POST_READ_USD } from '@/lib/sources/stats';
+import {
+  loadSourceStats,
+  periodStart,
+  STATS_PERIODS,
+  type StatsPeriod,
+  X_MEDIA_READ_USD,
+  X_POST_READ_USD,
+  X_USER_READ_USD,
+} from '@/lib/sources/stats';
 import { REJECTION_REASON_LABELS } from '@/lib/sync/approval';
 import { authorizeReviewer, json } from '@/lib/telegram/webapp-request';
 
@@ -40,6 +48,8 @@ export async function GET(request: Request): Promise<Response> {
   return json({
     period,
     postReadUsd: X_POST_READ_USD,
+    mediaReadUsd: X_MEDIA_READ_USD,
+    userReadUsd: X_USER_READ_USD,
     reasonLabels: REJECTION_REASON_LABELS,
     channels: auth.workspaces.map((workspace) => ({
       id: workspace.id,

@@ -116,8 +116,15 @@ ceiling is 300s: lower `maxDuration` and `SYNC_TIME_BUDGET_MS` to match.
 X has moved to **pay-per-usage pricing**: you buy credits and they are drawn down per request.
 Reading posts costs around **$0.005 per post**, or about **$0.001 per post when you are the
 authenticated owner of the account** you are reading. There is a hard ceiling of ~3 million
-post reads per billing cycle on standard accounts, and a 24-hour de-duplication window
-(requesting the same resource twice in a day is billed once).
+post reads per billing cycle on standard accounts, and de-duplication within a UTC day
+(requesting the same resource twice in that day is billed once; X calls this a soft guarantee).
+
+**From 22 November 2026, what expansions return is billed too**, at the same rate as a direct
+lookup. The app asks for two: `attachments.media_keys` at **$0.005 per photo or video** and
+`author_id` at **$0.010 per account**. The first is how a post's media arrives; the second only
+tells the app that an account was renamed. X has not said whether a day's de-duplication covers
+expansions, so `/sourcestats` assumes it does and counts an account once a UTC day. Its X reads
+are an estimate and a floor: compare them with the Developer Console.
 
 This is why the app stores a `since_id` cursor and why `X_FETCH_LIMIT` defaults to 20 rather
 than 100 — an idle account costs you almost nothing per run, so syncing every 15 minutes rather

@@ -55,6 +55,8 @@ interface ChannelView {
 interface StatsResponse {
   channels: ChannelView[];
   postReadUsd: number;
+  mediaReadUsd: number;
+  userReadUsd: number;
   reasonLabels: Record<string, string>;
 }
 
@@ -452,7 +454,8 @@ export function SourceStatsPanel({ request, confirm }: Pick<PanelTools, 'request
 
           <p style={{ fontSize: '0.75rem', color: theme.hint, margin: 0 }}>
             Approval rate is approved out of decided. X reads are an estimate at ${data.postReadUsd} per post the
-            bot kept; posts X returned that it skipped are not counted, so the real figure is a little higher.
+            bot kept and, from 22 November 2026, ${data.mediaReadUsd} per photo or video and ${data.userReadUsd} per
+            account a day; posts X returned that it skipped are not counted, so the real figure is a little higher.
             Feeds cost nothing to read, and what a feed held when it was added is not counted. A resumed source
             picks up only what is posted from then on.
           </p>
