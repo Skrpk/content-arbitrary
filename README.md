@@ -822,7 +822,9 @@ claim keeps a video from being taken twice, whatever runs overlap.
 to whoever may edit it, so transcripts come from a provider behind `VideoTranscriptProvider`
 (`src/lib/youtube/transcript.ts`); the first is [Supadata](https://supadata.ai), with
 `SUPADATA_API_KEY`. It is asked only for the transcript a video already has (`mode=native`) —
-never an AI transcription, whose price grows with the video — once per video. No transcript is a
+never an AI transcription, whose price grows with the video — once per video, in the language the
+video is spoken in by YouTube's `defaultAudioLanguage`, or English when it does not say: left to
+itself it gives the first of a video's auto-translated tracks. No transcript is a
 settled answer, recorded as `unavailable`; a provider outage is `failed`; no key is
 `not_configured`. In every case the video goes on with its metadata, and nothing stops. The whole
 transcript is kept (`processed_posts.analysis_text`, up to 200,000 characters); Radar reads a

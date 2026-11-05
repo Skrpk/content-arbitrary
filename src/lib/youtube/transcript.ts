@@ -13,6 +13,10 @@ import { truncateToLength } from '@/lib/telegram/format-caption';
  * an AI transcription, whose price grows with the video. Every way it can go
  * wrong ends in a result, never an exception: a video without a transcript
  * is judged on its metadata, and an outage stops nothing.
+ *
+ * It is asked for the language the video is spoken in: a video can have
+ * twenty auto-translated caption tracks, and left to itself Supadata gives
+ * the first it has, which for The Space Race was Arabic.
  */
 
 export type TranscriptResult =
@@ -23,11 +27,14 @@ export type TranscriptResult =
 
 export interface VideoTranscriptProvider {
   name: string;
-  getTranscript(videoUrl: string): Promise<TranscriptResult>;
+  /** `language` is the one spoken in the video, as YouTube gives it; null when its channel did not say. */
+  getTranscript(videoUrl: string, language?: string | null): Promise<TranscriptResult>;
 }
 
 const SUPADATA_URL = 'https://api.supadata.ai/v1/transcript';
 const TIMEOUT_MS = 20_000;
+/** Asked for when a video does not say what it is spoken in. */
+const FALLBACK_LANGUAGE = 'en';
 /** A transcript kept whole up to here — a few hours of speech; past it, cut. */
 export const TRANSCRIPT_STORED_MAX = 200_000;
 
@@ -40,11 +47,13 @@ export function createSupadataProvider(options: { apiKey: string; fetchImpl?: ty
   const fetchImpl = options.fetchImpl ?? fetch;
   return {
     name: 'supadata',
-    async getTranscript(videoUrl) {
+    async getTranscript(videoUrl, language) {
       const url = new URL(SUPADATA_URL);
       url.searchParams.set('url', videoUrl);
       url.searchParams.set('text', 'true');
       url.searchParams.set('mode', 'native');
+      // ISO 639-1, where YouTube may add a region: en-US.
+      url.searchParams.set('lang', language?.split('-')[0]?.toLowerCase() || FALLBACK_LANGUAGE);
 
       let response: Response;
       try {

@@ -94,6 +94,7 @@ function upload(id: string, publishedAt: string | null, details: { title?: strin
       channelTitle: 'PBS Space Time',
       publishedAt: publishedAt ?? '2026-12-01T00:00:00Z',
       liveBroadcastContent: details.live ?? 'none',
+      defaultAudioLanguage: 'en',
     },
     contentDetails: { duration: 'PT15M' },
     statistics: { viewCount: '1000', likeCount: '50', commentCount: '4' },
@@ -128,14 +129,16 @@ function youtubeClient() {
 
 function transcripts(answer: (url: string) => TranscriptResult) {
   const asked: string[] = [];
+  const languages: (string | null | undefined)[] = [];
   const provider: VideoTranscriptProvider = {
     name: 'fake',
-    async getTranscript(url) {
+    async getTranscript(url, language) {
       asked.push(url);
+      languages.push(language);
       return answer(url);
     },
   };
-  return { provider, asked };
+  return { provider, asked, languages };
 }
 
 function telegram() {
@@ -280,6 +283,7 @@ describeIfDb('a YouTube channel in the sync', () => {
     expect(again.summary.sources[0]).toMatchObject({ newPosts: 0 });
     expect(await rows()).toHaveLength(2);
     expect(told.asked).toHaveLength(2);
+    expect(told.languages).toEqual(['en', 'en']);
     expect(channel.requests.map((url) => url.pathname.split('/').pop())).toEqual(['playlistItems']);
   });
 

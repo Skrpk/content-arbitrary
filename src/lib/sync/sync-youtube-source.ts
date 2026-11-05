@@ -122,7 +122,7 @@ export async function syncYouTubeSource(source: Source, context: YouTubeSyncCont
       let transcript = null;
       if (context.transcripts) {
         const asked = Date.now();
-        transcript = await context.transcripts.getTranscript(`https://www.youtube.com/watch?v=${video.id}`);
+        transcript = await context.transcripts.getTranscript(`https://www.youtube.com/watch?v=${video.id}`, video.language);
         logTranscript(logger, transcript, { videoId: video.id, provider: context.transcripts.name, latencyMs: Date.now() - asked });
       }
 

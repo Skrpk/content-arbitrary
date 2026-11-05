@@ -45,6 +45,8 @@ export interface YouTubeVideo {
   likes: number | null;
   comments: number | null;
   thumbnailUrl: string | null;
+  /** The language spoken in it, as its channel set it (`en`, `en-US`); null when it did not. */
+  language: string | null;
 }
 
 const errorSchema = z.object({
@@ -99,6 +101,8 @@ const videosSchema = z.object({
           channelTitle: z.string(),
           publishedAt: z.string(),
           liveBroadcastContent: z.enum(['none', 'live', 'upcoming']).catch('none'),
+          defaultAudioLanguage: z.string().optional(),
+          defaultLanguage: z.string().optional(),
           thumbnails: z
             .object({ maxres: thumbnail, standard: thumbnail, high: thumbnail, medium: thumbnail, default: thumbnail })
             .passthrough()
@@ -195,6 +199,7 @@ export class YouTubeClient {
           likes: item.statistics?.likeCount ?? null,
           comments: item.statistics?.commentCount ?? null,
           thumbnailUrl: (thumbs?.maxres ?? thumbs?.standard ?? thumbs?.high ?? thumbs?.medium ?? thumbs?.default)?.url ?? null,
+          language: item.snippet.defaultAudioLanguage ?? item.snippet.defaultLanguage ?? null,
         });
       }
     }

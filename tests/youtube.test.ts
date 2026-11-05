@@ -76,7 +76,16 @@ describe('the YouTube Data API', () => {
       videos: (url) => ({
         items: url.searchParams.get('id')!.split(',').map((id) => ({
           id,
-          snippet: { title: `T ${id}`, description: 'D', channelId: CHANNEL_ID, channelTitle: 'PBS Space Time', publishedAt: '2026-10-13T12:00:00Z', liveBroadcastContent: 'none' },
+          snippet: {
+            title: `T ${id}`,
+            description: 'D',
+            channelId: CHANNEL_ID,
+            channelTitle: 'PBS Space Time',
+            publishedAt: '2026-10-13T12:00:00Z',
+            liveBroadcastContent: 'none',
+            ...(id === 'v0' ? { defaultAudioLanguage: 'en-US', defaultLanguage: 'de' } : {}),
+            ...(id === 'v1' ? { defaultLanguage: 'de' } : {}),
+          },
           contentDetails: { duration: 'PT1H2M3S' },
           statistics: { viewCount: '1200', likeCount: '80', commentCount: '9' },
         })),
@@ -90,6 +99,7 @@ describe('the YouTube Data API', () => {
     expect(api.requests).toHaveLength(2);
     expect(videos).toHaveLength(60);
     expect(videos[0]).toMatchObject({ id: 'v0', durationSeconds: 3723, views: 1200, likes: 80, comments: 9, liveBroadcastContent: 'none' });
+    expect(videos.slice(0, 3).map((video) => video.language)).toEqual(['en-US', 'de', null]);
   });
 
   it('says a quota or outage passes and a bad key does not', async () => {
@@ -125,6 +135,7 @@ const video = (overrides: Partial<YouTubeVideo> = {}): YouTubeVideo => ({
   likes: 80,
   comments: 9,
   thumbnailUrl: null,
+  language: null,
   ...overrides,
 });
 
@@ -185,6 +196,19 @@ describe('Supadata', () => {
     expect(url.searchParams.get('mode')).toBe('native');
     expect(url.searchParams.get('text')).toBe('true');
     expect((init.headers as Record<string, string>)['x-api-key']).toBe('SUPA');
+  });
+
+  it('asks in the language the video is spoken in, and in English when it does not say', async () => {
+    const asked = async (language?: string | null) => {
+      const { fetchImpl, provider } = ask(Response.json({ content: 'Hello', lang: 'en' }));
+      await provider.getTranscript('https://www.youtube.com/watch?v=abc', language);
+      return (fetchImpl.mock.calls[0] as unknown as [URL])[0].searchParams.get('lang');
+    };
+
+    expect(await asked('uk')).toBe('uk');
+    expect(await asked('en-US')).toBe('en');
+    expect(await asked(null)).toBe('en');
+    expect(await asked()).toBe('en');
   });
 
   it('tells no transcript from a failure, and never throws', async () => {
