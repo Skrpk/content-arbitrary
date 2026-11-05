@@ -18,6 +18,7 @@ import {
 } from '@/db/schema';
 import { embedPublicationHistory } from '@/lib/history/embeddings/embed';
 import { RADAR_PROMPT_APPROVED } from '@/lib/radar/prompt';
+import type { RadarProvider } from '@/lib/radar/providers';
 import { createRadarRun } from '@/lib/radar/shadow';
 import { loadReviewQueue } from '@/lib/review/queue';
 import { addYouTubeSource } from '@/lib/sources/add-youtube';
@@ -30,7 +31,7 @@ import { YouTubeClient } from '@/lib/youtube/client';
 import type { TranscriptResult, VideoTranscriptProvider } from '@/lib/youtube/transcript';
 import { createTestLogger, ensureTestWorkspace, instantSleep, testDestination, withEnv } from './helpers';
 import { fakeEmbedding, fakeEmbeddings } from './history-fakes';
-import { fakeAnthropic, messageResponse, radarOutput } from './radar-fakes';
+import { fakeAnthropic, fakeOpenAi, messageResponse, radarOutput, responsesResponse } from './radar-fakes';
 
 /**
  * YouTube channels through the whole pipeline, against a real database: the
@@ -174,7 +175,12 @@ const approvalEnv = {
   APP_BASE_URL: 'https://radar.example',
 };
 
-async function sync(options: { transcripts?: VideoTranscriptProvider | null; radar?: ReturnType<typeof createRadarRun>; youtube?: YouTubeClient | null } = {}) {
+async function sync(options: {
+  transcripts?: VideoTranscriptProvider | null;
+  radar?: ReturnType<typeof createRadarRun>;
+  youtube?: YouTubeClient | null;
+  translation?: RadarProvider;
+} = {}) {
   const bot = telegram();
   const summary = await withEnv(approvalEnv, (env) =>
     syncPosts({
@@ -187,7 +193,7 @@ async function sync(options: { transcripts?: VideoTranscriptProvider | null; rad
       logger: createTestLogger(),
       sleep: instantSleep,
       skipLock: true,
-      translationProvider: null,
+      translationProvider: options.translation ?? null,
       imageUnderstander: null,
       ...(options.radar ? { radarRun: options.radar } : {}),
     }),
@@ -245,6 +251,25 @@ describeIfDb('a YouTube channel in the sync', () => {
     expect(await rows()).toHaveLength(0);
     expect(bot.calls).toHaveLength(0);
     expect(channel.requests.map((url) => url.pathname.split('/').pop())).toEqual(['playlistItems']);
+  });
+
+  it('has the rewrite say what a video covers, from its transcript, for a channel that translates', async () => {
+    await follow();
+    await db.update(workspaces).set({ language: 'uk' }).where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+    upload('new1', '2026-10-12T10:00:00Z', { title: 'Primordial black holes', description: 'We love space!' });
+    const { provider, requests } = fakeOpenAi(() => responsesResponse({ text: 'Первинні чорні діри. Відео пояснює, як вони могли виникнути.' }));
+
+    await sync({
+      transcripts: transcripts(() => ({ status: 'available', text: 'Today we ask whether black holes formed early.', language: 'en' })).provider,
+      translation: provider,
+    });
+
+    const [video] = await rows();
+    expect(JSON.stringify(requests[0]!.input)).toContain('Today we ask whether black holes formed early.');
+    expect(requests[0]!.instructions as string).toContain('Leave out sponsor reads');
+    expect(video!.caption).toContain('Відео пояснює');
+    expect(video!.caption).not.toContain('Today we ask');
+    expect(video!.sourceText).toBe('Primordial black holes\n\nWe love space!');
   });
 
   it('queues new videos oldest first with their metadata, once, and keeps the transcript out of the post', async () => {

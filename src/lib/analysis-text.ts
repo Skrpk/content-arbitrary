@@ -1,6 +1,6 @@
 /**
  * A post's analysis-only text — a video's transcript — cut to what a prompt
- * or an embedding can take. Never published (see NormalizedPost.analysisText).
+ * or an embedding can take. Never published as it is (see NormalizedPost.analysisText).
  */
 
 /** How long Radar's sample is: a few minutes of speech, about 1,500 tokens. */

@@ -800,9 +800,12 @@ away: this follows channels, not single videos.
 **Discovery and understanding, not mirroring.** A video is never downloaded. What comes to review
 is its title and the opening of its description — that is the post, translated and published like
 any other — with its link, which Telegram previews with YouTube's own player. Its **transcript**,
-when it has one, is for analysis only: Radar reads it and it shapes the video's embedding, so a
-clickbait title does not decide what the video is about; it is never translated, reviewed or
-published.
+when it has one, is never published as it is: Radar reads it and it shapes the video's embedding, so
+a clickbait title does not decide what the video is about. For a channel that
+[translates](#translation), the rewrite also reads it and adds two or three sentences on what the
+video covers, from the transcript alone and without its sponsor reads, since a description is often
+only the channel's standing blurb, which is left out as promotion. The
+[AI assistant](#the-ai-assistant) reads it too, so you can ask it about the video.
 
 **How it is read.** Through the official YouTube Data API with `YOUTUBE_API_KEY`, server-side
 only. A channel is looked up once when it is added (`channels.list`, by handle or id — never
@@ -1149,8 +1152,8 @@ to check the facts and it searches the web and answers with the pages it cites. 
 the editor's own **Save** does that, as for any change.
 
 It knows the channel's editorial profile, its voice and two of its posts (from the
-[publication-history profile](#publication-history)), the post's source and pictures, and the
-post as it reads in the editor right now — the unsaved draft, sent with each message. The post
+[publication-history profile](#publication-history)), the post's source and pictures, a video's
+transcript (all of about 25 minutes of speech, excerpts of a longer one), and the post as it reads in the editor right now — the unsaved draft, sent with each message. The post
 travels as a small HTML of exactly what a rich message holds (`src/lib/rich/edit-html.ts`); the
 model rewrites it through one function, `edit_post`, and its version is checked on the server
 exactly as a save is checked before the editor ever sees it. One that does not pass — a picture
@@ -2118,7 +2121,7 @@ week, the number of sources had little to tell. It runs on backfills only.
 | `RADAR_PROVIDER` | `openai` | [Shadow Radar](#shadow-radar)'s model: `openai` (GPT-6 Luna) or `anthropic` (Claude Haiku 4.5). |
 | `RADAR_MODEL` | provider's default | Overrides the chosen provider's model id. |
 | `YOUTUBE_API_KEY` | — | The YouTube Data API, for YouTube channel sources. Without it a channel cannot be added, and those added are not synced. |
-| `SUPADATA_API_KEY` | — | Supadata, for videos' existing transcripts, used for analysis only. Optional: without it videos are judged on their metadata. |
+| `SUPADATA_API_KEY` | — | Supadata, for videos' existing transcripts: read by Radar, the rewrite and the assistant, never published as they are. Optional: without it videos are judged on their metadata, and a post says only what the title and description do. |
 | `OPENAI_API_KEY` | — | Needed for Radar with `RADAR_PROVIDER=openai`. Without the chosen provider's key, Radar is off. Also used for history embeddings, whatever the provider. |
 | `HISTORY_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI model for [similar past publications](#similar-past-publications). Vectors are kept per model; after changing it, run `npm run history:embed` again. |
 | `ASSISTANT_MODEL` | `gpt-6-luna` | OpenAI model behind the post editor's [AI assistant](#the-ai-assistant). Needs `OPENAI_API_KEY`. |

@@ -453,11 +453,11 @@ export const processedPosts = pgTable(
      */
     sourceText: text('source_text'),
     /**
-     * What the post is about beyond its text, for analysis only — never
-     * translated, reviewed or published: a YouTube video's transcript. Radar
-     * and the embedding read a bounded sample of it; it is kept whole so a
-     * backfill and a re-embed read exactly what live did. Null for a post
-     * that has none, which is every post but a video's.
+     * What the post is about beyond its text — never published as it is: a
+     * YouTube video's transcript. Radar and the embedding read a bounded
+     * sample of it, and for a video the rewrite and the assistant say what
+     * it covers from it; it is kept whole so a backfill and a re-embed read
+     * exactly what live did. Null for a post that has none.
      */
     analysisText: text('analysis_text'),
     /**

@@ -11,9 +11,10 @@ import type { NormalizedPost } from '@/types';
  *
  * Its text — what is translated, reviewed and published — is the title and
  * the opening of the description: what the video is, in a post's length. Its
- * transcript, when it has one, is `analysisText`, for Radar and the embedding
- * only. It has no media: the video is never downloaded, and the post goes out
- * with its link, which Telegram previews with YouTube's own player.
+ * transcript, when it has one, is `analysisText`: for Radar and the embedding,
+ * and for the rewrite and the assistant to say what the video covers, never
+ * published as it is. It has no media: the video is never downloaded, and the
+ * post goes out with its link, which Telegram previews with YouTube's own player.
  *
  * Its id is `yt:<video id>`, apart from X's digits, `rss:` and `tg:`.
  */

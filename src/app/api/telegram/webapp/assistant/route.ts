@@ -19,7 +19,7 @@ import { scrub } from '@/lib/logger';
 import { costUsd } from '@/lib/radar/report';
 import { parseRichDocument, RICH_TEXT_MAX } from '@/lib/rich/document';
 import { editHtmlToRichDocument, richDocumentToEditHtml } from '@/lib/rich/edit-html';
-import { sourceLabelOfPost } from '@/lib/sources/display';
+import { sourceLabelOfPost, YOUTUBE_VIDEO_ID_PREFIX } from '@/lib/sources/display';
 import { findPostAwaitingReview } from '@/lib/sync/repository';
 import { parsePostFooter } from '@/lib/telegram/post-footer';
 import { authorizeReviewer, json, reviewerWorkspaceForPost } from '@/lib/telegram/webapp-request';
@@ -113,6 +113,7 @@ export async function POST(request: Request): Promise<Response> {
     sourceLabel: sourceLabelOfPost(post.externalId, post.xAuthorUsername),
     url: post.xPostUrl,
     sourceText: post.sourceText,
+    transcript: post.externalId.startsWith(YOUTUBE_VIDEO_ID_PREFIX) ? post.analysisText : null,
     media: kinds,
     uploads: uploads.map((upload) => ({ ref: uploadRef(upload), kind: upload.kind })),
     textLimit: RICH_TEXT_MAX - reservedChars,

@@ -54,9 +54,10 @@ export interface NormalizedPost {
   text: string;
   media: NormalizedMedia[];
   /**
-   * What the post is about beyond `text`, for analysis only: a video's
-   * transcript, a web article's whole text. Radar and the embedding read a bounded sample of it; it is
-   * never translated, reviewed or published.
+   * What the post is about beyond `text`: a video's transcript, a web
+   * article's whole text. Radar and the embedding read a bounded sample of
+   * it, and for a video the rewrite and the assistant say what it covers from
+   * it. Never published as it is.
    */
   analysisText?: string | null;
   /** What the source said about it beyond its text: a video's duration and counts, its transcript's state. */

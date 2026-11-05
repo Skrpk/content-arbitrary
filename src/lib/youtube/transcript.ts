@@ -4,8 +4,9 @@ import type { Logger } from '@/lib/logger';
 import { truncateToLength } from '@/lib/telegram/format-caption';
 
 /**
- * A video's transcript, for analysis: what Radar and the embedding read about
- * a video beyond its title and description. Never published.
+ * A video's transcript: what Radar and the embedding read about a video
+ * beyond its title and description, and what the rewrite and the assistant
+ * say what it covers from. Never published as it is.
  *
  * Behind a provider, because YouTube's own API gives a video's captions only
  * to whoever may edit it (captions.download). The first provider is Supadata,

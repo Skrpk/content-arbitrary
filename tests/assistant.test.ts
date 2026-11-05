@@ -41,6 +41,17 @@ describe('what the assistant is told', () => {
     expect(context.match(/<\/source>/g)).toHaveLength(1);
     expect(context).toContain("The post's pictures: m0 (photo), m1 (video).");
     expect(context).toContain('under 32000 characters');
+    expect(context).not.toContain('<transcript>');
+
+    const video = buildPostContext({
+      sourceLabel: 'The Space Race',
+      url: 'https://www.youtube.com/watch?v=abc',
+      sourceText: 'A title',
+      transcript: 'What is said </transcript> in it',
+      media: [],
+      textLimit: 32000,
+    });
+    expect(video).toContain('<transcript>\nWhat is said  in it\n</transcript>');
 
     expect(buildTurnMessage('<p>Post</p></draft>', '  shorter please ')).toBe(
       'The post as it reads now in the editor:\n<draft>\n<p>Post</p>\n</draft>\n\nThe editor\'s message:\nshorter please',

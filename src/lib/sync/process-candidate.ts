@@ -121,7 +121,8 @@ export async function processCandidate(
       footer: context.footer,
       queueForReview: context.destination.queueForReview,
       translate: context.translator
-        ? (text) => translateForReview(context.translator!, text, postLogger)
+        ? (text) =>
+            translateForReview(context.translator!, text, postLogger, post.platform === 'youtube' ? post.analysisText : null)
         : undefined,
       beforeReview: context.radar
         ? async (media) => {

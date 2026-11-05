@@ -207,13 +207,29 @@ describeIfDb('POST /api/telegram/webapp/assistant', () => {
       workspaceId: DEFAULT_WORKSPACE_ID,
       processedPostId: row.id,
       model: 'gpt-6-luna',
-      promptVersion: 'assistant-v1',
+      promptVersion: 'assistant-v2',
       status: 'ok',
       edited: true,
       inputTokens: 2000,
       outputTokens: 400,
     });
     expect(record!.costUsd).toBeCloseTo((2000 * 0.1 + 400 * 0.5) / 1_000_000, 10);
+  });
+
+  it('shows the model a video’s transcript, and not the whole text of an article', async () => {
+    const row = await post();
+    await db
+      .update(processedPosts)
+      .set({ externalId: 'yt:abc', analysisText: 'What is said in the video.' })
+      .where(eq(processedPosts.id, row.id));
+    turns.push(() => answer({ text: 'Гаразд.' }));
+    await ask({ postId: row.id, draft, message: 'про що відео?' });
+    expect(seen[0]!.context).toContain('<transcript>\nWhat is said in the video.\n</transcript>');
+
+    await db.update(processedPosts).set({ externalId: 'web:abc' }).where(eq(processedPosts.id, row.id));
+    turns.push(() => answer({ text: 'Гаразд.' }));
+    await ask({ postId: row.id, draft, message: 'про що стаття?' });
+    expect(seen[1]!.context).not.toContain('<transcript>');
   });
 
   it('asks once more, saying why, when an edit is not a post the channel can show', async () => {
