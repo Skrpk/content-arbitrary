@@ -4,7 +4,7 @@ import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from '@/db/schema';
 import { DEFAULT_WORKSPACE_ID, processedPosts, radarCandidateEmbeddings, radarEvaluations, stories, storyPosts, workspaces } from '@/db/schema';
-import { deleteStories, loadUnplacedPosts, placeInStory } from '@/lib/stories/cluster';
+import { alphabetOf, deleteStories, loadUnplacedPosts, placeInStory } from '@/lib/stories/cluster';
 import { formatStoryReport, loadStoryReportRows } from '@/lib/stories/report';
 import { loadStoryContext } from '@/lib/stories/context';
 import { RADAR_PROMPT_STORY } from '@/lib/radar/prompt';
@@ -166,6 +166,60 @@ describeIfDb('placing posts in stories', () => {
 
     const bare = await post({ hours: 1, angle: null });
     expect(await place(bare.id)).toBeNull();
+  });
+});
+
+describe('the alphabet of a post', () => {
+  it('goes by most of its letters, so a link in a Russian post leaves it Russian', () => {
+    expect(alphabetOf('Китай раскрыл план высадки на Луну https://t.me/a')).toBe('cyrillic');
+    expect(alphabetOf('Україна і її супутник')).toBe('cyrillic');
+    expect(alphabetOf('China Unveils Their Plan')).toBe('latin');
+    expect(alphabetOf('🚀 2030')).toBeNull();
+    expect(alphabetOf(null)).toBeNull();
+  });
+});
+
+describeIfDb('placing posts in different languages', () => {
+  const RUSSIAN = 'Китай раскрыл план высадки на Луну';
+  const ENGLISH = 'China Unveils Their Plan for a Crewed Moon Landing';
+
+  it('joins a post in another alphabet at 0.60, and records what it needed', async () => {
+    const english = await post({ hours: 0, text: ENGLISH });
+    const russian = await post({ hours: 2, angle: 47, text: RUSSIAN, author: 'mycosmos' }); // cos 47° ≈ 0.68
+    const a = await place(english.id);
+    const b = await place(russian.id);
+
+    expect(b).toMatchObject({ outcome: 'joined', storyId: a!.storyId, nearestPostId: english.id });
+    const [row] = await db.select().from(storyPosts).where(eq(storyPosts.processedPostId, russian.id));
+    expect(row!.threshold).toBe(0.6);
+  });
+
+  it('still needs 0.75 in one language, and 0.60 across two is not met below it', async () => {
+    const first = await post({ hours: 0, text: ENGLISH });
+    const same = await post({ hours: 1, angle: 47, text: 'Another English story about the Moon' });
+    const far = await post({ hours: 2, angle: -55, text: RUSSIAN }); // cos 55° ≈ 0.57 from the first
+    await place(first.id);
+
+    expect(await place(same.id)).toMatchObject({ outcome: 'started', nearestPostId: first.id });
+    expect(await place(far.id)).toMatchObject({ outcome: 'started' });
+  });
+
+  it('needs 0.75 when a post has no letters to tell its language by', async () => {
+    const first = await post({ hours: 0, text: ENGLISH });
+    const bare = await post({ hours: 1, angle: 47, text: '🚀' });
+    await place(first.id);
+
+    expect(await place(bare.id)).toMatchObject({ outcome: 'started', nearestPostId: first.id });
+  });
+
+  it('finds the story behind a nearer post in its own language that is not close enough', async () => {
+    const story = await post({ hours: 0, angle: -47, text: ENGLISH }); // ≈ 0.68 from the new post
+    const nearer = await post({ hours: 1, angle: 44, text: 'Студенты испытали посадочную площадку' }); // ≈ 0.72
+    const russian = await post({ hours: 2, angle: 0, text: RUSSIAN });
+    const a = await place(story.id);
+    await place(nearer.id);
+
+    expect(await place(russian.id)).toMatchObject({ outcome: 'joined', storyId: a!.storyId, nearestPostId: story.id });
   });
 });
 

@@ -2029,7 +2029,7 @@ what the clustering made of a workspace.
 **How a post is placed.** By the vector Radar's [retrieval](#similar-past-publications) already
 made of it (text and what its image shows), so no extra embedding call. It is compared with the
 posts of its workspace that arrived in the 48 hours before it; when the nearest is at least 0.75
-similar, the post joins that post's story, otherwise it starts its own. One link is enough, so a
+similar — 0.60 for a post in another alphabet — the post joins that post's story, otherwise it starts its own. One link is enough, so a
 story can run for days while each new post is close to one in the window. What was found is kept
 either way — in `story_posts`, the nearest post, its similarity and the threshold used — so the
 threshold can be judged and changed from what the posts actually looked like. A post without a
@@ -2041,11 +2041,19 @@ fast radio burst; between 0.70 and 0.75 about half were; below that it was mostl
 subject, another galaxy or nebula. `STORY_SIMILARITY_THRESHOLD` in
 [`src/lib/stories/cluster.ts`](src/lib/stories/cluster.ts).
 
+**Across languages.** The same event in Russian and in English sits well below that: of the 27
+nearest posts at 0.60 or above from another source and another alphabet, one reached 0.75, and all
+but about two of the rest were the same article. So two posts whose letters are mostly in different
+alphabets, Cyrillic and Latin, need `STORY_CROSS_LANGUAGE_THRESHOLD`, 0.60; the ten nearest posts are
+looked at, closest first, so a nearer post in the same language that is not close enough hides nothing. Two
+languages in one alphabet are not told apart, and need 0.75.
+
 **Placing past posts**, and trying another threshold:
 
 ```bash
 npm run stories:cluster -- --workspace 2
 npm run stories:cluster -- --workspace 2 --rebuild --threshold 0.72 --dry-run
+npm run stories:cluster -- --workspace 2 --rebuild --cross-language-threshold 0.65 --dry-run
 npm run stories:cluster -- --workspace 2 --report
 ```
 

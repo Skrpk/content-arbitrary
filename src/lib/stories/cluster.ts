@@ -16,10 +16,21 @@ import { advisoryLockKey } from '@/lib/sync/locks';
  * the same event told by another account (a crew's return, a reentry video,
  * an obituary); between 0.70 and 0.75 about half were, and below that it was
  * mostly the same subject — another galaxy, another nebula.
+ *
+ * The same event told in two languages sits lower: on VECTOR, of the 27
+ * nearest posts at 0.60 or above from another source and another alphabet,
+ * only one reached 0.75, and all but about two of the rest were the same
+ * article. So two posts in different alphabets need less.
  */
 export const STORY_SIMILARITY_THRESHOLD = 0.75;
+export const STORY_CROSS_LANGUAGE_THRESHOLD = 0.6;
 /** How far back a post looks for its story. */
 export const STORY_WINDOW_HOURS = 48;
+/**
+ * How many of the nearest posts are looked at: the very nearest may be in the
+ * post's own language and too far, with the same event in another just behind it.
+ */
+const NEIGHBOURS = 10;
 
 type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
 /** The database, or a transaction in it — the clustering script runs in one, to roll a trial back. */
@@ -33,6 +44,14 @@ export interface StoryPlacement {
   similarity: number | null;
 }
 
+/** Which alphabet most of a text's letters are in; null for a text with no letters. */
+export function alphabetOf(text: string | null): 'cyrillic' | 'latin' | null {
+  const cyrillic = text?.match(/\p{Script=Cyrillic}/gu)?.length ?? 0;
+  const latin = text?.match(/\p{Script=Latin}/gu)?.length ?? 0;
+  if (cyrillic === 0 && latin === 0) return null;
+  return cyrillic > latin ? 'cyrillic' : 'latin';
+}
+
 /**
  * Put a post in its story, once. Null when the post has no vector for
  * `model` — no text and no understood image, or never searched with — and so
@@ -40,9 +59,17 @@ export interface StoryPlacement {
  */
 export async function placeInStory(
   db: Db,
-  input: { workspaceId: number; processedPostId: number; model: string; threshold?: number; windowHours?: number },
+  input: {
+    workspaceId: number;
+    processedPostId: number;
+    model: string;
+    threshold?: number;
+    crossLanguageThreshold?: number;
+    windowHours?: number;
+  },
 ): Promise<StoryPlacement | null> {
-  const threshold = input.threshold ?? STORY_SIMILARITY_THRESHOLD;
+  const sameLanguage = input.threshold ?? STORY_SIMILARITY_THRESHOLD;
+  const crossLanguage = input.crossLanguageThreshold ?? STORY_CROSS_LANGUAGE_THRESHOLD;
   const windowMs = (input.windowHours ?? STORY_WINDOW_HOURS) * 3_600_000;
 
   return db.transaction(async (tx) => {
@@ -60,7 +87,11 @@ export async function placeInStory(
     }
 
     const [post] = await tx
-      .select({ embedding: radarCandidateEmbeddings.embedding, arrivedAt: processedPosts.createdAt })
+      .select({
+        embedding: radarCandidateEmbeddings.embedding,
+        arrivedAt: processedPosts.createdAt,
+        text: processedPosts.sourceText,
+      })
       .from(radarCandidateEmbeddings)
       .innerJoin(processedPosts, eq(processedPosts.id, radarCandidateEmbeddings.processedPostId))
       .where(
@@ -75,10 +106,11 @@ export async function placeInStory(
     const query = sql`${`[${post.embedding.join(',')}]`}::vector`;
     const distance = sql`${radarCandidateEmbeddings.embedding} <=> ${query}`;
     // Only posts already in a story: every post that could be is placed as it arrives.
-    const [nearest] = await tx
+    const neighbours = await tx
       .select({
         processedPostId: processedPosts.id,
         storyId: storyPosts.storyId,
+        text: processedPosts.sourceText,
         similarity: sql<number>`1 - (${distance})`.mapWith(Number),
       })
       .from(radarCandidateEmbeddings)
@@ -95,11 +127,17 @@ export async function placeInStory(
         ),
       )
       .orderBy(distance, asc(processedPosts.id))
-      .limit(1);
+      .limit(NEIGHBOURS);
 
-    const joins = nearest !== undefined && nearest.similarity >= threshold;
-    const storyId = joins
-      ? nearest.storyId
+    const alphabet = alphabetOf(post.text);
+    const thresholdFor = (other: { text: string | null }) => {
+      const otherAlphabet = alphabetOf(other.text);
+      return alphabet && otherAlphabet && alphabet !== otherAlphabet ? crossLanguage : sameLanguage;
+    };
+    const match = neighbours.find((neighbour) => neighbour.similarity >= thresholdFor(neighbour));
+    const nearest = match ?? neighbours[0];
+    const storyId = match
+      ? match.storyId
       : (await tx.insert(stories).values({ workspaceId: input.workspaceId }).returning({ id: stories.id }))[0]!.id;
 
     await tx.insert(storyPosts).values({
@@ -107,13 +145,13 @@ export async function placeInStory(
       storyId,
       nearestPostId: nearest?.processedPostId ?? null,
       similarity: nearest?.similarity ?? null,
-      threshold,
+      threshold: nearest ? thresholdFor(nearest) : sameLanguage,
       embeddingModel: input.model,
     });
 
     return {
       storyId,
-      outcome: joins ? ('joined' as const) : ('started' as const),
+      outcome: match ? ('joined' as const) : ('started' as const),
       nearestPostId: nearest?.processedPostId ?? null,
       similarity: nearest?.similarity ?? null,
     };

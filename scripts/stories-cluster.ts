@@ -4,6 +4,7 @@
  *
  *   npm run stories:cluster -- --workspace 2
  *   npm run stories:cluster -- --workspace 2 --rebuild --threshold 0.72 --dry-run
+ *   npm run stories:cluster -- --workspace 2 --rebuild --cross-language-threshold 0.65 --dry-run
  *
  * Posts are placed in the order they arrived, each against the posts before
  * it, exactly as live. Only posts with a vector are placed: run
@@ -15,7 +16,13 @@
 import 'dotenv/config';
 import { getDb, getSql } from '../src/lib/db';
 import { getEnv } from '../src/lib/env';
-import { deleteStories, loadUnplacedPosts, placeInStory, STORY_SIMILARITY_THRESHOLD } from '../src/lib/stories/cluster';
+import {
+  deleteStories,
+  loadUnplacedPosts,
+  placeInStory,
+  STORY_CROSS_LANGUAGE_THRESHOLD,
+  STORY_SIMILARITY_THRESHOLD,
+} from '../src/lib/stories/cluster';
 import { formatStoryReport, loadStoryReportRows } from '../src/lib/stories/report';
 
 function argument(name: string): string | undefined {
@@ -32,7 +39,10 @@ async function main() {
     throw new Error('Pass the workspace: --workspace <id>');
   }
   const threshold = Number(argument('threshold') ?? STORY_SIMILARITY_THRESHOLD);
-  if (!(threshold > 0 && threshold <= 1)) throw new Error('--threshold is a similarity between 0 and 1');
+  const crossLanguageThreshold = Number(argument('cross-language-threshold') ?? STORY_CROSS_LANGUAGE_THRESHOLD);
+  if (!(threshold > 0 && threshold <= 1) || !(crossLanguageThreshold > 0 && crossLanguageThreshold <= 1)) {
+    throw new Error('--threshold and --cross-language-threshold are similarities between 0 and 1');
+  }
   const show = Number(argument('show') ?? 25);
   const dryRun = process.argv.includes('--dry-run');
   const model = env.HISTORY_EMBEDDING_MODEL;
@@ -49,11 +59,11 @@ async function main() {
       const posts = await loadUnplacedPosts(tx, { workspaceId, model });
       const counts = { joined: 0, started: 0 };
       for (const processedPostId of posts) {
-        const placement = await placeInStory(tx, { workspaceId, processedPostId, model, threshold });
+        const placement = await placeInStory(tx, { workspaceId, processedPostId, model, threshold, crossLanguageThreshold });
         if (placement && placement.outcome !== 'existing') counts[placement.outcome] += 1;
       }
       console.log(
-        `${dryRun ? 'Dry run: would place' : 'Placed'} ${posts.length} posts at threshold ${threshold}: ` +
+        `${dryRun ? 'Dry run: would place' : 'Placed'} ${posts.length} posts at threshold ${threshold}, ${crossLanguageThreshold} across languages: ` +
           `${counts.started} started a story, ${counts.joined} joined one\n`,
       );
       console.log(formatStoryReport(await loadStoryReportRows(tx, workspaceId), { show }));
