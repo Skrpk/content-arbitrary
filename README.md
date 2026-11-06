@@ -2121,7 +2121,7 @@ week, the number of sources had little to tell. It runs on backfills only.
 | `REQUIRE_APPROVAL` | `false` | Hold every post for review instead of publishing directly. |
 | `TELEGRAM_ADMIN_CHAT_ID` | — | Seeds workspace 1's reviewer (your numeric Telegram user id), once, while its column is empty. Unused after that; safe to remove. |
 | `TELEGRAM_WEBHOOK_SECRET` | — | ≥ 16 chars, `A-Z a-z 0-9 _ -` only. Required when `REQUIRE_APPROVAL` is on. |
-| `APP_BASE_URL` | — | Public HTTPS origin, e.g. `https://your-app.vercel.app`. Enables the Edit button; without it review works unchanged. |
+| `APP_BASE_URL` | — | Public HTTPS origin of the Mini Apps, e.g. `https://your-app.vercel.app`. Enables the Edit button; without it review works unchanged. Not the public site's address: that is `SITE_URL` in `src/lib/site.ts`, what search engines are told to index. |
 | `WEB_APP_URL` | — | The [review website](#review-website)'s origin, e.g. `https://app.zmistik.com`, on a host of its own. Read at build time too. |
 | `TELEGRAM_OIDC_CLIENT_ID` / `TELEGRAM_OIDC_CLIENT_SECRET` | — | "Log in with Telegram" for the website, from BotFather's Login Widget. Both, or the website has no sign-in. |
 | `ADMIN_SECRET` | falls back to `CRON_SECRET` | Protects `/api/status`. |

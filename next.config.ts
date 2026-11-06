@@ -1,4 +1,5 @@
 import type { NextConfig } from 'next';
+import { SITE_URL } from './src/lib/site';
 
 /**
  * The review website is this same deployment on its own subdomain
@@ -12,6 +13,13 @@ import type { NextConfig } from 'next';
 const webAppUrl = process.env.WEB_APP_URL?.replace(/\/+$/, '');
 const webHosts = ['app.localhost', ...(webAppUrl ? [new URL(webAppUrl).hostname] : [])];
 const webHost = `(${webHosts.map((host) => host.replace(/[.]/g, '\\.')).join('|')})`;
+
+/**
+ * The site's first address. Its public pages move to SITE_URL for good, so
+ * search engines carry what they indexed there across; everything else on it —
+ * the API, the Mini Apps — stays, for Telegram and the crons call it there.
+ */
+const formerSiteHost = 'content-arbitrary\\.vercel\\.app';
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
@@ -36,16 +44,24 @@ const nextConfig: NextConfig = {
   },
 
   async redirects() {
-    return webAppUrl
-      ? [
-          {
-            source: '/console/:path*',
-            missing: [{ type: 'host', value: webHost }],
-            destination: `${webAppUrl}/:path*`,
-            permanent: false,
-          },
-        ]
-      : [];
+    return [
+      ...['/', '/uk'].map((source) => ({
+        source,
+        has: [{ type: 'host' as const, value: formerSiteHost }],
+        destination: `${SITE_URL}${source}`,
+        permanent: true,
+      })),
+      ...(webAppUrl
+        ? [
+            {
+              source: '/console/:path*',
+              missing: [{ type: 'host' as const, value: webHost }],
+              destination: `${webAppUrl}/:path*`,
+              permanent: false,
+            },
+          ]
+        : []),
+    ];
   },
 };
 

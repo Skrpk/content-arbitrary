@@ -11,13 +11,11 @@
 export const SITE_NAME = 'Zmistik';
 
 /**
- * Canonical origin. A custom domain belongs here once there is one: search
- * engines index the canonical URL, so it should not stay on vercel.app.
+ * Canonical origin of the public site: what search engines are told to index.
+ * Its own value, not APP_BASE_URL — that is where the Mini Apps and the webhook
+ * live, and stays on vercel.app, where Telegram has them registered.
  */
-export const SITE_URL = (process.env.APP_BASE_URL ?? 'https://content-arbitrary.vercel.app').replace(
-  /\/+$/,
-  '',
-);
+export const SITE_URL = 'https://www.zmistik.com';
 
 /**
  * Where "get in touch" goes — a Telegram link is the natural fit for a
