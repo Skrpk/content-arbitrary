@@ -9,10 +9,13 @@ import { USE_CASE_KEYS, USE_CASE_PAGES } from './pages/use-cases';
  * only their arrangement, shared by every language.
  */
 
+const MOCKUP_BUTTONS = ['✅ Approve', '🚫 Reject', '🕒 Schedule', '✏️ Edit text'];
+
 /**
- * A static picture of what the product does: three sources' posts on one
- * event become one card in the review queue — ranked, rewritten in the
- * channel's language, with the queue's real labels and buttons.
+ * A picture of what the product does: three sources' posts on one event
+ * become one card in the review queue — ranked, rewritten in the channel's
+ * language, with the queue's real labels and buttons. People press those
+ * buttons, so each one opens the same chat as the page's call to action.
  */
 function ReviewMockup({ locale }: { locale: Locale }) {
   const text = CONTENT[locale].mockup;
@@ -58,10 +61,11 @@ function ReviewMockup({ locale }: { locale: Locale }) {
           {others.map((source) => source.name).join(' · ')} — ⇅ Use this one
         </p>
         <div className="mockup__buttons" lang="en">
-          <span className="mockup__approve">✅ Approve</span>
-          <span>🚫 Reject</span>
-          <span>🕒 Schedule</span>
-          <span>✏️ Edit text</span>
+          {MOCKUP_BUTTONS.map((button, index) => (
+            <a key={button} className={index === 0 ? 'mockup__approve' : undefined} href={CONTACT_URL} rel="noopener">
+              {button}
+            </a>
+          ))}
         </div>
       </div>
       <figcaption>{text.caption}</figcaption>
