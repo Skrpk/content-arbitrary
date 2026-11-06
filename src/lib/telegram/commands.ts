@@ -1,5 +1,6 @@
 import type { Database } from '@/lib/db';
 import type { Logger } from '@/lib/logger';
+import { SITE_NAME, SITE_URL } from '@/lib/site';
 import { escapeHtml } from '@/lib/telegram/format-caption';
 import { normalizeXUsername } from '@/lib/sources/normalize';
 import { updateSourceUsername } from '@/lib/sources/repository';
@@ -84,6 +85,17 @@ export function parseCommand(text: string | undefined): ParsedCommand | null {
   if (!match) return null;
 
   return { command: match[1]!.toLowerCase(), args: (match[2] ?? '').trim() };
+}
+
+/**
+ * What someone who is no reviewer gets for /start: what this is and where to
+ * read more, in their language when it is one the site has. The same text for
+ * everyone, so it says nothing of who uses the bot.
+ */
+export function strangerGreeting(languageCode: string | undefined): string {
+  return languageCode?.toLowerCase().startsWith('uk')
+    ? `${SITE_NAME} — AI-редакція для Telegram-каналів. Цей бот працює для підключених каналів. Щоб дізнатися більше й підключити свій: ${SITE_URL}/uk`
+    : `${SITE_NAME} is an AI editorial desk for Telegram channels. This bot works for connected channels. To learn more and connect yours: ${SITE_URL}`;
 }
 
 export interface CommandContext {

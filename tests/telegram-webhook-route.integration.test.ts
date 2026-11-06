@@ -12,6 +12,7 @@ import {
   workspaces,
 } from '@/db/schema';
 import { POST } from '@/app/api/telegram/webhook/route';
+import { SITE_URL } from '@/lib/site';
 import { updateApprovalCaption } from '@/lib/sync/repository';
 import { ensureTestWorkspace, telegramError, telegramOk, withEnv } from './helpers';
 
@@ -454,6 +455,57 @@ describeIfDb('Approve', () => {
 
     expect((await reload(post.id)).status).toBe('awaiting_approval');
     expect(callsTo('sendPhoto')).toHaveLength(0);
+  });
+});
+
+describeIfDb('a stranger writing to the bot', () => {
+  const STRANGER = 987654;
+
+  async function fromStranger(text: string, options: { chatType?: string; language?: string } = {}) {
+    const response = await withEnv(routeEnv, () =>
+      POST(
+        new Request('https://example.vercel.app/api/telegram/webhook', {
+          method: 'POST',
+          headers: { 'x-telegram-bot-api-secret-token': SECRET, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            update_id: 1,
+            message: {
+              message_id: 5,
+              from: { id: STRANGER, ...(options.language ? { language_code: options.language } : {}) },
+              chat: { id: options.chatType === 'group' ? -500 : STRANGER, type: options.chatType ?? 'private' },
+              text,
+            },
+          }),
+        }),
+      ),
+    );
+    expect(response.status).toBe(200);
+  }
+
+  it('gets the site’s address for /start, in their language, and nothing about the channels', async () => {
+    await fromStranger('/start', { language: 'uk' });
+    const [reply] = callsTo('sendMessage');
+    expect(reply!.body).toMatchObject({ chat_id: String(STRANGER) });
+    expect(reply!.body.text).toContain(`${SITE_URL}/uk`);
+    expect(reply!.body.text).toContain('AI-редакція');
+    expect(reply!.body.reply_markup).toBeUndefined();
+
+    await fromStranger('/start promo', { language: 'de' });
+    expect(callsTo('sendMessage')[1]!.body.text).toContain('AI editorial desk');
+  });
+
+  it('gets no answer to anything else, or to /start in a group', async () => {
+    await fromStranger('/help');
+    await fromStranger('/review');
+    await fromStranger('hello');
+    await fromStranger('/start', { chatType: 'group' });
+    expect(callsTo('sendMessage')).toHaveLength(0);
+  });
+
+  it('does not fail the update when the greeting cannot be sent', async () => {
+    failMethod = { method: 'sendMessage', description: 'Forbidden: bot was blocked by the user' };
+    await fromStranger('/start');
+    expect(callsTo('sendMessage')).toHaveLength(1);
   });
 });
 

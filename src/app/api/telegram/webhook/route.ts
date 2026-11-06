@@ -34,6 +34,7 @@ import {
   dispatchCommand,
   parseChannelChoice,
   parseCommand,
+  strangerGreeting,
   runChosenChannel,
   type CommandContext,
   type CommandReply,
@@ -99,7 +100,7 @@ const callbackQuerySchema = z.object({
 
 const messageSchema = z.object({
   message_id: z.number(),
-  from: z.object({ id: z.number(), username: z.string().optional() }).optional(),
+  from: z.object({ id: z.number(), username: z.string().optional(), language_code: z.string().optional() }).optional(),
   chat: z.object({ id: z.number(), type: z.string().optional() }),
   text: z.string().optional(),
 });
@@ -438,13 +439,14 @@ async function reviewCopiesFor(
 /**
  * Run a slash command sent to the bot.
  *
- * Only a workspace's own reviewer may manage its sources; anyone else is
- * ignored silently rather than told what the bot is, so a stranger who finds it
- * learns nothing about the setup. The sender's id is also what selects the
- * tenant, since one bot serves them all.
+ * Only a workspace's own reviewer may manage its sources. A stranger's command
+ * is ignored silently, so they learn nothing about the setup — but for /start
+ * in a private chat, the first thing anyone sends a bot: that gets the public
+ * site's address, the same for everyone, and nothing else. The sender's id is
+ * also what selects the tenant, since one bot serves them all.
  */
 async function handleCommandMessage(
-  message: { chat: { id: number }; from?: { id: number }; text?: string },
+  message: { chat: { id: number; type?: string }; from?: { id: number; language_code?: string }; text?: string },
   context: {
     db: Database;
     client: TelegramClient;
@@ -467,6 +469,16 @@ async function handleCommandMessage(
       fromId: message.from?.id,
       command: parsed.command,
     });
+    if (parsed.command === 'start' && message.chat.type === 'private') {
+      await client
+        .call(
+          'sendMessage',
+          { chat_id: String(message.chat.id), text: strangerGreeting(message.from?.language_code) },
+          z.object({ message_id: z.number() }),
+        )
+        // A failed greeting is not worth Telegram sending the update again.
+        .catch((error: unknown) => logger.warn('webhook.greeting_failed', { error: describeError(error) }));
+    }
     return;
   }
 

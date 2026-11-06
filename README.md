@@ -613,7 +613,8 @@ The bot's command menu — the list beside the message field — is `BOT_COMMAND
 `src/lib/telegram/commands.ts`; register it with `npm run telegram:commands` after changing it.
 
 Only a workspace's reviewer may run these, for the workspaces that name them; anyone else is
-ignored without a reply.
+ignored without a reply, except for `/start` in a private chat, which answers with one line on what
+Zmistik is and the public site's address, the same for everyone.
 The commands arrive over the same webhook as the Approve buttons, so
 `npm run webhook:set` must have been run once (see below).
 
