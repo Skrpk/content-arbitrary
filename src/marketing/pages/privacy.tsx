@@ -161,7 +161,7 @@ const en: PublicPage = {
           <tbody>
             <tr>
               <td>Vercel</td>
-              <td>Hosting, logs, storage of uploaded files</td>
+              <td>Hosting, logs, storage of uploaded files, anonymous visit statistics for the public pages</td>
             </tr>
             <tr>
               <td>Neon</td>
@@ -230,7 +230,7 @@ const en: PublicPage = {
           </tbody>
         </table>
       </div>
-      <p>There are no advertising or analytics cookies on the site.</p>
+      <p>There are no advertising or analytics cookies on the site. We count visits to the public pages with Vercel Web Analytics, which sets no cookies and gives us aggregated statistics only.</p>
 
       <h2>9. How long we keep data</h2>
       <div className="table-scroll">
@@ -448,7 +448,7 @@ const uk: PublicPage = {
           <tbody>
             <tr>
               <td>Vercel</td>
-              <td>Хостинг, журнали, зберігання завантажених файлів</td>
+              <td>Хостинг, журнали, зберігання завантажених файлів, анонімна статистика відвідувань публічних сторінок</td>
             </tr>
             <tr>
               <td>Neon</td>
@@ -517,7 +517,7 @@ const uk: PublicPage = {
           </tbody>
         </table>
       </div>
-      <p>На сайті немає рекламних чи аналітичних cookies.</p>
+      <p>На сайті немає рекламних чи аналітичних cookies. Відвідування публічних сторінок ми рахуємо через Vercel Web Analytics: цей сервіс не ставить cookies і дає нам лише узагальнену статистику.</p>
 
       <h2>9. Як довго ми зберігаємо дані</h2>
       <div className="table-scroll">
