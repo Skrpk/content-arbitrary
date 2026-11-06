@@ -56,12 +56,10 @@ export const MOCKUP_SOURCES = [
 
 const en: LandingContent = {
   meta: {
-    title: 'An AI editorial desk for Telegram channels: your sources, ranked and rewritten in your voice',
+    title: 'AI editorial desk for Telegram channels',
     description:
-      'Zmistik follows the X accounts, RSS feeds, Telegram and YouTube channels and websites you choose, ranks every new ' +
-      'post by how likely you are to publish it, groups the same story from several sources into ' +
-      'one card and rewrites it in your channel’s language and voice. You approve, edit with an AI ' +
-      'assistant, schedule or reject — in Telegram or in the browser.',
+      'Zmistik follows your X, RSS, Telegram, YouTube and website sources, ranks new posts for your channel ' +
+      'and rewrites them in its voice. You decide.',
     ogHeadline: 'An AI editorial desk for your Telegram channel',
     ogSubline: 'Your sources, ranked and rewritten in your voice — you decide',
     ogBadge: 'For Telegram channels',
@@ -78,7 +76,7 @@ const en: LandingContent = {
   languageSwitch: { label: 'Language', names: { en: 'EN', uk: 'UK' } },
   hero: {
     eyebrow: 'An AI editorial desk for Telegram channels',
-    title: 'Everything your sources publish, sorted by what your channel would run',
+    title: 'Everything your sources publish, sorted by what your Telegram channel would run',
     lead:
       'Zmistik follows the X accounts, RSS feeds, Telegram and YouTube channels and websites you pick. Each new post is ' +
       'scored by how likely you are to publish it, the same story from several sources becomes one ' +
@@ -248,12 +246,10 @@ const en: LandingContent = {
 
 const uk: LandingContent = {
   meta: {
-    title: 'AI-редакція для Telegram-каналу: ваші джерела, відсортовані й переписані вашим голосом',
+    title: 'AI-редакція для Telegram-каналу',
     description:
-      'Zmistik стежить за обраними акаунтами в X, RSS-стрічками, Telegram- і YouTube-каналами та сайтами, оцінює кожен ' +
-      'новий пост за тим, наскільки ймовірно ви його опублікуєте, збирає ту саму історію з кількох ' +
-      'джерел в одну картку й переписує її мовою та голосом вашого каналу. Ви погоджуєте, редагуєте ' +
-      'з AI-асистентом, плануєте чи відхиляєте — у Telegram або в браузері.',
+      'Zmistik стежить за вашими джерелами — X, RSS, Telegram, YouTube, сайти, — оцінює нові пости для каналу ' +
+      'й переписує їх його голосом. Рішення за вами.',
     ogHeadline: 'AI-редакція для вашого Telegram-каналу',
     ogSubline: 'Ваші джерела — відсортовані й переписані вашим голосом. Рішення за вами',
     ogBadge: 'Для Telegram-каналів',
@@ -270,7 +266,7 @@ const uk: LandingContent = {
   languageSwitch: { label: 'Мова', names: { en: 'EN', uk: 'UK' } },
   hero: {
     eyebrow: 'AI-редакція для Telegram-каналів',
-    title: 'Усе з ваших джерел — у порядку, який обрав би ваш канал',
+    title: 'Усе з ваших джерел — у порядку, який обрав би ваш Telegram-канал',
     lead:
       'Zmistik стежить за обраними акаунтами в X, RSS-стрічками, Telegram- і YouTube-каналами та сайтами. Кожен новий ' +
       'пост отримує оцінку — наскільки ймовірно ви його опублікуєте, — та сама історія з кількох ' +

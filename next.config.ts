@@ -33,7 +33,7 @@ const nextConfig: NextConfig = {
       beforeFiles: [
         { source: '/', has: [{ type: 'host', value: webHost }], destination: '/console' },
         {
-          source: '/:path((?!api/|_next/|console(?:/|$)|icon\\.svg$).+)',
+          source: '/:path((?!api/|_next/|console(?:/|$)|icon\\.svg$|favicon\\.ico$).+)',
           has: [{ type: 'host', value: webHost }],
           destination: '/console/:path',
         },

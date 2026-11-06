@@ -1,6 +1,6 @@
 import { CONTACT_URL, SITE_NAME, SITE_URL } from '@/lib/site';
 import { CONTENT, MOCKUP_SOURCES } from './content';
-import { localePath, type Locale } from './i18n';
+import { LOCALES, localePath, type Locale } from './i18n';
 
 /**
  * The landing page, in one language. The words are in content.ts; this is
@@ -70,8 +70,25 @@ function ReviewMockup({ locale }: { locale: Locale }) {
 export function Landing({ locale }: { locale: Locale }) {
   const text = CONTENT[locale];
 
-  /** What search engines read: the product, and the FAQ as rich results. */
+  /** What search engines read: the site and who runs it — the name Google shows for it — the product, and the FAQ. */
+  const organizationId = `${SITE_URL}/#organization`;
   const structuredData = [
+    {
+      '@context': 'https://schema.org',
+      '@type': 'WebSite',
+      name: SITE_NAME,
+      url: `${SITE_URL}/`,
+      inLanguage: LOCALES,
+      publisher: { '@id': organizationId },
+    },
+    {
+      '@context': 'https://schema.org',
+      '@type': 'Organization',
+      '@id': organizationId,
+      name: SITE_NAME,
+      url: `${SITE_URL}/`,
+      logo: `${SITE_URL}/logo.png`,
+    },
     {
       '@context': 'https://schema.org',
       '@type': 'SoftwareApplication',
