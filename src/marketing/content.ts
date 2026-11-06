@@ -39,7 +39,7 @@ export interface LandingContent {
   audiences: { title: string; items: Item[] };
   faq: { title: string; items: { question: string; answer: string }[] };
   cta: { title: string; text: string; button: string };
-  footer: { disclaimer: string; contact: string };
+  footer: { disclaimer: string; contact: string; about: string; privacy: string; terms: string };
 }
 
 /**
@@ -241,6 +241,9 @@ const en: LandingContent = {
     disclaimer:
       'X is a trademark of X Corp. Telegram is a trademark of Telegram FZ-LLC. This service is not affiliated with either.',
     contact: 'Contact us on Telegram',
+    about: 'About',
+    privacy: 'Privacy',
+    terms: 'Terms',
   },
 };
 
@@ -431,6 +434,9 @@ const uk: LandingContent = {
     disclaimer:
       'X — торгова марка X Corp., Telegram — Telegram FZ-LLC. Сервіс не пов’язаний із ними.',
     contact: 'Зв’язатися в Telegram',
+    about: 'Про нас',
+    privacy: 'Конфіденційність',
+    terms: 'Умови',
   },
 };
 

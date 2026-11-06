@@ -3,7 +3,7 @@ import { currentWebViewer } from '@/lib/accounts/current';
 import { safeReturnTo } from '@/lib/accounts/web';
 import { getEnv } from '@/lib/env';
 import { telegramLoginProvider } from '@/lib/accounts/telegram';
-import { SITE_NAME } from '@/lib/site';
+import { SITE_NAME, SITE_URL } from '@/lib/site';
 
 /**
  * Sign in. One way for now — Telegram, as OpenID Connect — and more are more
@@ -71,6 +71,11 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
         )}
 
         {error ? <p style={{ color: '#e53935', fontSize: '0.85rem', margin: '1rem 0 0' }}>{error}</p> : null}
+
+        <p style={{ color: 'var(--tg-theme-hint-color)', fontSize: '0.75rem', margin: '1rem 0 0' }}>
+          By signing in you agree to the <a href={`${SITE_URL}/terms`} style={{ color: 'inherit' }}>Terms of Service</a> and the{' '}
+          <a href={`${SITE_URL}/privacy`} style={{ color: 'inherit' }}>Privacy Policy</a>.
+        </p>
       </section>
     </main>
   );

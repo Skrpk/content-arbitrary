@@ -1,6 +1,7 @@
 import type { MetadataRoute } from 'next';
 import { SITE_URL } from '@/lib/site';
 import { LOCALES, localePath } from '@/marketing/i18n';
+import { PUBLIC_PAGE_PATHS } from '@/marketing/pages';
 
 /**
  * Every public page, in every language, each listing its translations so
@@ -8,7 +9,7 @@ import { LOCALES, localePath } from '@/marketing/i18n';
  * this list when the blog exists.
  */
 export default function sitemap(): MetadataRoute.Sitemap {
-  const pages = [''];
+  const pages = ['', ...PUBLIC_PAGE_PATHS];
   const absolute = (path: string) => new URL(path, SITE_URL).toString();
 
   return pages.flatMap((path) =>

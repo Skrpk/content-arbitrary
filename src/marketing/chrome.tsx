@@ -64,9 +64,14 @@ export function SiteFooter({ locale }: { locale: Locale }) {
         <p>
           © {new Date().getFullYear()} {SITE_NAME}. {text.disclaimer}
         </p>
-        <a href={CONTACT_URL} rel="noopener">
-          {text.contact}
-        </a>
+        <nav aria-label={text.contact} className="site-footer__links">
+          <Link href={localePath(locale, '/about')}>{text.about}</Link>
+          <Link href={localePath(locale, '/privacy')}>{text.privacy}</Link>
+          <Link href={localePath(locale, '/terms')}>{text.terms}</Link>
+          <a href={CONTACT_URL} rel="noopener">
+            {text.contact}
+          </a>
+        </nav>
       </div>
     </footer>
   );

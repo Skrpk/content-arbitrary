@@ -12,14 +12,25 @@ import './marketing.css';
 export function MarketingDocument({ locale, children }: { locale: Locale; children: ReactNode }) {
   return (
     <html lang={locale}>
-      <body>
-        <a className="skip-link" href="#main">
-          {CONTENT[locale].skipLink}
-        </a>
-        <SiteHeader locale={locale} />
-        <main id="main">{children}</main>
-        <SiteFooter locale={locale} />
-      </body>
+      <body>{children}</body>
     </html>
+  );
+}
+
+/**
+ * What every public page has around it. Part of the page, not the layout: the
+ * header's language switch goes to the same page in the other language, and
+ * only the page knows which it is.
+ */
+export function MarketingPage({ locale, path = '', children }: { locale: Locale; path?: string; children: ReactNode }) {
+  return (
+    <>
+      <a className="skip-link" href="#main">
+        {CONTENT[locale].skipLink}
+      </a>
+      <SiteHeader locale={locale} path={path} />
+      <main id="main">{children}</main>
+      <SiteFooter locale={locale} />
+    </>
   );
 }

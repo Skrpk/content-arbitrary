@@ -606,3 +606,57 @@ a {
 .site-footer p {
   margin: 0;
 }
+
+.site-footer__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+}
+
+/* About, privacy, terms --------------------------------------------------- */
+
+.public-page {
+  padding-top: 3rem;
+  padding-bottom: 4rem;
+}
+
+.public-page h2 {
+  font-size: 1.3rem;
+  margin-top: 2.25rem;
+}
+
+.public-page__effective {
+  color: var(--muted);
+}
+
+.public-page ul {
+  padding-left: 1.25rem;
+  margin: 0 0 1rem;
+}
+
+.public-page li {
+  margin-bottom: 0.5rem;
+}
+
+.public-page code {
+  font-size: 0.9em;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  margin-bottom: 1rem;
+}
+
+.public-page table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.public-page th,
+.public-page td {
+  padding: 0.55rem 0.75rem 0.55rem 0;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
