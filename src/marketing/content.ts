@@ -37,6 +37,7 @@ export interface LandingContent {
   features: { title: string; lead: string; items: (Item & { icon: string })[] };
   steps: { title: string; lead: string; items: Item[] };
   audiences: { title: string; items: Item[] };
+  useCases: { title: string; lead: string; more: string };
   faq: { title: string; items: { question: string; answer: string }[] };
   cta: { title: string; text: string; button: string };
   footer: { disclaimer: string; contact: string; about: string; privacy: string; terms: string };
@@ -172,6 +173,11 @@ const en: LandingContent = {
         text: 'One service for several channels, each with its own sources, language, editor and rules — including channels that publish everything without review.',
       },
     ],
+  },
+  useCases: {
+    title: 'What you can do with it',
+    lead: 'Each of these has its own page: how it works, and what it does not do.',
+    more: 'More on what Zmistik does',
   },
   faq: {
     title: 'Frequently asked questions',
@@ -365,6 +371,11 @@ const uk: LandingContent = {
         text: 'Один сервіс на кілька каналів: у кожного свої джерела, мова, редактор і правила — зокрема канали, що публікують усе без розгляду.',
       },
     ],
+  },
+  useCases: {
+    title: 'Що можна робити',
+    lead: 'Про кожне є окрема сторінка: як це працює і чого сервіс не робить.',
+    more: 'Що ще вміє Zmistik',
   },
   faq: {
     title: 'Часті запитання',

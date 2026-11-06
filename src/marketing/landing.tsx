@@ -1,6 +1,8 @@
+import Link from 'next/link';
 import { CONTACT_URL, SITE_NAME, SITE_URL } from '@/lib/site';
 import { CONTENT, MOCKUP_SOURCES } from './content';
 import { LOCALES, localePath, type Locale } from './i18n';
+import { USE_CASE_KEYS, USE_CASE_PAGES } from './pages/use-cases';
 
 /**
  * The landing page, in one language. The words are in content.ts; this is
@@ -188,7 +190,24 @@ export function Landing({ locale }: { locale: Locale }) {
         </div>
       </section>
 
-      <section id="faq" className="section section--alt" aria-labelledby="faq-title">
+      <section className="section section--alt" aria-labelledby="use-cases-title">
+        <div className="container">
+          <h2 id="use-cases-title">{text.useCases.title}</h2>
+          <p className="section__lead">{text.useCases.lead}</p>
+          <ul className="grid grid--audience">
+            {USE_CASE_KEYS.map((key) => (
+              <li key={key} className="card">
+                <h3>
+                  <Link href={localePath(locale, `/${key}`)}>{USE_CASE_PAGES[key][locale].title}</Link>
+                </h3>
+                <p>{USE_CASE_PAGES[key][locale].description}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </section>
+
+      <section id="faq" className="section" aria-labelledby="faq-title">
         <div className="container container--narrow">
           <h2 id="faq-title">{text.faq.title}</h2>
           <div className="faq">
