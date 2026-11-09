@@ -12,10 +12,14 @@ export const THREADS_GRAPH_URL = 'https://graph.threads.com';
 export const THREADS_API_VERSION = 'v1.0';
 
 /**
- * What a connected account allows: reading who it is, and publishing to it.
+ * What a connected account allows: reading who it is, publishing to it, and
+ * reading public profiles' posts — the account that reads Threads sources.
  * Asking for more means everyone connected so far connects again.
  */
-export const THREADS_SCOPES = ['threads_basic', 'threads_content_publish'] as const;
+export const THREADS_SCOPES = ['threads_basic', 'threads_content_publish', 'threads_profile_discovery'] as const;
+
+/** The permission reading a public profile's posts takes. */
+export const THREADS_DISCOVERY_SCOPE = 'threads_profile_discovery';
 
 export interface ThreadsApp {
   appId: string;

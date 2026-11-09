@@ -38,6 +38,8 @@ const PLATFORM_IDENTITY: { readonly [P in SourcePlatform]: PlatformIdentity } = 
   youtube: { postIdPrefix: 'yt:', label: (name) => name },
   // `web:<sha256 of the page's URL>` — see src/lib/website/url.ts. A site is named by its host.
   website: { postIdPrefix: 'web:', label: (name) => name },
+  // `th:<Threads media id>` — see src/lib/threads/source.ts. An account is named by its username.
+  threads: { postIdPrefix: 'th:', label: handle },
 };
 
 /** Where a feed item's id starts in `processed_posts.external_id`. */
@@ -66,6 +68,13 @@ export const WEB_ITEM_ID_PREFIX = PLATFORM_IDENTITY.website.postIdPrefix!;
 
 export function isWebItemId(externalId: string): boolean {
   return externalId.startsWith(WEB_ITEM_ID_PREFIX);
+}
+
+/** Where a Threads post's id starts in `processed_posts.external_id`. */
+export const THREADS_POST_ID_PREFIX = PLATFORM_IDENTITY.threads.postIdPrefix!;
+
+export function isThreadsPostId(externalId: string): boolean {
+  return externalId.startsWith(THREADS_POST_ID_PREFIX);
 }
 
 /** The platforms whose sources Radar names by title rather than by handle. */

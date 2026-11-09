@@ -10,7 +10,7 @@ import { acquireMedia } from '@/lib/sync/acquire-media';
 import type { TelegramClient } from '@/lib/telegram/client';
 import { escapeHtml } from '@/lib/telegram/format-caption';
 import { sendText } from '@/lib/telegram/send-media';
-import { refreshChannelMedia } from '@/lib/telegram-channel/refresh-media';
+import { refreshSourceMedia } from '@/lib/sources/refresh-media';
 import { threadsAccessToken, threadsAccountsFor } from '@/lib/threads/accounts';
 import {
   containerStatus,
@@ -193,7 +193,7 @@ async function mediaUrls(
 
   // A Telegram channel's links expire: looked up afresh, all at once.
   const sources = media.flatMap((item) => ('source' in item ? [item.source] : []));
-  const fresh = sources.length > 0 ? await refreshChannelMedia(delivery.content.externalId, sources, input) : [];
+  const fresh = sources.length > 0 ? await refreshSourceMedia(delivery.content.externalId, sources, { db: input.db, env: input.env, workspaceId: delivery.workspaceId, logger: log, fetchImpl: input.fetchImpl }) : [];
   let nextSource = 0;
 
   const host = input.host !== undefined ? input.host : blobMediaHost(input.env);

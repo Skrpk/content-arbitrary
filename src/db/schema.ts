@@ -417,7 +417,7 @@ export interface SourceMetadata {
   } | null;
 }
 
-export const sourcePlatformEnum = pgEnum('source_platform', ['x', 'rss', 'telegram', 'youtube', 'website']);
+export const sourcePlatformEnum = pgEnum('source_platform', ['x', 'rss', 'telegram', 'youtube', 'website', 'threads']);
 
 export type SourcePlatform = (typeof sourcePlatformEnum.enumValues)[number];
 

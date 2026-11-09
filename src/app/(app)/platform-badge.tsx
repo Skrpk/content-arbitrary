@@ -1,5 +1,5 @@
 /**
- * Marks where a source is — X, a feed, a Telegram or YouTube channel, a website — on the Mini App
+ * Marks where a source is — X, a feed, a Telegram or YouTube channel, a website, Threads — on the Mini App
  * and website pages.
  */
 const BADGES = {
@@ -9,9 +9,11 @@ const BADGES = {
   telegram: { label: 'Telegram', colour: '#229ed9' },
   youtube: { label: 'YouTube', colour: '#e62117' },
   website: { label: 'Web', colour: '#5b6b7a' },
+  // Black like X's: Threads' mark is black and white too.
+  threads: { label: 'Threads', colour: '#000000' },
 } as const;
 
-export function PlatformBadge({ platform }: { platform: 'x' | 'rss' | 'telegram' | 'youtube' | 'website' }) {
+export function PlatformBadge({ platform }: { platform: 'x' | 'rss' | 'telegram' | 'youtube' | 'website' | 'threads' }) {
   const badge = BADGES[platform];
   return (
     <span
@@ -24,7 +26,7 @@ export function PlatformBadge({ platform }: { platform: 'x' | 'rss' | 'telegram'
         fontSize: '0.7rem',
         fontWeight: 700,
         verticalAlign: 'middle',
-        ...(platform === 'x' ? { boxShadow: 'inset 0 0 0 1px rgba(127, 127, 127, 0.6)' } : {}),
+        ...(platform === 'x' || platform === 'threads' ? { boxShadow: 'inset 0 0 0 1px rgba(127, 127, 127, 0.6)' } : {}),
       }}
     >
       {badge.label}

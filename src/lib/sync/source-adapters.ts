@@ -7,6 +7,7 @@ import { syncTelegramSource } from '@/lib/sync/sync-telegram-source';
 import { syncWebsiteSource } from '@/lib/sync/sync-website-source';
 import { syncXSource } from '@/lib/sync/sync-x-source';
 import { syncYouTubeSource } from '@/lib/sync/sync-youtube-source';
+import { syncThreadsSource, type ThreadsSourceClients } from '@/lib/sync/sync-threads-source';
 import type { FetchChannelOptions } from '@/lib/telegram-channel/client';
 import type { WebsiteFetchOptions } from '@/lib/website/http';
 import type { XClient } from '@/lib/x/client';
@@ -43,6 +44,8 @@ export interface SourceClients {
   transcripts?: VideoTranscriptProvider | null;
   /** How websites' sitemaps and pages are fetched; injected by tests and the local runner. */
   websiteFetch?: WebsiteFetchOptions;
+  /** Who reads Threads accounts, and the run's share of their requests; null without the Threads app. */
+  threads?: ThreadsSourceClients | null;
 }
 
 /** Everything a source's pass is handed, whatever its platform. */
@@ -82,6 +85,10 @@ const SOURCE_ADAPTERS: { readonly [P in SourcePlatform]: SourceAdapter & { platf
   website: {
     platform: 'website',
     sync: (source, { clients, ...context }) => syncWebsiteSource(source, { ...context, websiteFetch: clients.websiteFetch }),
+  },
+  threads: {
+    platform: 'threads',
+    sync: (source, { clients, ...context }) => syncThreadsSource(source, { ...context, threads: clients.threads ?? null }),
   },
 };
 

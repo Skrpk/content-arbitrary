@@ -23,7 +23,7 @@ import { theme } from '@/lib/telegram/webapp-client';
 
 interface SourceView {
   id: number;
-  platform: 'x' | 'rss' | 'telegram' | 'youtube' | 'website';
+  platform: 'x' | 'rss' | 'telegram' | 'youtube' | 'website' | 'threads';
   username: string;
   /** `@handle` for X and a Telegram channel, the feed's title for RSS. */
   label: string;
@@ -90,14 +90,14 @@ const SETTINGS: { key: Setting; label: string; hint: string; platforms: SourceVi
     key: 'enabled',
     label: 'Active',
     hint: 'Off pauses the source: kept, but not synced.',
-    platforms: ['x', 'rss', 'telegram', 'youtube', 'website'],
+    platforms: ['x', 'rss', 'telegram', 'youtube', 'website', 'threads'],
   },
   {
     key: 'includeTextOnly',
     label: 'Posts without media',
     hint: 'Also mirror text-only posts, as text messages. Applies to new posts.',
     // Every feed entry is text already.
-    platforms: ['x', 'telegram'],
+    platforms: ['x', 'telegram', 'threads'],
   },
 ];
 

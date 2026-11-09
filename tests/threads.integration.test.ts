@@ -171,7 +171,7 @@ describeIfDb('connecting a channel’s Threads account', () => {
     expect(`${location.origin}${location.pathname}`).toBe('https://threads.com/oauth/authorize');
     expect(location.searchParams.get('client_id')).toBe(APP_ID);
     expect(location.searchParams.get('redirect_uri')).toBe(`${WEB}/api/threads/callback`);
-    expect(location.searchParams.get('scope')).toBe('threads_basic,threads_content_publish');
+    expect(location.searchParams.get('scope')).toBe('threads_basic,threads_content_publish,threads_profile_discovery');
     expect(location.searchParams.get('response_type')).toBe('code');
     expect(cookiesOf(started)['__Host-threads-state']).toBe(location.searchParams.get('state'));
 

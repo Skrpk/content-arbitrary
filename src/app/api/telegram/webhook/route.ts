@@ -1,3 +1,4 @@
+import { threadsReading } from '@/lib/threads/reader';
 import { loadRadarNote } from '@/lib/radar/review-note';
 import { sourceLabelOfPost } from '@/lib/sources/display';
 import { timingSafeEqual } from 'node:crypto';
@@ -506,6 +507,7 @@ async function handleCommandMessage(
         db,
         xClient: new XClient({ logger }),
         youtube: youtubeClientFor(logger),
+        threads: threadsReading(getEnv()),
         logger: logger.child({ fromId: message.from?.id }),
         workspaceId: workspace.id,
         workspaces: reviewerWorkspaces.map(({ id, name }) => ({ id, name })),

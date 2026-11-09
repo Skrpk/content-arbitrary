@@ -164,3 +164,77 @@ function idField(result: Record<string, unknown>): string {
   if (typeof id !== 'string' || !/^\d{1,40}$/.test(id)) throw new ThreadsApiError('Threads returned no id', 502);
   return id;
 }
+
+/* Reading public profiles ------------------------------------------------- */
+
+/** A public profile, as Threads' profile lookup gives it. */
+export interface ThreadsProfile {
+  username: string;
+  name: string | null;
+  followers: number | null;
+}
+
+/**
+ * A public profile by its exact username, or null when Threads has none it
+ * will show: private, under 100 followers, or no such account. Before the
+ * app's review, Threads shows only its own official accounts.
+ */
+export async function profileLookup(token: string, username: string, options: ThreadsCallOptions = {}): Promise<ThreadsProfile | null> {
+  const params = new URLSearchParams({ username, access_token: token });
+  try {
+    const result = await call(`${THREADS_GRAPH_URL}/${THREADS_API_VERSION}/profile_lookup?${params}`, { method: 'GET' }, options);
+    if (typeof result.username !== 'string') return null;
+    return {
+      username: result.username,
+      name: typeof result.name === 'string' ? result.name : null,
+      followers: typeof result.follower_count === 'number' ? result.follower_count : null,
+    };
+  } catch (error) {
+    if (error instanceof ThreadsApiError && (error.status === 400 || error.status === 404)) return null;
+    throw error;
+  }
+}
+
+/** A post as Threads gives it — the fields asked for, nothing assumed. */
+export interface ThreadsApiPost {
+  id: string;
+  media_type?: string;
+  media_url?: string;
+  thumbnail_url?: string;
+  permalink?: string;
+  username?: string;
+  text?: string;
+  timestamp?: string;
+  is_quote_post?: boolean;
+  link_attachment_url?: string;
+  children?: { data?: { id: string; media_type?: string; media_url?: string; thumbnail_url?: string }[] };
+}
+
+const POST_FIELDS =
+  'id,media_type,media_url,thumbnail_url,permalink,username,text,timestamp,is_quote_post,link_attachment_url,children{id,media_type,media_url,thumbnail_url}';
+
+/** A public profile's posts since a moment, newest first: one request, the run's budget counts it. */
+export async function profilePosts(
+  token: string,
+  username: string,
+  input: { since: Date; limit?: number },
+  options: ThreadsCallOptions = {},
+): Promise<ThreadsApiPost[]> {
+  const params = new URLSearchParams({
+    username,
+    fields: POST_FIELDS,
+    since: String(Math.floor(input.since.getTime() / 1000)),
+    limit: String(input.limit ?? 25),
+    access_token: token,
+  });
+  const result = await call(`${THREADS_GRAPH_URL}/${THREADS_API_VERSION}/profile_posts?${params}`, { method: 'GET' }, options);
+  const data = Array.isArray(result.data) ? (result.data as ThreadsApiPost[]) : [];
+  return data.filter((post) => typeof post?.id === 'string');
+}
+
+/** One post as it is now — its media's addresses afresh, for they expire. */
+export async function threadsPost(token: string, mediaId: string, options: ThreadsCallOptions = {}): Promise<ThreadsApiPost> {
+  const params = new URLSearchParams({ fields: POST_FIELDS, access_token: token });
+  const result = await call(`${THREADS_GRAPH_URL}/${THREADS_API_VERSION}/${mediaId}?${params}`, { method: 'GET' }, options);
+  return result as unknown as ThreadsApiPost;
+}

@@ -216,6 +216,22 @@ const schema = z
       .optional()
       .or(z.literal('').transform(() => undefined)),
     THREADS_APP_SECRET: z.string().trim().min(16).optional().or(z.literal('').transform(() => undefined)),
+    /**
+     * Whose connected Threads account reads Threads sources (src/lib/threads/reader.ts):
+     * its username, as connected on some channel. Unset, Threads sources are not read
+     * in `shared` mode.
+     */
+    THREADS_READER_USERNAME: z
+      .string()
+      .trim()
+      .transform((value) => value.replace(/^@/, '').toLowerCase())
+      .optional()
+      .or(z.literal('').transform(() => undefined)),
+    /**
+     * `shared`: that one account reads every channel's Threads sources.
+     * `own_first`: a channel's own connected account reads its sources, the shared one the rest.
+     */
+    THREADS_READER_MODE: enumWithDefault(['shared', 'own_first'] as const, 'shared'),
 
     /**
      * Which model Shadow Radar asks: OpenAI's GPT-6 Luna (the default) or

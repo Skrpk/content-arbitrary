@@ -14,7 +14,7 @@ import { escapeHtml, truncateForDisplay } from '@/lib/telegram/format-caption';
 import { TELEGRAM_CAPTION_LIMIT, TELEGRAM_MEDIA_GROUP_MAX, TELEGRAM_MESSAGE_TEXT_LIMIT } from '@/lib/telegram/limits';
 import { footerLength, withFooter, type PostFooter } from '@/lib/telegram/post-footer';
 import { sendRichMessage, type MediaPayload } from '@/lib/telegram/send-media';
-import { refreshChannelMedia } from '@/lib/telegram-channel/refresh-media';
+import { refreshSourceMedia } from '@/lib/sources/refresh-media';
 import {
   deleteUploads,
   loadUploads,
@@ -96,7 +96,7 @@ async function publishToTelegram(
 
   const media =
     payload.items.length === 0 && payload.sourceMedia?.length
-      ? await acquireMedia(await refreshChannelMedia(input.row.externalId, payload.sourceMedia, { fetchImpl: input.fetchImpl }), {
+      ? await acquireMedia(await refreshSourceMedia(input.row.externalId, payload.sourceMedia, { db: input.db, env: input.env, workspaceId: input.destination.workspaceId, logger: input.logger, fetchImpl: input.fetchImpl }), {
           env: input.env,
           logger: input.logger ?? createLogger({ app: 'content-arbitrary' }),
           fetchImpl: input.fetchImpl,
@@ -148,7 +148,7 @@ async function publishRichPost(
   // Looked up afresh only when some of them are fetched again, not re-sent from Telegram's copies.
   const sourceMedia =
     payload.sourceMedia && own.some((ref) => !payload.items[Number(ref.slice(1))])
-      ? await refreshChannelMedia(input.row.externalId, payload.sourceMedia, { fetchImpl: input.fetchImpl })
+      ? await refreshSourceMedia(input.row.externalId, payload.sourceMedia, { db: input.db, env: input.env, workspaceId: input.destination.workspaceId, logger: input.logger, fetchImpl: input.fetchImpl })
       : payload.sourceMedia;
 
   const media: { ref: string; payload: MediaPayload }[] = [];

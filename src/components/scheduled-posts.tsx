@@ -15,7 +15,7 @@ import { theme } from '@/lib/telegram/webapp-client';
 
 interface ScheduledItem {
   id: number;
-  platform: 'x' | 'rss' | 'telegram' | 'youtube' | 'website';
+  platform: 'x' | 'rss' | 'telegram' | 'youtube' | 'website' | 'threads';
   sourceLabel: string | null;
   url: string;
   text: string;

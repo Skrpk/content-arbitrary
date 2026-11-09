@@ -96,6 +96,8 @@ export interface SourceSyncSummary {
   stoppedForTime?: boolean;
   /** More posts arrived since the cursor than one run reads; the oldest were not seen. */
   windowOverflow?: boolean;
+  /** Not read this run: its reading account's share of requests was spent. It goes first next run. */
+  deferred?: boolean;
   error?: string;
 }
 

@@ -57,6 +57,7 @@ export async function GET(request: Request): Promise<Response> {
           skipped: source.skipped,
           ...(source.stoppedForTime ? { stoppedForTime: true } : {}),
           ...(source.windowOverflow ? { windowOverflow: true } : {}),
+          ...(source.deferred ? { deferred: true } : {}),
           ...(source.error ? { error: source.error } : {}),
         })),
         dryRun: summary.dryRun,

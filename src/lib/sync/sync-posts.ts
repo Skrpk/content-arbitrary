@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { ThreadsReadBudget, threadsReading } from '@/lib/threads/reader';
+import type { ThreadsSourceClients } from '@/lib/sync/sync-threads-source';
 import { hasThreadsAccount } from '@/lib/threads/accounts';
 import type { SourcePlatform, Workspace } from '@/db/schema';
 import { getDb, getSql, type Database } from '@/lib/db';
@@ -99,6 +101,8 @@ export interface SyncOptions {
   channelFetch?: FetchChannelOptions;
   /** How websites' sitemaps and pages are fetched; injected by tests. */
   websiteFetch?: WebsiteFetchOptions;
+  /** Who reads Threads accounts; injected by tests. Built from the env when omitted. */
+  threads?: ThreadsSourceClients | null;
   /** The YouTube Data API and the transcript provider; injected by tests, else from the env's keys. */
   youtubeClient?: YouTubeClient | null;
   transcriptProvider?: VideoTranscriptProvider | null;
@@ -152,6 +156,10 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
       feedFetch: options.feedFetch,
       channelFetch: options.channelFetch,
       websiteFetch: options.websiteFetch,
+      threads:
+        options.threads !== undefined
+          ? options.threads
+          : { reading: threadsReading(env), budget: new ThreadsReadBudget() },
       youtube:
         options.youtubeClient !== undefined
           ? options.youtubeClient

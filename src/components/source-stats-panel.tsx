@@ -23,7 +23,7 @@ type Period = '7d' | '30d' | 'all';
 
 interface SourceView {
   sourceId: number;
-  platform: 'x' | 'rss' | 'telegram' | 'youtube' | 'website';
+  platform: 'x' | 'rss' | 'telegram' | 'youtube' | 'website' | 'threads';
   username: string;
   /** `@handle` (X or a Telegram channel), or a feed's title. */
   label: string;
