@@ -11,12 +11,16 @@ const TITLE_MAX = 60;
 const DESCRIPTION_MAX = 160;
 
 describe('the public site, as a search result', () => {
-  it.each(LOCALES)('fits the results page in %s, and names the channel type it is for', (locale) => {
+  it.each(LOCALES)('fits the results page in %s, and names where it publishes', (locale) => {
     const { meta, hero } = CONTENT[locale];
     expect(`${meta.title} — ${SITE_NAME}`.length).toBeLessThanOrEqual(TITLE_MAX);
     expect(meta.description.length).toBeLessThanOrEqual(DESCRIPTION_MAX);
-    expect(meta.title).toContain('Telegram');
-    expect(hero.title).toContain('Telegram');
+    // What people search for is in the title; the page's own headline is about them, not a platform.
+    for (const platform of ['Telegram', 'Threads']) {
+      expect(meta.title).toContain(platform);
+      expect(meta.description).toContain(platform);
+      expect(hero.lead).toContain(platform);
+    }
   });
 
   it.each(LOCALES)('holds the other public pages to the same limits in %s, and leaves no blank to fill in', (locale) => {

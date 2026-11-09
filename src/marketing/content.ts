@@ -57,13 +57,13 @@ export const MOCKUP_SOURCES = [
 
 const en: LandingContent = {
   meta: {
-    title: 'AI editorial desk for Telegram channels',
+    title: 'AI editorial desk for Telegram and Threads',
     description:
-      'Zmistik follows your X, RSS, Telegram, YouTube and website sources, ranks new posts for your channel ' +
-      'and rewrites them in its voice. You decide.',
-    ogHeadline: 'An AI editorial desk for your Telegram channel',
+      'Zmistik follows X, Threads, RSS, YouTube, Telegram and websites, ranks new posts and rewrites ' +
+      'them in your voice for Telegram, Threads or both. You decide.',
+    ogHeadline: 'An AI editorial desk for your channels',
     ogSubline: 'Your sources, ranked and rewritten in your voice — you decide',
-    ogBadge: 'For Telegram channels',
+    ogBadge: 'Telegram · Threads',
   },
   nav: {
     features: 'Features',
@@ -76,14 +76,14 @@ const en: LandingContent = {
   connect: 'Get started',
   languageSwitch: { label: 'Language', names: { en: 'EN', uk: 'UK' } },
   hero: {
-    eyebrow: 'An AI editorial desk for Telegram channels',
-    title: 'Everything your sources publish, sorted by what your Telegram channel would run',
+    eyebrow: 'An AI editorial desk for your channels',
+    title: 'Everything your sources publish, sorted by what you would run',
     lead:
-      'Zmistik follows the X accounts, RSS feeds, Telegram and YouTube channels and websites you pick. Each new post is ' +
-      'scored by how likely you are to publish it, the same story from several sources becomes one ' +
-      'card, and the text is rewritten in your channel’s language and voice. You only make the ' +
-      'call: approve, edit, schedule or reject.',
-    primary: 'Connect your channel',
+      'Zmistik follows the X and Threads accounts, RSS feeds, Telegram and YouTube channels and websites you pick. Each new ' +
+      'post is scored by how likely you are to publish it, the same story from several sources becomes one card, and the ' +
+      'text is rewritten in your language and voice. You only make the call: publish to Telegram, Threads or both, edit, ' +
+      'schedule or reject.',
+    primary: 'Get started',
     secondary: 'How it works',
   },
   mockup: {
@@ -93,16 +93,16 @@ const en: LandingContent = {
     reason: 'Record-breaking Webb news, like the posts you publish.',
     text: '🔭 Webb ha rastreado la ráfaga rápida de radio más lejana jamás detectada hasta su galaxia de origen.',
     textLang: 'es',
-    caption: 'Best-scored first. Approve one, and the other two are marked as already covered.',
+    caption: 'Best-scored first. Send it to Telegram, Threads or both, and the other two are marked as already covered.',
   },
   features: {
-    title: 'From a stream of sources to your channel’s posts',
+    title: 'From a stream of sources to your posts',
     lead: 'The reading, sorting, translating and re-uploading are done for you. What is left is the editorial decision.',
     items: [
       {
         icon: '📡',
         title: 'Best posts first',
-        text: 'Every post gets a score: how likely you are to publish it. It learns from what you approve, the reasons you give when you reject, and what your channel has published before. You can also describe in Settings what your channel publishes and what it turns down. It sorts the queue; it never decides for you.',
+        text: 'Every post gets a score: how likely you are to publish it. It learns from what you approve, the reasons you give when you reject, and what you have published before. You can also describe in Settings what you publish and what you turn down. It sorts the queue; it never decides for you.',
       },
       {
         icon: '📚',
@@ -111,13 +111,13 @@ const en: LandingContent = {
       },
       {
         icon: '🌐',
-        title: 'In your channel’s language',
-        text: 'Set your channel’s language once, and every post arrives already in it: rewritten the way a channel writes, not translated word for word. Facts, numbers and names stay as in the original.',
+        title: 'In your language',
+        text: 'Set your language once, and every post arrives already in it: rewritten the way you write, not translated word for word. Facts, numbers and names stay as in the original.',
       },
       {
         icon: '🎙',
-        title: 'In your channel’s voice',
-        text: 'We import your channel’s past posts, and Zmistik picks up how it writes — tone, length, paragraphs, emoji — and writes new posts to match.',
+        title: 'In your voice',
+        text: 'We import your Telegram channel’s past posts, and Zmistik picks up how it writes — tone, length, paragraphs, emoji — and writes new posts to match.',
       },
       {
         icon: '✨',
@@ -127,7 +127,7 @@ const en: LandingContent = {
       {
         icon: '🔌',
         title: 'Sources of every kind',
-        text: 'Follow X accounts, RSS and Atom feeds, public Telegram and YouTube channels, and websites through their sitemaps — as many as you need for each channel, added in a click or with a command in the bot.',
+        text: 'Follow X and Threads accounts, RSS and Atom feeds, public Telegram and YouTube channels, and websites through their sitemaps — as many as you need for each channel, added in a click or with a command in the bot.',
       },
       {
         icon: '🗂',
@@ -135,9 +135,9 @@ const en: LandingContent = {
         text: 'Posts wait in one queue, in Telegram or in the browser, and you get a note when new ones come in — every hour, once a day at the hour you choose, or post by post. Schedule any post for later.',
       },
       {
-        icon: '🖼',
-        title: 'Photos, videos, albums, no duplicates',
-        text: 'Albums arrive as albums and videos in the best quality Telegram accepts. Add your own photo or video to any post in the editor. Nothing is published twice, and every post links back to its source.',
+        icon: '📤',
+        title: 'Telegram, Threads or both',
+        text: 'Connect a Threads account beside your Telegram channel, and choose where each post goes when you approve or schedule it. Photos, videos and albums go too — on Threads an album is a carousel — and nothing is published twice.',
       },
     ],
   },
@@ -145,15 +145,18 @@ const en: LandingContent = {
     title: 'How it works',
     lead: 'Setup takes a few minutes and needs no code.',
     items: [
-      { title: 'Get in touch', text: 'We connect your channel, set its language and make you its editor.' },
-      { title: 'Add the bot to your channel', text: 'Make the bot an admin of your Telegram channel with the right to post.' },
+      { title: 'Get in touch', text: 'We set up your channel, its language, and make you its editor.' },
+      {
+        title: 'Connect where you publish',
+        text: 'Make the bot an admin of your Telegram channel with the right to post. To publish on Threads too, connect your account on the website, in Meta’s own window.',
+      },
       {
         title: 'Pick sources, share your channel',
-        text: 'Add X accounts, RSS feeds, Telegram and YouTube channels, and websites on the website or in the bot. Send us your channel’s export from Telegram Desktop, so ranking and rewriting learn from it.',
+        text: 'Add X and Threads accounts, RSS feeds, Telegram and YouTube channels, and websites on the website or in the bot. Send us your channel’s export from Telegram Desktop, so ranking and rewriting learn from it.',
       },
       {
         title: 'Review and publish',
-        text: 'Open the queue: the posts most likely to fit come first, already in your channel’s language. Approve, and it is published.',
+        text: 'Open the queue: the posts most likely to fit come first, already in your language. Approve, and it is published to Telegram, Threads or both.',
       },
     ],
   },
@@ -161,16 +164,16 @@ const en: LandingContent = {
     title: 'Who it is for',
     items: [
       {
-        title: 'Channels whose sources speak another language',
+        title: 'Editors whose sources speak another language',
         text: 'Run a channel in your language on the best sources in English: posts arrive already rewritten, in your style.',
       },
       {
-        title: 'News and niche channels',
+        title: 'News and niche media',
         text: 'Follow every key source of your niche without drowning in it: the same news from ten accounts is one card, and the best of the day is at the top.',
       },
       {
-        title: 'Channel networks',
-        text: 'One service for several channels, each with its own sources, language, editor and rules — including channels that publish everything without review.',
+        title: 'Several channels, several platforms',
+        text: 'One service for several channels, each with its own sources, language, editor and rules. A Telegram channel and its Threads account share one queue: decide once, publish to both.',
       },
     ],
   },
@@ -210,21 +213,27 @@ const en: LandingContent = {
       {
         question: 'Which sources can I follow?',
         answer:
-          'Public X accounts, RSS and Atom feeds of any site, public Telegram and YouTube channels, and websites through their sitemaps: a new article on the site arrives as a post that links to it. From X, posts with photos and videos come in, and posts without media can be switched on per account; reposts and replies are skipped.',
+          'Public X and Threads accounts, RSS and Atom feeds of any site, public Telegram and YouTube channels, and websites through their sitemaps: a new article on the site arrives as a post that links to it. From X and Threads, posts with photos and videos come in, and posts without media can be switched on per account; reposts are skipped, and so are replies on X.',
+      },
+      {
+        question: 'Where can posts be published?',
+        answer:
+          'To a Telegram channel and to a Threads account. Connect Threads on the website, in Meta’s own window — we never see your password — and when you approve or schedule a post, pick Telegram, Threads or both. Threads takes 500 characters, so a longer post is shortened there; one without pictures keeps its whole text as an attachment.',
       },
       {
         question: 'Can posts go out without review?',
         answer:
-          'Yes, per channel. A channel that reposts everything its sources publish can skip review, and posts go straight out — rewritten, in the channel’s language.',
+          'Yes, per channel. A channel that reposts everything its sources publish can skip review, and posts go straight to the Telegram channel — rewritten, in the channel’s language.',
       },
       {
         question: 'Do I need my own X API access?',
-        answer: 'No. X access is on our side. All you need is a Telegram channel and the bot added to it as an admin.',
+        answer:
+          'No. Reading X and Threads is on our side. All you need is a Telegram channel with the bot added as an admin, and a Threads account if you publish there too.',
       },
       {
-        question: 'How fast does a new post reach my channel?',
+        question: 'How fast does a new post get published?',
         answer:
-          'Sources are checked every 15 minutes, and new posts go to your queue straight away. A post is published as soon as you approve it — or at the time you scheduled.',
+          'Sources are checked every 15 minutes, and new posts go to your queue straight away. A post goes to Telegram as soon as you approve it — or at the time you scheduled — and to Threads shortly after, once Threads has processed its pictures or video.',
       },
       {
         question: 'Will a scheduled post show up in the channel’s “Scheduled messages”?',
@@ -239,13 +248,13 @@ const en: LandingContent = {
     ],
   },
   cta: {
-    title: 'Connect your channel',
-    text: 'Message us on Telegram — we will set up the bot, your channel’s language and the sources to follow.',
+    title: 'Get started',
+    text: 'Message us on Telegram — we will set up your channel, its language and the sources to follow.',
     button: 'Message us on Telegram',
   },
   footer: {
     disclaimer:
-      'X is a trademark of X Corp. Telegram is a trademark of Telegram FZ-LLC. This service is not affiliated with either.',
+      'X, Telegram and Threads are trademarks of their owners. This service is not affiliated with X Corp., Telegram or Meta.',
     contact: 'Contact us on Telegram',
     about: 'About',
     privacy: 'Privacy',
@@ -255,13 +264,13 @@ const en: LandingContent = {
 
 const uk: LandingContent = {
   meta: {
-    title: 'AI-редакція для Telegram-каналу',
+    title: 'AI-редакція для Telegram і Threads',
     description:
-      'Zmistik стежить за вашими джерелами — X, RSS, Telegram, YouTube, сайти, — оцінює нові пости для каналу ' +
-      'й переписує їх його голосом. Рішення за вами.',
-    ogHeadline: 'AI-редакція для вашого Telegram-каналу',
+      'Zmistik стежить за X, Threads, RSS, YouTube, Telegram і сайтами, оцінює нові пости й переписує ' +
+      'їх вашим голосом для Telegram, Threads чи обох. Рішення за вами.',
+    ogHeadline: 'AI-редакція для ваших каналів',
     ogSubline: 'Ваші джерела — відсортовані й переписані вашим голосом. Рішення за вами',
-    ogBadge: 'Для Telegram-каналів',
+    ogBadge: 'Telegram · Threads',
   },
   nav: {
     features: 'Можливості',
@@ -274,14 +283,14 @@ const uk: LandingContent = {
   connect: 'Підключити',
   languageSwitch: { label: 'Мова', names: { en: 'EN', uk: 'UK' } },
   hero: {
-    eyebrow: 'AI-редакція для Telegram-каналів',
-    title: 'Усе з ваших джерел — у порядку, який обрав би ваш Telegram-канал',
+    eyebrow: 'AI-редакція для ваших каналів',
+    title: 'Усе з ваших джерел — у порядку, який обрали б ви',
     lead:
-      'Zmistik стежить за обраними акаунтами в X, RSS-стрічками, Telegram- і YouTube-каналами та сайтами. Кожен новий ' +
-      'пост отримує оцінку — наскільки ймовірно ви його опублікуєте, — та сама історія з кількох ' +
-      'джерел стає однією карткою, а текст переписується мовою й голосом вашого каналу. Вам ' +
-      'лишається тільки рішення: погодити, відредагувати, запланувати чи відхилити.',
-    primary: 'Підключити канал',
+      'Zmistik стежить за обраними акаунтами в X і Threads, RSS-стрічками, Telegram- і YouTube-каналами та сайтами. ' +
+      'Кожен новий пост отримує оцінку — наскільки ймовірно ви його опублікуєте, — та сама історія з кількох джерел ' +
+      'стає однією карткою, а текст переписується вашою мовою й голосом. Вам лишається тільки рішення: опублікувати ' +
+      'в Telegram, Threads чи в обидва, відредагувати, запланувати або відхилити.',
+    primary: 'Почати',
     secondary: 'Як це працює',
   },
   mockup: {
@@ -291,16 +300,16 @@ const uk: LandingContent = {
     reason: 'Рекордна новина від Webb — як ті, що ви публікуєте.',
     text: '🔭 Webb відстежив найвіддаленіший із відомих швидких радіосплесків до його рідної галактики.',
     textLang: 'uk',
-    caption: 'Найкращі — першими. Погодите один — два інші позначаться як уже висвітлені.',
+    caption: 'Найкращі — першими. Надішліть у Telegram, Threads чи в обидва — а два інші позначаться як уже висвітлені.',
   },
   features: {
-    title: 'Від потоку джерел до постів вашого каналу',
+    title: 'Від потоку джерел до ваших постів',
     lead: 'Читання, сортування, переклад і перезавантаження медіа — не ваша робота. Вам лишається редакторське рішення.',
     items: [
       {
         icon: '📡',
         title: 'Найкращі пости — першими',
-        text: 'Кожен пост отримує оцінку: наскільки ймовірно ви його опублікуєте. Вона вчиться на тому, що ви погоджуєте, на причинах відмов і на тому, що канал публікував раніше. Свій канал ви також можете описати в налаштуваннях: що він публікує і що відсіває. Оцінка лише сортує чергу — рішень за вас не ухвалює.',
+        text: 'Кожен пост отримує оцінку: наскільки ймовірно ви його опублікуєте. Вона вчиться на тому, що ви погоджуєте, на причинах відмов і на тому, що ви публікували раніше. У налаштуваннях можна також описати, що ви публікуєте і що відсіваєте. Оцінка лише сортує чергу — рішень за вас не ухвалює.',
       },
       {
         icon: '📚',
@@ -309,13 +318,13 @@ const uk: LandingContent = {
       },
       {
         icon: '🌐',
-        title: 'Мовою вашого каналу',
-        text: 'Вкажіть мову каналу один раз — і кожен пост приходить уже нею: переписаний так, як пише канал, а не перекладений дослівно. Факти, цифри й імена — як в оригіналі.',
+        title: 'Вашою мовою',
+        text: 'Вкажіть мову один раз — і кожен пост приходить уже нею: переписаний так, як пишете ви, а не перекладений дослівно. Факти, цифри й імена — як в оригіналі.',
       },
       {
         icon: '🎙',
-        title: 'Голосом вашого каналу',
-        text: 'Ми імпортуємо минулі пости каналу, і Zmistik переймає, як він пише, — тон, довжину, абзаци, емодзі — та пише нові пости так само.',
+        title: 'Вашим голосом',
+        text: 'Ми імпортуємо минулі пости вашого Telegram-каналу, і Zmistik переймає, як він пише, — тон, довжину, абзаци, емодзі — та пише нові пости так само.',
       },
       {
         icon: '✨',
@@ -325,7 +334,7 @@ const uk: LandingContent = {
       {
         icon: '🔌',
         title: 'Джерела будь-якого типу',
-        text: 'Стежте за акаунтами X, RSS- і Atom-стрічками, публічними Telegram- і YouTube-каналами та сайтами через їхні sitemap — скільки треба для кожного каналу. Додаються одним кліком або командою в боті.',
+        text: 'Стежте за акаунтами X і Threads, RSS- і Atom-стрічками, публічними Telegram- і YouTube-каналами та сайтами через їхні sitemap — скільки треба для кожного каналу. Додаються одним кліком або командою в боті.',
       },
       {
         icon: '🗂',
@@ -333,9 +342,9 @@ const uk: LandingContent = {
         text: 'Пости чекають в одній черзі — у Telegram або в браузері, — а про нові ви дізнаєтеся тоді, коли зручно: щогодини, раз на день у вибрану годину чи кожен окремо. Будь-який пост можна запланувати.',
       },
       {
-        icon: '🖼',
-        title: 'Фото, відео, альбоми, без дублів',
-        text: 'Альбоми приходять альбомами, відео — у найкращій якості, яку приймає Telegram. Додати власне фото чи відео можна прямо в редакторі поста. Нічого не вийде двічі, а під кожним постом — посилання на джерело.',
+        icon: '📤',
+        title: 'Telegram, Threads або обидва',
+        text: 'Підключіть акаунт Threads поруч із Telegram-каналом і обирайте, куди йде кожен пост, коли погоджуєте чи плануєте його. Фото, відео й альбоми теж ідуть — у Threads альбом стає каруселлю, — і нічого не вийде двічі.',
       },
     ],
   },
@@ -343,15 +352,18 @@ const uk: LandingContent = {
     title: 'Як це працює',
     lead: 'Налаштування займає кілька хвилин і не потребує коду.',
     items: [
-      { title: 'Напишіть нам', text: 'Ми підключимо ваш канал, задамо його мову й зробимо вас його редактором.' },
-      { title: 'Додайте бота в канал', text: 'Зробіть бота адміністратором свого Telegram-каналу з правом публікації.' },
+      { title: 'Напишіть нам', text: 'Ми налаштуємо ваш канал, задамо його мову й зробимо вас його редактором.' },
+      {
+        title: 'Підключіть, де публікуєте',
+        text: 'Зробіть бота адміністратором свого Telegram-каналу з правом публікації. Щоб публікувати ще й у Threads, підключіть акаунт на сайті — у власному вікні Meta.',
+      },
       {
         title: 'Оберіть джерела й покажіть канал',
-        text: 'Додайте акаунти X, RSS-стрічки, Telegram- і YouTube-канали та сайти на сайті або в боті. Надішліть нам експорт каналу з Telegram Desktop — оцінка й переписування вчитимуться на ньому.',
+        text: 'Додайте акаунти X і Threads, RSS-стрічки, Telegram- і YouTube-канали та сайти на сайті або в боті. Надішліть нам експорт каналу з Telegram Desktop — оцінка й переписування вчитимуться на ньому.',
       },
       {
         title: 'Погоджуйте й публікуйте',
-        text: 'Відкрийте чергу: першими — пости, які найімовірніше підійдуть, уже мовою вашого каналу. Погодили — і пост опубліковано.',
+        text: 'Відкрийте чергу: першими — пости, які найімовірніше підійдуть, уже вашою мовою. Погодили — і пост опубліковано в Telegram, Threads чи в обох.',
       },
     ],
   },
@@ -359,16 +371,16 @@ const uk: LandingContent = {
     title: 'Для кого',
     items: [
       {
-        title: 'Канали, чиї джерела пишуть іншою мовою',
+        title: 'Редактори, чиї джерела пишуть іншою мовою',
         text: 'Ведіть український канал на найкращих англомовних джерелах: пости приходять уже переписаними, у вашому стилі.',
       },
       {
-        title: 'Новинні й тематичні канали',
+        title: 'Новинні й тематичні медіа',
         text: 'Стежте за всіма ключовими джерелами ніші й не тоніть у них: та сама новина з десяти акаунтів — одна картка, а найкраще за день — угорі.',
       },
       {
-        title: 'Мережі каналів',
-        text: 'Один сервіс на кілька каналів: у кожного свої джерела, мова, редактор і правила — зокрема канали, що публікують усе без розгляду.',
+        title: 'Кілька каналів, кілька платформ',
+        text: 'Один сервіс на кілька каналів: у кожного свої джерела, мова, редактор і правила. Telegram-канал і його акаунт у Threads мають одну чергу: вирішуєте раз — публікуєте в обидва.',
       },
     ],
   },
@@ -408,21 +420,27 @@ const uk: LandingContent = {
       {
         question: 'За якими джерелами можна стежити?',
         answer:
-          'За публічними акаунтами X, RSS- і Atom-стрічками будь-яких сайтів, публічними Telegram- і YouTube-каналами та сайтами через їхні sitemap: нова стаття на сайті приходить постом із посиланням на неї. З X приходять пости з фото й відео, а пости без медіа можна ввімкнути для кожного акаунта окремо; репости й відповіді пропускаються.',
+          'За публічними акаунтами X і Threads, RSS- і Atom-стрічками будь-яких сайтів, публічними Telegram- і YouTube-каналами та сайтами через їхні sitemap: нова стаття на сайті приходить постом із посиланням на неї. З X і Threads приходять пости з фото й відео, а пости без медіа можна ввімкнути для кожного акаунта окремо; репости пропускаються, а в X — ще й відповіді.',
+      },
+      {
+        question: 'Куди можна публікувати?',
+        answer:
+          'У Telegram-канал і в акаунт Threads. Threads підключається на сайті, у власному вікні Meta — вашого пароля ми не бачимо, — а погоджуючи чи плануючи пост, ви обираєте Telegram, Threads або обидва. Threads приймає 500 символів, тож довший пост там скорочується; пост без картинок зберігає весь текст у вкладенні.',
       },
       {
         question: 'Чи можуть пости виходити без розгляду?',
         answer:
-          'Так, окремо для кожного каналу. Канал, що репостить усе зі своїх джерел, може обійтися без розгляду — пости виходять одразу, переписані мовою каналу.',
+          'Так, окремо для кожного каналу. Канал, що репостить усе зі своїх джерел, може обійтися без розгляду — пости одразу виходять у Telegram-канал, переписані його мовою.',
       },
       {
         question: 'Чи потрібен мені власний доступ до X API?',
-        answer: 'Ні. Доступ до X — на нашому боці. Вам потрібні лише Telegram-канал і бот, доданий у нього адміністратором.',
+        answer:
+          'Ні. Читання X і Threads — на нашому боці. Вам потрібні лише Telegram-канал із ботом-адміністратором і акаунт Threads, якщо публікуєте й туди.',
       },
       {
-        question: 'Як швидко новий пост потрапляє в канал?',
+        question: 'Як швидко виходить новий пост?',
         answer:
-          'Джерела перевіряються кожні 15 хвилин, а нові пости одразу йдуть у вашу чергу. У канал пост виходить, щойно ви його погодите, — або в запланований час.',
+          'Джерела перевіряються кожні 15 хвилин, а нові пости одразу йдуть у вашу чергу. У Telegram пост виходить, щойно ви його погодите, — або в запланований час, — а в Threads трохи згодом, коли Threads обробить його фото чи відео.',
       },
       {
         question: 'Чи з’явиться запланований пост у розділі «Відкладені» каналу?',
@@ -437,13 +455,13 @@ const uk: LandingContent = {
     ],
   },
   cta: {
-    title: 'Підключіть свій канал',
-    text: 'Напишіть нам у Telegram — налаштуємо бота, мову каналу й джерела для стеження.',
+    title: 'Почніть',
+    text: 'Напишіть нам у Telegram — налаштуємо ваш канал, його мову й джерела для стеження.',
     button: 'Написати в Telegram',
   },
   footer: {
     disclaimer:
-      'X — торгова марка X Corp., Telegram — Telegram FZ-LLC. Сервіс не пов’язаний із ними.',
+      'X, Telegram і Threads — торгові марки їхніх власників. Сервіс не пов’язаний з X Corp., Telegram чи Meta.',
     contact: 'Зв’язатися в Telegram',
     about: 'Про нас',
     privacy: 'Конфіденційність',

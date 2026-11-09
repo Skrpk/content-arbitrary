@@ -438,8 +438,17 @@ a {
 
 .mockup__buttons {
   display: grid;
-  grid-template-columns: 1fr 1fr;
   gap: 0.35rem;
+}
+
+/* A row of the chat's keyboard: its buttons share the width, however many. */
+.mockup__row {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.mockup__row a {
+  flex: 1;
 }
 
 .mockup__buttons a {

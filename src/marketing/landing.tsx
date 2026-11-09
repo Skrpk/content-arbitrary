@@ -9,13 +9,20 @@ import { USE_CASE_KEYS, USE_CASE_PAGES } from './pages/use-cases';
  * only their arrangement, shared by every language.
  */
 
-const MOCKUP_BUTTONS = ['✅ Approve', '🚫 Reject', '🕒 Schedule', '✏️ Edit text'];
+/**
+ * The buttons under a post in review once a channel has a Threads account, row
+ * by row as the chat shows them (src/lib/sync/approval.ts). The lead one is
+ * the one the page invites people to press.
+ */
+const MOCKUP_BUTTON_ROWS = [['✅ Telegram', '✅ Threads', '✅ Both'], ['🚫 Reject'], ['🕒 Schedule', '✏️ Edit text']];
+const MOCKUP_LEAD_BUTTON = '✅ Both';
 
 /**
  * A picture of what the product does: three sources' posts on one event
  * become one card in the review queue — ranked, rewritten in the channel's
- * language, with the queue's real labels and buttons. People press those
- * buttons, so each one opens the same chat as the page's call to action.
+ * language, with the review's real labels and buttons, Telegram, Threads or
+ * both among them. People press those buttons, so each one opens the same
+ * chat as the page's call to action.
  */
 function ReviewMockup({ locale }: { locale: Locale }) {
   const text = CONTENT[locale].mockup;
@@ -61,10 +68,19 @@ function ReviewMockup({ locale }: { locale: Locale }) {
           {others.map((source) => source.name).join(' · ')} — ⇅ Use this one
         </p>
         <div className="mockup__buttons" lang="en">
-          {MOCKUP_BUTTONS.map((button, index) => (
-            <a key={button} className={index === 0 ? 'mockup__approve' : undefined} href={CONTACT_URL} rel="noopener">
-              {button}
-            </a>
+          {MOCKUP_BUTTON_ROWS.map((row) => (
+            <div key={row.join()} className="mockup__row">
+              {row.map((button) => (
+                <a
+                  key={button}
+                  className={button === MOCKUP_LEAD_BUTTON ? 'mockup__approve' : undefined}
+                  href={CONTACT_URL}
+                  rel="noopener"
+                >
+                  {button}
+                </a>
+              ))}
+            </div>
           ))}
         </div>
       </div>
@@ -102,7 +118,7 @@ export function Landing({ locale }: { locale: Locale }) {
       url: new URL(localePath(locale), SITE_URL).toString(),
       description: text.meta.description,
       applicationCategory: 'BusinessApplication',
-      operatingSystem: 'Telegram',
+      operatingSystem: 'Web, Telegram',
       inLanguage: locale,
     },
     {

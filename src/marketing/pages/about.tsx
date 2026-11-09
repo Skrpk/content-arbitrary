@@ -5,11 +5,11 @@ import { Contact, type PublicPage } from './shared';
 
 const en: PublicPage = {
   title: 'About Zmistik',
-  description: 'Zmistik is an AI editorial desk for Telegram channels: it follows sources and prepares posts, and you decide.',
+  description: 'Zmistik is an AI editorial desk for your channels: it follows sources and prepares posts, and you decide.',
   body: (
     <>
       <p>
-        Zmistik is an AI editorial desk for Telegram channels. It takes on the routine: following sources, picking out what matters
+        Zmistik is an AI editorial desk for your channels, on Telegram and Threads. It takes on the routine: following sources, picking out what matters
         and preparing draft posts. The decision on what to publish stays with the editor.
       </p>
 
@@ -23,8 +23,8 @@ const en: PublicPage = {
       <h2>How Zmistik works</h2>
       <ul>
         <li>
-          <strong>It follows sources.</strong> X accounts, RSS feeds, public Telegram and YouTube channels, and websites through their
-          sitemaps.
+          <strong>It follows sources.</strong> X and Threads accounts, RSS feeds, public Telegram and YouTube channels, and websites
+          through their sitemaps.
         </li>
         <li>
           <strong>It scores every post.</strong> The queue is sorted by what your channel is most likely to publish, and each score
@@ -38,7 +38,8 @@ const en: PublicPage = {
           assistant helps.
         </li>
         <li>
-          <strong>It waits for your decision.</strong> Approve, edit, schedule or reject, in Telegram or in the browser.
+          <strong>It waits for your decision.</strong> Approve, edit, schedule or reject, in Telegram or in the browser, and publish
+          to your Telegram channel, your Threads account or both.
         </li>
       </ul>
 
@@ -59,8 +60,8 @@ const en: PublicPage = {
 
       <h2>Who it is for</h2>
       <p>
-        For administrators and editors of Telegram channels who regularly publish material based on other sources: news, science,
-        technology, niche topics.
+        For administrators and editors of Telegram channels and Threads accounts who regularly publish material based on other
+        sources: news, science, technology, niche topics.
       </p>
 
       <h2>Contact</h2>
@@ -73,11 +74,11 @@ const en: PublicPage = {
 
 const uk: PublicPage = {
   title: 'Про Zmistik',
-  description: 'Zmistik — AI-редакція для Telegram-каналів: стежить за джерелами й готує пости, а рішення лишається за вами.',
+  description: 'Zmistik — AI-редакція для ваших каналів: стежить за джерелами й готує пости, а рішення лишається за вами.',
   body: (
     <>
       <p>
-        Zmistik — це AI-редакція для Telegram-каналів. Вона бере на себе рутину: стежить за джерелами, відбирає важливе й готує
+        Zmistik — це AI-редакція для ваших каналів у Telegram і Threads. Вона бере на себе рутину: стежить за джерелами, відбирає важливе й готує
         чернетки постів. Рішення, що публікувати, лишається за редактором.
       </p>
 
@@ -91,7 +92,8 @@ const uk: PublicPage = {
       <h2>Як працює Zmistik</h2>
       <ul>
         <li>
-          <strong>Стежить за джерелами.</strong> Акаунти X, RSS-стрічки, публічні канали Telegram і YouTube, сайти через їхні sitemap.
+          <strong>Стежить за джерелами.</strong> Акаунти X і Threads, RSS-стрічки, публічні канали Telegram і YouTube, сайти через
+          їхні sitemap.
         </li>
         <li>
           <strong>Оцінює кожен пост.</strong> Черга шикується за тим, що ймовірніше опублікує саме ваш канал, і кожна оцінка має коротке
@@ -104,7 +106,8 @@ const uk: PublicPage = {
           <strong>Готує текст.</strong> Пост переписується мовою й голосом каналу, а в редакторі допомагає AI-асистент.
         </li>
         <li>
-          <strong>Чекає вашого рішення.</strong> Погодити, відредагувати, запланувати чи відхилити можна в Telegram або в браузері.
+          <strong>Чекає вашого рішення.</strong> Погодити, відредагувати, запланувати чи відхилити можна в Telegram або в браузері, а
+          опублікувати — у Telegram-канал, акаунт Threads або в обидва.
         </li>
       </ul>
 
@@ -125,8 +128,8 @@ const uk: PublicPage = {
 
       <h2>Для кого</h2>
       <p>
-        Для адміністраторів і редакторів Telegram-каналів, які регулярно публікують матеріали на основі чужих джерел: новини, наука,
-        технології, нішеві теми.
+        Для адміністраторів і редакторів Telegram-каналів та акаунтів у Threads, які регулярно публікують матеріали на основі чужих
+        джерел: новини, наука, технології, нішеві теми.
       </p>
 
       <h2>Контакти</h2>
