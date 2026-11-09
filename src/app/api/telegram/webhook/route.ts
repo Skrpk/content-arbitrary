@@ -11,6 +11,7 @@ import { TELEGRAM_PARSE_MODE, escapeHtml } from '@/lib/telegram/format-caption';
 import { parsePostFooter } from '@/lib/telegram/post-footer';
 import {
   buildApprovalKeyboard,
+  targetsOfApproval,
   buildRejectNoteUrl,
   buildRejectReasonKeyboard,
   formatRejectionNotice,
@@ -19,6 +20,9 @@ import {
   reviewLinks,
 } from '@/lib/sync/approval';
 import { publishDecidedPost } from '@/lib/sync/publish';
+import { publishedLine, publishedNotice } from '@/lib/publish/targets';
+import { hasThreadsAccount } from '@/lib/threads/accounts';
+import { publishToThreadsSoon } from '@/lib/threads/kick';
 import { reviewQueueButton } from '@/lib/review/queue';
 import { YouTubeClient } from '@/lib/youtube/client';
 import { reviewLinkFor } from '@/lib/accounts/users';
@@ -257,7 +261,7 @@ export async function POST(request: Request): Promise<Response> {
         ? buildRejectReasonKeyboard(post.id, {
             otherUrl: baseUrl ? buildRejectNoteUrl(baseUrl, post.id) : undefined,
           })
-        : buildApprovalKeyboard(post.id, reviewLinks(baseUrl, post.id));
+        : buildApprovalKeyboard(post.id, { ...reviewLinks(baseUrl, post.id), threads: await hasThreadsAccount(db, workspace.id) });
 
     // Every reviewer's copy swaps its buttons, but only the one pressed can
     // fail the tap: another reviewer's chat being unreachable is not this one's.
@@ -330,7 +334,10 @@ export async function POST(request: Request): Promise<Response> {
       channelLabelFor(workspace, reviewerWorkspaces.length),
       await loadRadarNote(db, result.row.id).catch(() => null),
     );
-    const controlKeyboard = buildApprovalKeyboard(result.row.id, reviewLinks(env.APP_BASE_URL, result.row.id));
+    const controlKeyboard = buildApprovalKeyboard(result.row.id, {
+      ...reviewLinks(env.APP_BASE_URL, result.row.id),
+      threads: await hasThreadsAccount(db, workspace.id),
+    });
     for (const copy of await reviewCopiesFor(db, result.row, query)) {
       await client
         .editMessageText(copy.chatId, copy.controlMessageId, controlText, TELEGRAM_PARSE_MODE, controlKeyboard)
@@ -349,6 +356,13 @@ export async function POST(request: Request): Promise<Response> {
    * match.
    */
   const fromSchedule = parsed.action === 'publish_now';
+  // Chosen with the button; a scheduled post goes where it was scheduled for.
+  const targets = targetsOfApproval(parsed.action);
+  if (targets?.includes('threads') && !(await hasThreadsAccount(db, workspace.id))) {
+    postLogger.info('webhook.threads_not_connected', {});
+    await client.answerCallbackQuery(query.id, 'Threads is not connected for this channel.').catch(() => {});
+    return ok();
+  }
   const claim = await claimForDecision(
     db,
     parsed.postId,
@@ -396,6 +410,7 @@ export async function POST(request: Request): Promise<Response> {
       logger: postLogger,
       // A scheduled post was decided when it was scheduled.
       reviewedAt: fromSchedule ? undefined : new Date(),
+      ...(targets ? { targets } : {}),
     });
 
     postLogger.info('webhook.published', {
@@ -403,13 +418,14 @@ export async function POST(request: Request): Promise<Response> {
       telegramMessageIds: result.messages.map((message) => message.messageId),
     });
 
-    await client.answerCallbackQuery(query.id, 'Published to the channel.').catch(() => {});
+    await client.answerCallbackQuery(query.id, publishedNotice(result.targets)).catch(() => {});
     await settleAllReviewMessages(
       client,
       await reviewCopiesFor(db, claim.row, query),
-      `✅ Published\n${escapeHtml(claim.row.xPostUrl)}`,
+      `${publishedLine(result.targets)}\n${escapeHtml(claim.row.xPostUrl)}`,
       postLogger,
     );
+    if (result.targets.includes('threads')) publishToThreadsSoon(claim.row.id, postLogger);
   } catch (error) {
     // Put it back so the reviewer can simply press the button again.
     const message = describeError(error);

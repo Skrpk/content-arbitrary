@@ -1,3 +1,6 @@
+import { allowedTargets, PUBLISH_TARGETS, publishedLine, type PublishTarget } from '@/lib/publish/targets';
+import { hasThreadsAccount } from '@/lib/threads/accounts';
+import { publishToThreadsSoon } from '@/lib/threads/kick';
 import { z } from 'zod';
 import { isPublishablePayload, REJECTION_REASONS } from '@/db/schema';
 import { describeError } from '@/lib/errors';
@@ -38,7 +41,15 @@ export const maxDuration = 300;
 const restOfStory = z.array(z.number().int().positive()).max(SAME_STORY_MAX).optional();
 
 const decideSchema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('approve'), postId: z.number().int().positive(), alsoInStory: restOfStory }).strict(),
+  z
+    .object({
+      action: z.literal('approve'),
+      postId: z.number().int().positive(),
+      alsoInStory: restOfStory,
+      /** Where to: chosen in the dialog of a channel with Threads; Telegram alone when absent. */
+      targets: z.array(z.enum(PUBLISH_TARGETS)).min(1).max(PUBLISH_TARGETS.length).optional(),
+    })
+    .strict(),
   z
     .object({
       action: z.literal('reject'),
@@ -66,6 +77,8 @@ export async function GET(request: Request): Promise<Response> {
       return {
         id: workspace.id,
         name: workspace.name,
+        /** Approve asks where to. */
+        threads: await hasThreadsAccount(auth.db, workspace.id),
         waiting: queue.waiting,
         items: queue.items,
       };
@@ -150,6 +163,9 @@ export async function POST(request: Request): Promise<Response> {
     return json({ error: 'This channel is not configured.' }, 500);
   }
 
+  const targets = body.targets ? allowedTargets(body.targets, await hasThreadsAccount(auth.db, workspace.id)) : null;
+  if (body.targets && !targets) return json({ error: 'Threads is not connected for this channel.' }, 422);
+
   const claim = await claimForDecision(auth.db, body.postId, workspace.id, ['awaiting_approval']);
   if (!claim.claimed || !claim.row) {
     logger.info('webapp.queue_not_applied', { currentStatus: claim.currentStatus ?? 'unknown' });
@@ -164,6 +180,7 @@ export async function POST(request: Request): Promise<Response> {
     return json({ error: 'Cannot publish: the post’s media are not on record.' }, 422);
   }
 
+  let published: PublishTarget[];
   try {
     const result = await publishDecidedPost({
       db: auth.db,
@@ -175,8 +192,11 @@ export async function POST(request: Request): Promise<Response> {
       destination: resolved.destination,
       logger,
       reviewedAt: new Date(),
+      ...(targets ? { targets } : {}),
     });
+    published = result.targets;
     logger.info('webapp.queue_published', {
+      targets: result.targets,
       externalId: row.externalId,
       telegramMessageIds: result.messages.map((message) => message.messageId),
     });
@@ -191,9 +211,10 @@ export async function POST(request: Request): Promise<Response> {
   await settleAllReviewMessages(
     client,
     await reviewCopiesOf(auth.db, row),
-    `✅ Published\n${escapeHtml(row.xPostUrl)}`,
+    `${publishedLine(published)}\n${escapeHtml(row.xPostUrl)}`,
     logger,
   );
+  if (published.includes('threads')) publishToThreadsSoon(row.id, logger);
   // The story is out: the rest of its card is already covered.
   const alsoRejected = await rejectRestOfStory({
     db: auth.db,
@@ -204,5 +225,5 @@ export async function POST(request: Request): Promise<Response> {
     others: body.alsoInStory ?? [],
     reason: 'already_covered',
   });
-  return json({ ok: true, alsoRejected });
+  return json({ ok: true, alsoRejected, ...(body.targets ? { targets: published } : {}) });
 }

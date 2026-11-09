@@ -1,3 +1,4 @@
+import { hasThreadsAccount } from '@/lib/threads/accounts';
 import { z } from 'zod';
 import { describeError } from '@/lib/errors';
 import { loadRadarNote } from '@/lib/radar/review-note';
@@ -82,7 +83,10 @@ export async function POST(request: Request): Promise<Response> {
     channelLabelFor(workspace, auth.workspaces.length),
     await loadRadarNote(auth.db, row.id).catch(() => null),
   );
-  const keyboard = buildApprovalKeyboard(row.id, reviewLinks(auth.env.APP_BASE_URL, row.id));
+  const keyboard = buildApprovalKeyboard(row.id, {
+    ...reviewLinks(auth.env.APP_BASE_URL, row.id),
+    threads: await hasThreadsAccount(auth.db, workspace.id),
+  });
   for (const copy of await reviewCopiesOf(auth.db, row)) {
     await new TelegramClient({ logger })
       .editMessageText(copy.chatId, copy.controlMessageId, controlText, TELEGRAM_PARSE_MODE, keyboard)

@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { PlatformBadge } from '@/app/(app)/platform-badge';
 import { readJson, type PanelTools } from '@/components/panel-tools';
+import { DEFAULT_PUBLISH_TARGETS, PUBLISH_TARGETS, publishedLine, type PublishTarget } from '@/lib/publish/targets';
+import { PublishTargetsChoice } from '@/components/publish-targets-choice';
 import { fromQueue, theme } from '@/lib/telegram/webapp-client';
 
 /**
@@ -52,6 +54,8 @@ export interface QueueItem {
 interface Channel {
   id: number;
   name: string;
+  /** It has a Threads account: Approve asks where to. */
+  threads?: boolean;
   waiting: number;
   items: QueueItem[];
 }
@@ -320,6 +324,8 @@ export function ReviewQueue({
   /** For a story's card, the post picked to publish in place of its best-scored one. */
   const [chosen, setChosen] = useState<Record<number, number>>({});
   const [bulk, setBulk] = useState<BulkState | null>(null);
+  /** Approve in a channel with Threads: where to, ticked before it goes. */
+  const [targetsDialog, setTargetsDialog] = useState<{ card: QueueItem; telegram: boolean; threads: boolean } | null>(null);
   const website = surface === 'website';
 
   useEffect(() => {
@@ -379,7 +385,10 @@ export function ReviewQueue({
    * card settles in place, so the list does not jump.
    */
   const decide = useCallback(
-    async (card: QueueItem, decision: { action: 'approve' } | { action: 'reject'; reason: string; note?: string }) => {
+    async (
+      card: QueueItem,
+      decision: { action: 'approve'; targets?: PublishTarget[] } | { action: 'reject'; reason: string; note?: string },
+    ) => {
       const { item, others } = shown(card);
       setCard(card.id, { kind: 'sending', what: decision.action });
       setError(card.id, null);
@@ -400,7 +409,9 @@ export function ReviewQueue({
         setCard(card.id, {
           kind: 'done',
           outcome:
-            (decision.action === 'approve' ? '✅ Published' : `🚫 Rejected${reason ? ` · ${reason}` : ''}`) +
+            (decision.action === 'approve'
+              ? publishedLine(decision.targets ?? ['telegram'])
+              : `🚫 Rejected${reason ? ` · ${reason}` : ''}`) +
             restOfStoryOutcome(decision.action, body.alsoRejected?.length ?? 0),
         });
       } catch (error: unknown) {
@@ -451,6 +462,10 @@ export function ReviewQueue({
       const where = channel?.name ? ` to ${channel.name}` : '';
       const rest = shown(card).others.length;
       const also = rest > 0 ? ` The other ${rest === 1 ? 'post' : `${rest} posts`} of this story will be rejected as already covered.` : '';
+      if (channel?.threads) {
+        setTargetsDialog({ card, ...DIALOG_DEFAULT });
+        return;
+      }
       if (await confirm(`Publish this post${where} now?${also}`)) await decide(card, { action: 'approve' });
     },
     [channel, confirm, decide, shown],
@@ -477,7 +492,7 @@ export function ReviewQueue({
   // e to edit, s to schedule, o for the original, Esc to step back.
   const open = channel?.items.filter((item) => cards[item.id]?.kind !== 'done') ?? [];
   const active = website ? activeCard(channel?.items ?? [], cards, focused) : null;
-  const latest = { open, active, cards, data, approve, decide, edit, schedule, openLink, setCard };
+  const latest = { open, active, cards, data, approve, decide, edit, schedule, openLink, setCard, dialogOpen: targetsDialog !== null };
   const keyboard = useRef(latest);
   useEffect(() => {
     keyboard.current = latest;
@@ -493,6 +508,8 @@ export function ReviewQueue({
         return;
       }
       const state = keyboard.current;
+      // The dialog answers its own keys.
+      if (state.dialogOpen) return;
       const index = state.open.findIndex((item) => item.id === state.active);
       const item = index >= 0 ? state.open[index] : undefined;
       const move = (next: number) => {
@@ -745,6 +762,7 @@ export function ReviewQueue({
                 {state.kind === 'scheduling' ? (
                   <ScheduleEditor
                     postId={item.id}
+                    threads={channel?.threads ?? false}
                     alsoInStory={others.map((post) => post.id)}
                     request={request}
                     onCancel={() => setCard(card.id, { kind: 'open' })}
@@ -838,6 +856,20 @@ export function ReviewQueue({
           </section>
         );
       })}
+      {targetsDialog ? (
+        <TargetsDialog
+          state={targetsDialog}
+          channelName={channel?.name ?? null}
+          others={shown(targetsDialog.card).others.length}
+          onChange={setTargetsDialog}
+          onCancel={() => setTargetsDialog(null)}
+          onPublish={(targets) => {
+            const { card } = targetsDialog;
+            setTargetsDialog(null);
+            void decide(card, { action: 'approve', targets });
+          }}
+        />
+      ) : null}
     </>
   );
 }
@@ -949,12 +981,15 @@ function BulkReject({
 /** Approve a post for later, on the website: a time in this browser's zone, sent as an exact moment. */
 function ScheduleEditor({
   postId,
+  threads,
   alsoInStory,
   request,
   onCancel,
   onScheduled,
 }: {
   postId: number;
+  /** The channel has a Threads account: where to, as well as when. */
+  threads: boolean;
   /** The rest of its story's card, rejected as already covered once it is scheduled. */
   alsoInStory: number[];
   request: ReviewQueueProps['request'];
@@ -968,6 +1003,7 @@ function ScheduleEditor({
   });
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [targets, setTargets] = useState<PublishTarget[]>(DEFAULT_PUBLISH_TARGETS);
 
   const submit = async () => {
     const at = new Date(value);
@@ -984,6 +1020,7 @@ function ScheduleEditor({
             scheduledFor: at.toISOString(),
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             ...(alsoInStory.length > 0 ? { alsoInStory } : {}),
+            ...(threads ? { targets } : {}),
           }),
         }),
       );
@@ -1004,6 +1041,7 @@ function ScheduleEditor({
         onChange={(event) => setValue(event.target.value)}
         style={fieldStyle}
       />
+      {threads ? <PublishTargetsChoice value={targets} onChange={setTargets} disabled={saving} /> : null}
       <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.4rem' }}>
         <button
           type="button"
@@ -1151,4 +1189,100 @@ function overlayBadge(position: { left?: string; right?: string }): CSSPropertie
     color: '#ffffff',
     fontSize: '0.75rem',
   };
+}
+
+const DIALOG_DEFAULT = { telegram: true, threads: true };
+
+/**
+ * Where an approved post goes, for a channel with a Threads account: both
+ * ticked to begin with, either one unticked, never neither.
+ */
+function TargetsDialog({
+  state,
+  channelName,
+  others,
+  onChange,
+  onCancel,
+  onPublish,
+}: {
+  state: { card: QueueItem; telegram: boolean; threads: boolean };
+  channelName: string | null;
+  others: number;
+  onChange: (state: { card: QueueItem; telegram: boolean; threads: boolean }) => void;
+  onCancel: () => void;
+  onPublish: (targets: PublishTarget[]) => void;
+}) {
+  const targets = PUBLISH_TARGETS.filter((target) => state[target]);
+  const publishRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    publishRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onCancel();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+
+  const option = (target: PublishTarget, label: string, hint: string) => (
+    <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem', padding: '0.45rem 0', cursor: 'pointer' }}>
+      <input
+        type="checkbox"
+        checked={state[target]}
+        onChange={(event) => onChange({ ...state, [target]: event.target.checked })}
+        style={{ marginTop: '0.3rem', accentColor: theme.button }}
+      />
+      <span>
+        <span style={{ display: 'block' }}>{label}</span>
+        <span style={{ display: 'block', color: theme.hint, fontSize: '0.8rem' }}>{hint}</span>
+      </span>
+    </label>
+  );
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="targets-title"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onCancel();
+      }}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 50,
+        background: 'rgba(0, 0, 0, 0.45)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '1rem',
+      }}
+    >
+      <div style={{ background: theme.bg, color: theme.text, borderRadius: '0.8rem', padding: '1rem 1.1rem', width: '100%', maxWidth: '22rem' }}>
+        <div id="targets-title" style={{ fontWeight: 600, marginBottom: '0.4rem' }}>
+          Publish where?
+        </div>
+        {option('telegram', channelName ? `Telegram · ${channelName}` : 'Telegram', 'Now, to the channel.')}
+        {option('threads', 'Threads', 'In a minute or so; text past 500 characters is shortened.')}
+        {others > 0 ? (
+          <p style={{ color: theme.hint, fontSize: '0.8rem', margin: '0.3rem 0 0' }}>
+            The other {others === 1 ? 'post' : `${others} posts`} of this story will be rejected as already covered.
+          </p>
+        ) : null}
+        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.8rem' }}>
+          <button type="button" onClick={onCancel} style={{ ...button, background: theme.secondaryBg, color: theme.text }}>
+            Cancel
+          </button>
+          <button
+            ref={publishRef}
+            type="button"
+            disabled={targets.length === 0}
+            onClick={() => onPublish(targets)}
+            style={{ ...button, background: theme.button, color: theme.buttonText, opacity: targets.length === 0 ? 0.5 : 1 }}
+          >
+            ✅ Publish
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

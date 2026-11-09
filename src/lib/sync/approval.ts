@@ -20,6 +20,7 @@ import {
 } from '@/lib/telegram/send-media';
 import { defaultSleep } from '@/lib/sync/retry';
 import type { TelegramMethod } from '@/types';
+import type { PublishTarget } from '@/lib/publish/targets';
 
 /**
  * Review workflow.
@@ -42,7 +43,15 @@ import type { TelegramMethod } from '@/types';
  * undoes a mis-tapped Reject by bringing the original buttons back.
  * `publish_now` and `unschedule` act on a post already scheduled.
  */
-export type ApprovalAction = 'approve' | 'reject' | 'reject_back' | 'publish_now' | 'unschedule';
+export type ApprovalAction =
+  | 'approve'
+  | 'approve_telegram'
+  | 'approve_threads'
+  | 'approve_both'
+  | 'reject'
+  | 'reject_back'
+  | 'publish_now'
+  | 'unschedule';
 
 export type ApprovalCallback =
   | { action: ApprovalAction; postId: number }
@@ -50,6 +59,10 @@ export type ApprovalCallback =
 
 const ACTION_CODES: Record<ApprovalAction, string> = {
   approve: 'ap',
+  // A channel with Threads: Approve is three buttons, one for each choice.
+  approve_telegram: 'at',
+  approve_threads: 'ah',
+  approve_both: 'ab',
   reject: 'rj',
   reject_back: 'rb',
   publish_now: 'pn',
@@ -86,7 +99,7 @@ export function buildRejectReasonCallbackData(postId: number, reason: RejectionR
 export function parseCallbackData(data: string | undefined): ApprovalCallback | null {
   if (!data) return null;
 
-  const match = /^(ap|rj|rb|pn|us|rr):(\d{1,12})(?::([a-z_]{1,32}))?$/.exec(data.trim());
+  const match = /^(ap|at|ah|ab|rj|rb|pn|us|rr):(\d{1,12})(?::([a-z_]{1,32}))?$/.exec(data.trim());
   if (!match) return null;
 
   const postId = Number(match[2]);
@@ -140,12 +153,20 @@ export function reviewLinks(
 
 export function buildApprovalKeyboard(
   postId: number,
-  options?: { editUrl?: string; scheduleUrl?: string },
+  options?: { editUrl?: string; scheduleUrl?: string; threads?: boolean },
 ): InlineKeyboardMarkup {
-  const decide = [
-    { text: '✅ Approve', callback_data: buildCallbackData('approve', postId) },
-    { text: '🚫 Reject', callback_data: buildCallbackData('reject', postId) },
-  ];
+  // With a Threads account, Approve says where to: one button for each choice, Reject below them.
+  const decide = options?.threads
+    ? [
+        { text: '✅ Telegram', callback_data: buildCallbackData('approve_telegram', postId) },
+        { text: '✅ Threads', callback_data: buildCallbackData('approve_threads', postId) },
+        { text: '✅ Both', callback_data: buildCallbackData('approve_both', postId) },
+      ]
+    : [
+        { text: '✅ Approve', callback_data: buildCallbackData('approve', postId) },
+        { text: '🚫 Reject', callback_data: buildCallbackData('reject', postId) },
+      ];
+  const reject = options?.threads ? [[{ text: '🚫 Reject', callback_data: buildCallbackData('reject', postId) }]] : [];
 
   // Their own row: these open a Mini App rather than settling the post, and
   // sitting beside the two final actions invites a misclick.
@@ -154,7 +175,15 @@ export function buildApprovalKeyboard(
     ...(options?.editUrl ? [{ text: '✏️ Edit text', web_app: { url: options.editUrl } }] : []),
   ];
 
-  return { inline_keyboard: open.length > 0 ? [decide, open] : [decide] };
+  return { inline_keyboard: [decide, ...reject, ...(open.length > 0 ? [open] : [])] };
+}
+
+/** Where an Approve button sends the post; null for plain Approve, which goes where it always did. */
+export function targetsOfApproval(action: ApprovalAction): PublishTarget[] | null {
+  if (action === 'approve_telegram') return ['telegram'];
+  if (action === 'approve_threads') return ['threads'];
+  if (action === 'approve_both') return ['telegram', 'threads'];
+  return null;
 }
 
 /** The buttons under a post approved for later. */
@@ -351,6 +380,8 @@ export interface ReviewRequest {
   editUrl?: string;
   /** Mini App URL for the Schedule button; omitted when APP_BASE_URL is unset. */
   scheduleUrl?: string;
+  /** The channel has a Threads account: Approve offers where to. */
+  threads?: boolean;
   /** The destination channel's name, for a reviewer of several channels. */
   channelLabel?: string | null;
   /** Radar's score for the post, shown under the link; omitted when there is none. */
@@ -382,6 +413,7 @@ export async function sendForApproval(
   const keyboard = buildApprovalKeyboard(request.postId, {
     editUrl: request.editUrl,
     scheduleUrl: request.scheduleUrl,
+    threads: request.threads,
   });
 
   /**

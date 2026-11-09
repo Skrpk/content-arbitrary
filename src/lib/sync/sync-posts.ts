@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { hasThreadsAccount } from '@/lib/threads/accounts';
 import type { SourcePlatform, Workspace } from '@/db/schema';
 import { getDb, getSql, type Database } from '@/lib/db';
 import { getEnv, type Env } from '@/lib/env';
@@ -264,6 +265,7 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
       resolved.destination.extraReviewerChatIds = reviewers.filter(
         (id) => id !== tenant.telegramAdminChatId,
       );
+      resolved.destination.threadsConnected = await hasThreadsAccount(db, tenant.id);
 
       resolved.destination.channelLabel = channelLabelFor(
         tenant,

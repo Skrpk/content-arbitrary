@@ -16,6 +16,8 @@ import {
   reviewLinks,
 } from '@/lib/sync/approval';
 import { publishDecidedPost } from '@/lib/sync/publish';
+import { publishedLine } from '@/lib/publish/targets';
+import { hasThreadsAccount } from '@/lib/threads/accounts';
 import {
   abandonSchedule,
   claimScheduledForPublishing,
@@ -116,7 +118,10 @@ export async function publishDueScheduledPosts(input: {
             await loadRadarNote(db, row.id).catch(() => null),
           ),
         ].join('\n');
-        const keyboard = buildApprovalKeyboard(row.id, reviewLinks(env.APP_BASE_URL, row.id));
+        const keyboard = buildApprovalKeyboard(row.id, {
+          ...reviewLinks(env.APP_BASE_URL, row.id),
+          threads: await hasThreadsAccount(db, row.workspaceId),
+        });
         for (const copy of copies) {
           await client
             .editMessageText(copy.chatId, copy.controlMessageId, text, TELEGRAM_PARSE_MODE, keyboard)
@@ -163,7 +168,7 @@ export async function publishDueScheduledPosts(input: {
         client,
         await reviewCopiesOf(db, row),
         [
-          `✅ Published as scheduled, ${escapeHtml(formatScheduleTime(row.scheduledFor ?? now, row.scheduledTimezone))}`,
+          `${publishedLine(result.targets)} as scheduled, ${escapeHtml(formatScheduleTime(row.scheduledFor ?? now, row.scheduledTimezone))}`,
           escapeHtml(row.xPostUrl),
         ].join('\n'),
         logger,

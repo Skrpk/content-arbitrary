@@ -141,3 +141,9 @@ export function threadsAccountStatus(account: Pick<ThreadsAccount, 'tokenExpires
   if (account.tokenExpiresAt.getTime() <= now.getTime()) return 'expired';
   return account.lastError ? 'refresh_failed' : 'active';
 }
+
+/** Whether the channel has a Threads account to publish to: what decides if its reviewers get a choice. */
+export async function hasThreadsAccount(db: Database, workspaceId: number): Promise<boolean> {
+  const [row] = await db.select({ id: threadsAccounts.id }).from(threadsAccounts).where(eq(threadsAccounts.workspaceId, workspaceId)).limit(1);
+  return Boolean(row);
+}

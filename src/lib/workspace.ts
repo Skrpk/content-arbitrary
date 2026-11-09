@@ -39,6 +39,11 @@ export interface TelegramDestination {
    * which has the database; destinationFor does not read it.
    */
   extraReviewerChatIds?: string[];
+  /**
+   * The channel has a Threads account, so its reviewers choose where a post
+   * goes when they approve it. Set by the caller, like the reviewers above.
+   */
+  threadsConnected?: boolean;
   disableNotification: boolean;
   /**
    * The channel's name, shown on its review messages — set only when the

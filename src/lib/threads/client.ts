@@ -98,3 +98,69 @@ function stringField(result: Record<string, unknown>, key: string): string {
   if (typeof value !== 'string' || value === '') throw new ThreadsApiError(`Threads returned no ${key}`, 502);
   return value;
 }
+
+/* Publishing ------------------------------------------------------------- */
+
+export type ThreadsContainerSpec =
+  | { mediaType: 'TEXT'; text: string; attachment?: string | null }
+  | { mediaType: 'IMAGE'; imageUrl: string; text?: string; carouselItem?: boolean }
+  | { mediaType: 'VIDEO'; videoUrl: string; text?: string; carouselItem?: boolean }
+  | { mediaType: 'CAROUSEL'; children: string[]; text?: string };
+
+/** A media container for the account: Threads fetches its media and processes it. Its id. */
+export async function createContainer(
+  account: { threadsUserId: string; token: string },
+  spec: ThreadsContainerSpec,
+  options: ThreadsCallOptions = {},
+): Promise<string> {
+  const body = new URLSearchParams({ media_type: spec.mediaType, access_token: account.token });
+  if (spec.text) body.set('text', spec.text);
+  if (spec.mediaType === 'TEXT' && spec.attachment) body.set('text_attachment', JSON.stringify({ plaintext: spec.attachment }));
+  if (spec.mediaType === 'IMAGE') body.set('image_url', spec.imageUrl);
+  if (spec.mediaType === 'VIDEO') body.set('video_url', spec.videoUrl);
+  if ((spec.mediaType === 'IMAGE' || spec.mediaType === 'VIDEO') && spec.carouselItem) body.set('is_carousel_item', 'true');
+  if (spec.mediaType === 'CAROUSEL') body.set('children', spec.children.join(','));
+  const result = await call(`${THREADS_GRAPH_URL}/${THREADS_API_VERSION}/${account.threadsUserId}/threads`, { method: 'POST', body }, options);
+  return idField(result);
+}
+
+export type ContainerStatus = 'IN_PROGRESS' | 'FINISHED' | 'PUBLISHED' | 'ERROR' | 'EXPIRED';
+
+/** Where Threads is with a container, and why it failed when it did. */
+export async function containerStatus(
+  token: string,
+  containerId: string,
+  options: ThreadsCallOptions = {},
+): Promise<{ status: ContainerStatus; error: string | null }> {
+  const params = new URLSearchParams({ fields: 'status,error_message', access_token: token });
+  const result = await call(`${THREADS_GRAPH_URL}/${THREADS_API_VERSION}/${containerId}?${params}`, { method: 'GET' }, options);
+  const status = String(result.status ?? '') as ContainerStatus;
+  if (!['IN_PROGRESS', 'FINISHED', 'PUBLISHED', 'ERROR', 'EXPIRED'].includes(status)) {
+    throw new ThreadsApiError(`Threads returned an unknown container status "${status.slice(0, 40)}"`, 502);
+  }
+  return { status, error: typeof result.error_message === 'string' ? result.error_message.slice(0, 300) : null };
+}
+
+/** Publish a processed container; the post's id. */
+export async function publishContainer(
+  account: { threadsUserId: string; token: string },
+  containerId: string,
+  options: ThreadsCallOptions = {},
+): Promise<string> {
+  const body = new URLSearchParams({ creation_id: containerId, access_token: account.token });
+  const result = await call(`${THREADS_GRAPH_URL}/${THREADS_API_VERSION}/${account.threadsUserId}/threads_publish`, { method: 'POST', body }, options);
+  return idField(result);
+}
+
+/** A published post's address on Threads, or null if Threads does not say. */
+export async function permalinkOf(token: string, mediaId: string, options: ThreadsCallOptions = {}): Promise<string | null> {
+  const params = new URLSearchParams({ fields: 'permalink', access_token: token });
+  const result = await call(`${THREADS_GRAPH_URL}/${THREADS_API_VERSION}/${mediaId}?${params}`, { method: 'GET' }, options);
+  return typeof result.permalink === 'string' && /^https:\/\//.test(result.permalink) ? result.permalink : null;
+}
+
+function idField(result: Record<string, unknown>): string {
+  const id = result.id;
+  if (typeof id !== 'string' || !/^\d{1,40}$/.test(id)) throw new ThreadsApiError('Threads returned no id', 502);
+  return id;
+}

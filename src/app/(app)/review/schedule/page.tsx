@@ -2,6 +2,8 @@
 
 import Script from 'next/script';
 import { useCallback, useMemo, useState } from 'react';
+import { PublishTargetsChoice } from '@/components/publish-targets-choice';
+import { DEFAULT_PUBLISH_TARGETS, type PublishTarget } from '@/lib/publish/targets';
 import {
   finishMiniApp,
   offerBackToQueue,
@@ -29,6 +31,9 @@ interface PostContext {
   scheduledFor: string | null;
   timezone: string | null;
   maxDaysAhead: number;
+  /** The channel has a Threads account: the page asks where to, too. */
+  threads?: boolean;
+  targets?: PublishTarget[];
 }
 
 type Phase = 'waiting-for-telegram' | 'loading' | 'ready' | 'saving' | 'saved' | 'error';
@@ -78,6 +83,7 @@ export default function SchedulePage() {
   const [context, setContext] = useState<PostContext | null>(null);
   const [value, setValue] = useState('');
   const [zone, setZone] = useState('UTC');
+  const [targets, setTargets] = useState<PublishTarget[]>(DEFAULT_PUBLISH_TARGETS);
   /**
    * "Now", taken when the page loads and whenever the reviewer picks a time,
    * rather than during render — render must not depend on the clock.
@@ -130,6 +136,7 @@ export default function SchedulePage() {
       const options = presets();
       setShortcuts(options);
       setContext(body);
+      if (body.targets) setTargets(body.targets);
       pick(toInputValue(body.scheduledFor ? new Date(body.scheduledFor) : options[0]!.at));
       setPhase('ready');
     } catch (error: unknown) {
@@ -161,6 +168,7 @@ export default function SchedulePage() {
           postId: context.postId,
           scheduledFor: chosen.toISOString(),
           timezone: zone,
+          ...(context.threads ? { targets } : {}),
         }),
       });
       const body = (await response.json()) as { error?: string; display?: string };
@@ -173,7 +181,7 @@ export default function SchedulePage() {
       setPhase('ready');
       setMessage(error instanceof Error ? error.message : 'Could not schedule.');
     }
-  }, [chosen, context, zone]);
+  }, [targets, chosen, context, zone]);
 
   const busy = phase === 'saving' || phase === 'saved';
   const rescheduling = Boolean(context?.scheduledFor);
@@ -282,6 +290,13 @@ export default function SchedulePage() {
             >
               {inPast ? 'That time has already passed.' : `Your time zone: ${zone}`}
             </div>
+
+            {context?.threads ? (
+              <>
+                <div style={{ fontSize: '0.85rem', margin: '0 0 0.1rem' }}>Publish to</div>
+                <PublishTargetsChoice value={targets} onChange={setTargets} disabled={busy} />
+              </>
+            ) : null}
 
             <button
               type="button"

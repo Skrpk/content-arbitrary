@@ -1,3 +1,5 @@
+import { allowedTargets, DEFAULT_PUBLISH_TARGETS, normalizeTargets, PUBLISH_TARGETS } from '@/lib/publish/targets';
+import { hasThreadsAccount } from '@/lib/threads/accounts';
 import { loadRadarNote } from '@/lib/radar/review-note';
 import { sourceLabelOfPost } from '@/lib/sources/display';
 import { z } from 'zod';
@@ -42,6 +44,8 @@ const scheduleSchema = z.object({
   timezone: z.string().max(64).optional(),
   /** The other posts of its card in the review queue — the same story — now already covered. */
   alsoInStory: z.array(z.number().int().positive()).max(SAME_STORY_MAX).optional(),
+  /** Where it goes when its time comes, for a channel with Threads; Telegram alone when absent. */
+  targets: z.array(z.enum(PUBLISH_TARGETS)).min(1).max(PUBLISH_TARGETS.length).optional(),
 });
 
 export async function GET(request: Request): Promise<Response> {
@@ -78,6 +82,9 @@ export async function GET(request: Request): Promise<Response> {
     scheduledFor: post.status === 'scheduled' ? post.scheduledFor?.toISOString() ?? null : null,
     timezone: post.scheduledTimezone,
     maxDaysAhead: SCHEDULE_MAX_DAYS_AHEAD,
+    /** The channel has Threads: the page asks where to, as chosen before or both. */
+    threads: await hasThreadsAccount(auth.db, workspace.id),
+    targets: post.publishTargets ? normalizeTargets(post.publishTargets) : DEFAULT_PUBLISH_TARGETS,
   });
 }
 
@@ -115,12 +122,15 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const timezone = body.timezone && isKnownTimeZone(body.timezone) ? body.timezone : 'UTC';
+  const targets = body.targets ? allowedTargets(body.targets, await hasThreadsAccount(auth.db, workspace.id)) : null;
+  if (body.targets && !targets) return json({ error: 'Threads is not connected for this channel.' }, 422);
 
   const result = await schedulePost(auth.db, {
     id: body.postId,
     workspaceId: workspace.id,
     scheduledFor,
     timezone,
+    ...(targets ? { publishTargets: targets } : {}),
   });
 
   if (!result.scheduled || !result.row) {

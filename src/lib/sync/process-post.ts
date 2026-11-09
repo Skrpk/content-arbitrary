@@ -326,6 +326,7 @@ export async function processPost(
       overflowMessage,
       payloads,
       ...reviewLinks(env.APP_BASE_URL, options.postId!),
+      threads: options.destination.threadsConnected,
       channelLabel: options.destination.channelLabel,
       radarNote,
     };
@@ -557,6 +558,7 @@ async function processTextPost(
           caption: text,
           payloads: [],
           ...reviewLinks(env.APP_BASE_URL, options.postId!),
+          threads: options.destination.threadsConnected,
           channelLabel: options.destination.channelLabel,
           radarNote,
           linkPreviewUrl: linkPreviewOf(post),

@@ -1,10 +1,10 @@
-import { and, asc, eq, inArray, isNull, notInArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm';
 import { del, head } from '@vercel/blob';
 import type { Database } from '@/lib/db';
 import type { Env } from '@/lib/env';
 import { describeError } from '@/lib/errors';
 import type { Logger } from '@/lib/logger';
-import { processedPosts, postUploads, type PostUploadKind } from '@/db/schema';
+import { postDeliveries, processedPosts, postUploads, type PostUploadKind } from '@/db/schema';
 import { TELEGRAM_UPLOAD_PHOTO_MAX_BYTES } from '@/lib/telegram/limits';
 import type { NormalizedMedia } from '@/types';
 
@@ -162,14 +162,22 @@ const STILL_OPEN = ['pending', 'processing', 'awaiting_approval', 'scheduled'] a
 
 /**
  * The uploads of posts that will never be published now — published, turned
- * down, or failed for good — deleted from the store. Run after each sync.
+ * down, or failed for good — deleted from the store, unless Threads has yet
+ * to fetch them. Run after each sync.
  */
 export async function sweepUploads(db: Database, store: BlobStore, logger: Logger): Promise<number> {
   const done = await db
     .select({ upload: postUploads })
     .from(postUploads)
     .innerJoin(processedPosts, eq(processedPosts.id, postUploads.processedPostId))
-    .where(and(isNull(postUploads.deletedAt), notInArray(processedPosts.status, [...STILL_OPEN])))
+    .where(
+      and(
+        isNull(postUploads.deletedAt),
+        notInArray(processedPosts.status, [...STILL_OPEN]),
+        // Published to Telegram, perhaps, but still on its way to Threads, which fetches them.
+        sql`NOT EXISTS (SELECT 1 FROM ${postDeliveries} WHERE ${postDeliveries.processedPostId} = ${processedPosts.id} AND ${postDeliveries.status} IN ('pending', 'processing'))`,
+      ),
+    )
     .limit(500);
   const deleted = await deleteUploads(
     db,

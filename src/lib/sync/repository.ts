@@ -223,6 +223,8 @@ export async function markPublished(
      * post already carries its captions, and they take precedence.
      */
     caption?: string;
+    /** Where the reviewer chose to publish it, when they had a choice. */
+    publishTargets?: string[];
   },
 ): Promise<void> {
   await db.transaction(async (tx) => {
@@ -230,6 +232,7 @@ export async function markPublished(
       .update(processedPosts)
       .set({
         status: 'published',
+        ...(input.publishTargets ? { publishTargets: input.publishTargets } : {}),
         telegramChatId: input.telegramChatId,
         telegramMessageId: input.primaryMessageId,
         telegramMethod: input.telegramMethod,
@@ -266,6 +269,33 @@ export async function markPublished(
  * be queued a second time, its original stays the one first reviewed and a
  * reviewer's edit is not thrown away.
  */
+/**
+ * A decided post that goes to none of its Telegram channel — to Threads
+ * alone. Settled as published, like any other decided post, with no
+ * Telegram message to record; its Threads side is a delivery of its own.
+ */
+export async function markPublishedElsewhere(
+  db: Database,
+  input: { id: number; publishTargets: string[]; reviewedAt?: Date },
+): Promise<void> {
+  await db
+    .update(processedPosts)
+    .set({
+      status: 'published',
+      publishTargets: input.publishTargets,
+      telegramMethod: 'none',
+      errorMessage: null,
+      originalCaption: rawSql`coalesce(${processedPosts.originalCaption}, ${processedPosts.approvalPayload}->>'caption')`,
+      caption: rawSql`coalesce(${processedPosts.caption}, ${processedPosts.approvalPayload}->>'caption')`,
+      ...(input.reviewedAt ? { reviewedAt: input.reviewedAt } : {}),
+      approvalPayload: null,
+      processedAt: new Date(),
+      updatedAt: new Date(),
+      lockedAt: null,
+    })
+    .where(eq(processedPosts.id, input.id));
+}
+
 export async function markAwaitingApproval(
   db: Database,
   input: {
@@ -469,12 +499,20 @@ export async function setRichDocument(
  */
 export async function schedulePost(
   db: Database,
-  input: { id: number; workspaceId: number; scheduledFor: Date; timezone: string },
+  input: {
+    id: number;
+    workspaceId: number;
+    scheduledFor: Date;
+    timezone: string;
+    /** Where it goes when its time comes; left as it was when not given. */
+    publishTargets?: string[];
+  },
 ): Promise<{ scheduled: boolean; row?: typeof processedPosts.$inferSelect; currentStatus?: PostStatus }> {
   const rows = await db
     .update(processedPosts)
     .set({
       status: 'scheduled',
+      ...(input.publishTargets ? { publishTargets: input.publishTargets } : {}),
       scheduledFor: input.scheduledFor,
       scheduledTimezone: input.timezone,
       reviewedAt: rawSql`CASE WHEN ${processedPosts.status} = 'awaiting_approval' THEN now() ELSE ${processedPosts.reviewedAt} END`,

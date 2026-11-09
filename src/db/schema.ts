@@ -303,6 +303,68 @@ export const threadsConnectAttempts = pgTable('threads_connect_attempts', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * A decided post on its way to somewhere other than its Telegram channel —
+ * Threads, today. Written when the post is decided, with what it needs to go
+ * out (`content`), since the post's own payload is dropped once Telegram has
+ * it; then published by a worker, a step per run (src/lib/threads/publisher.ts),
+ * for Threads takes a while to process media before they can be published.
+ */
+export const postDeliveries = pgTable(
+  'post_deliveries',
+  {
+    id: serial('id').primaryKey(),
+    processedPostId: integer('processed_post_id')
+      .notNull()
+      .references(() => processedPosts.id, { onDelete: 'cascade' }),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    platform: text('platform', { enum: ['threads'] }).notNull(),
+    status: text('status', { enum: ['pending', 'processing', 'published', 'failed'] }).notNull().default('pending'),
+    /** What to publish, as decided; see ThreadsDeliveryContent. */
+    content: jsonb('content').$type<ThreadsDeliveryContent>().notNull(),
+    /** The container Threads is processing, between creating it and publishing it. */
+    containerId: text('container_id'),
+    /** Media copied to the Blob store for Threads to fetch; deleted once it is done with them. */
+    hostedUrls: text('hosted_urls').array().notNull().default(sql`'{}'::text[]`),
+    attempts: integer('attempts').notNull().default(0),
+    /** Not tried again before this; null for as soon as possible. */
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }),
+    /** Set while a worker has it, so two runs never publish it twice. */
+    lockedAt: timestamp('locked_at', { withTimezone: true }),
+    /** The post's id on the platform, and its address there. */
+    externalId: text('external_id'),
+    url: text('url'),
+    error: text('error'),
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('post_deliveries_post_platform_key').on(table.processedPostId, table.platform),
+    index('post_deliveries_status_idx').on(table.status, table.nextAttemptAt),
+  ],
+);
+
+export type PostDelivery = typeof postDeliveries.$inferSelect;
+
+/** One picture or video of a delivery, wherever its bytes can still be had. */
+export type DeliveryMedia =
+  | { kind: 'photo' | 'video'; telegramFileId: string }
+  | { kind: 'photo' | 'video'; source: NormalizedMedia }
+  | { kind: 'photo' | 'video'; uploadUrl: string };
+
+export interface ThreadsDeliveryContent {
+  /** The post's text, plain, whole: cut to Threads' length when published. */
+  text: string;
+  media: DeliveryMedia[];
+  /** The post's id at its source, to look a Telegram channel's media up afresh. */
+  externalId: string;
+  /** The editor's uploads it uses, deleted once Threads has them. */
+  uploadIds: number[];
+}
+
 /** The single tenant that exists before multi-tenancy. */
 export const DEFAULT_WORKSPACE_ID = 1;
 
@@ -639,6 +701,13 @@ export const processedPosts = pgTable(
      * did. Saving does not imply a change — compare the two captions for that.
      */
     captionEditedAt: timestamp('caption_edited_at', { withTimezone: true }),
+    /**
+     * Where the reviewer chose to publish it: `telegram`, `threads` or both,
+     * once decided — chosen with Approve, or with Schedule for later. Null on
+     * a post decided with no choice to make, which goes to Telegram alone.
+     * Threads' side of it is a `post_deliveries` row.
+     */
+    publishTargets: text('publish_targets').array(),
 
     /**
      * Set when a row moves to `processing`. A row stuck in `processing` past

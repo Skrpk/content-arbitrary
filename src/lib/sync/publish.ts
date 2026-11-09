@@ -6,7 +6,9 @@ import { acquireMedia } from '@/lib/sync/acquire-media';
 import type { TelegramClient } from '@/lib/telegram/client';
 import type { TelegramDestination } from '@/lib/workspace';
 import { publishApprovedPayload, type PublishResult } from '@/lib/sync/approval';
-import { markPublished } from '@/lib/sync/repository';
+import { markPublished, markPublishedElsewhere } from '@/lib/sync/repository';
+import { normalizeTargets, type PublishTarget } from '@/lib/publish/targets';
+import { queueThreadsDelivery, threadsContentFor } from '@/lib/threads/deliveries';
 import { mediaRefsOf, richDocumentAsPlainPost, richDocumentToHtml, type RichDocument } from '@/lib/rich/document';
 import { escapeHtml, truncateForDisplay } from '@/lib/telegram/format-caption';
 import { TELEGRAM_CAPTION_LIMIT, TELEGRAM_MEDIA_GROUP_MAX, TELEGRAM_MESSAGE_TEXT_LIMIT } from '@/lib/telegram/limits';
@@ -58,7 +60,33 @@ export async function publishDecidedPost(input: {
   reviewedAt?: Date;
   /** Where the editor's uploads are, to delete once published; the env's Blob store when omitted. */
   blobStore?: BlobStore | null;
-}): Promise<PublishResult> {
+  /**
+   * Where it goes, as the reviewer chose now; when omitted, what was chosen
+   * with Schedule, or Telegram alone for a post decided with no choice.
+   */
+  targets?: PublishTarget[];
+}): Promise<PublishResult & { targets: PublishTarget[] }> {
+  const targets = normalizeTargets(input.targets ?? input.row.publishTargets);
+  // Taken before Telegram has it: publishing there drops the payload this reads.
+  const threads = targets.includes('threads')
+    ? await threadsContentFor(input.db, { row: input.row, payload: input.payload, footer: input.footer })
+    : null;
+
+  let result: PublishResult;
+  if (!targets.includes('telegram')) {
+    await markPublishedElsewhere(input.db, { id: input.row.id, publishTargets: targets, reviewedAt: input.reviewedAt });
+    result = { messages: [], primaryMessageId: null, method: 'none' };
+  } else {
+    result = await publishToTelegram({ ...input, targets, keepUploads: threads !== null });
+  }
+
+  if (threads) await queueThreadsDelivery(input.db, { postId: input.row.id, workspaceId: input.destination.workspaceId, content: threads });
+  return { ...result, targets };
+}
+
+async function publishToTelegram(
+  input: Parameters<typeof publishDecidedPost>[0] & { targets: PublishTarget[]; keepUploads: boolean },
+): Promise<PublishResult> {
   if (input.row.richDoc) return publishRichPost({ ...input, doc: input.row.richDoc });
 
   // The caption column, not the payload's copy, is what gets published: it is
@@ -93,6 +121,7 @@ export async function publishDecidedPost(input: {
     mediaCount: payloadMediaCount(payload),
     messages: result.messages,
     reviewedAt: input.reviewedAt,
+    publishTargets: input.targets,
   });
 
   return result;
@@ -106,7 +135,7 @@ export async function publishDecidedPost(input: {
  * deleted from the store.
  */
 async function publishRichPost(
-  input: Parameters<typeof publishDecidedPost>[0] & { doc: RichDocument },
+  input: Parameters<typeof publishToTelegram>[0] & { doc: RichDocument },
 ): Promise<PublishResult> {
   const { payload } = input;
   const logger = input.logger ?? createLogger({ app: 'content-arbitrary' });
@@ -183,8 +212,11 @@ async function publishRichPost(
     mediaCount: refs.length,
     messages: result.messages,
     reviewedAt: input.reviewedAt,
+    publishTargets: input.targets,
   });
 
+  // Threads still needs the ones it places; its worker deletes them once it has them.
+  if (input.keepUploads) return result;
   // Out in the channel: the store need not hold its files, placed or not. Best effort — the sweep after each sync catches the rest.
   const store =
     input.blobStore !== undefined
