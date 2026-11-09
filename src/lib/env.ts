@@ -203,6 +203,21 @@ const schema = z
     TELEGRAM_OIDC_CLIENT_SECRET: z.string().trim().min(1).optional().or(z.literal('').transform(() => undefined)),
 
     /**
+     * The Meta app that connects channels' Threads accounts: the Threads app
+     * ID and secret from the app's Threads use case (not its Facebook App ID).
+     * Both, or Threads cannot be connected. The secret also keys the
+     * encryption of the stored tokens (src/lib/threads/token-crypto.ts), so
+     * changing it means every account is connected again.
+     */
+    THREADS_APP_ID: z
+      .string()
+      .trim()
+      .regex(/^\d{1,25}$/, 'THREADS_APP_ID must be the numeric Threads app ID')
+      .optional()
+      .or(z.literal('').transform(() => undefined)),
+    THREADS_APP_SECRET: z.string().trim().min(16).optional().or(z.literal('').transform(() => undefined)),
+
+    /**
      * Which model Shadow Radar asks: OpenAI's GPT-6 Luna (the default) or
      * Anthropic's Claude Haiku 4.5. Radar scores each post sent for review —
      * never shown, never acted on — for tenants that have an editorial
@@ -398,6 +413,7 @@ export function redactedEnvSummary(env: Env = getEnv()) {
     hasXBearerToken: Boolean(env.X_BEARER_TOKEN),
     hasTelegramBotToken: Boolean(env.TELEGRAM_BOT_TOKEN),
     hasAdminSecret: Boolean(env.ADMIN_SECRET),
+    hasThreadsApp: Boolean(env.THREADS_APP_ID && env.THREADS_APP_SECRET),
     dryRun: env.DRY_RUN,
     includeReplies: env.INCLUDE_REPLIES,
     includeReposts: env.INCLUDE_REPOSTS,

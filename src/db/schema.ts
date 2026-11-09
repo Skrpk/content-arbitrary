@@ -247,6 +247,62 @@ export const loginAttempts = pgTable('login_attempts', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * A channel's Threads account, which posts can be published to: connected by
+ * one of its reviewers through Meta's authorization window
+ * (src/lib/threads/connect.ts). One per channel.
+ *
+ * The access token is a long-lived one — 60 days, refreshed well before that
+ * (src/lib/threads/refresh.ts) — and is stored encrypted, never in the clear;
+ * see src/lib/threads/token-crypto.ts.
+ */
+export const threadsAccounts = pgTable(
+  'threads_accounts',
+  {
+    id: serial('id').primaryKey(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    /** Threads' app-scoped id for the account, as text: it does not fit in a JavaScript number. */
+    threadsUserId: text('threads_user_id').notNull(),
+    username: text('username').notNull(),
+    /** AES-256-GCM, as `iv.tag.ciphertext` in base64url. */
+    accessTokenEncrypted: text('access_token_encrypted').notNull(),
+    tokenExpiresAt: timestamp('token_expires_at', { withTimezone: true }).notNull(),
+    tokenRefreshedAt: timestamp('token_refreshed_at', { withTimezone: true }).notNull(),
+    /** The permissions asked for when it was connected. */
+    scopes: text('scopes').array().notNull(),
+    connectedByUserId: integer('connected_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    /** Why the last refresh failed, when it did; cleared by the next that works. */
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('threads_accounts_workspace_key').on(table.workspaceId),
+    index('threads_accounts_threads_user_idx').on(table.threadsUserId),
+  ],
+);
+
+export type ThreadsAccount = typeof threadsAccounts.$inferSelect;
+
+/**
+ * A Threads connection under way: sent to Meta's authorization window, not
+ * yet back. Keyed by the SHA-256 of its `state`; used once, and only for ten
+ * minutes.
+ */
+export const threadsConnectAttempts = pgTable('threads_connect_attempts', {
+  stateHash: text('state_hash').primaryKey(),
+  workspaceId: integer('workspace_id')
+    .notNull()
+    .references(() => workspaces.id, { onDelete: 'cascade' }),
+  userId: integer('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 /** The single tenant that exists before multi-tenancy. */
 export const DEFAULT_WORKSPACE_ID = 1;
 

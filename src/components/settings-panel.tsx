@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { PlatformBadge } from '@/app/(app)/platform-badge';
 import { readJson, type PanelTools } from '@/components/panel-tools';
+import { ThreadsConnection } from '@/components/threads-connection';
 import { EDITORIAL_PROFILE_MAX_LENGTH, editorialProfileLength } from '@/lib/radar/editorial-profile';
 import { RADAR_THRESHOLD_MAX, RADAR_THRESHOLD_MIN } from '@/lib/radar/threshold';
 import { theme } from '@/lib/telegram/webapp-client';
@@ -111,7 +112,7 @@ const inputStyle = {
   fontSize: '0.95rem',
 } as const;
 
-export function SettingsPanel({ request, confirm }: Pick<PanelTools, 'request' | 'confirm'>) {
+export function SettingsPanel({ request, confirm, openLink }: PanelTools) {
   const [phase, setPhase] = useState<Phase>('loading');
   const [message, setMessage] = useState<string | null>(null);
   const [channels, setChannels] = useState<ChannelView[]>([]);
@@ -657,6 +658,8 @@ export function SettingsPanel({ request, confirm }: Pick<PanelTools, 'request' |
               </p>
             ) : null}
           </section>
+
+          <ThreadsConnection channels={channels} request={request} confirm={confirm} openLink={openLink} />
 
           {account ? (
             <section

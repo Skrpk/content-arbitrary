@@ -2,6 +2,10 @@ import { authorizeCron, unauthorized } from '@/lib/auth';
 import { describeError } from '@/lib/errors';
 import { logger } from '@/lib/logger';
 import { syncPosts } from '@/lib/sync/sync-posts';
+import { getDb } from '@/lib/db';
+import { getEnv } from '@/lib/env';
+import { threadsApp } from '@/lib/threads/config';
+import { refreshThreadsTokens } from '@/lib/threads/refresh';
 
 /**
  * GET /api/cron/sync — one synchronisation cycle.
@@ -25,6 +29,10 @@ export async function GET(request: Request): Promise<Response> {
     logger.warn('cron.unauthorized', { reason: auth.reason });
     return unauthorized(auth.reason);
   }
+
+  // Connected Threads accounts' tokens, before the sync, so a long sync
+  // cannot crowd it out; a failure here leaves the sync to run all the same.
+  await refreshThreadsTokensQuietly();
 
   try {
     const summary = await syncPosts();
@@ -83,5 +91,14 @@ export async function GET(request: Request): Promise<Response> {
       },
       { status: 500, headers: { 'cache-control': 'no-store' } },
     );
+  }
+}
+
+async function refreshThreadsTokensQuietly(): Promise<void> {
+  try {
+    const app = threadsApp(getEnv());
+    if (app) await refreshThreadsTokens(getDb(), app, { logger });
+  } catch (error) {
+    logger.error('threads.refresh_run_failed', { error: describeError(error) });
   }
 }
