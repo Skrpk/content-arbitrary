@@ -76,13 +76,15 @@ const en: LandingContent = {
   connect: 'Get started',
   languageSwitch: { label: 'Language', names: { en: 'EN', uk: 'UK' } },
   hero: {
-    eyebrow: 'An AI editorial desk for your channels',
-    title: 'Everything your sources publish, sorted by what you would run',
+    eyebrow: 'For people who run news channels and social accounts',
+    title: 'Stop scrolling twenty feeds to find the three posts worth running',
     lead:
-      'Zmistik follows the X and Threads accounts, RSS feeds, Telegram and YouTube channels and websites you pick. Each new ' +
-      'post is scored by how likely you are to publish it, the same story from several sources becomes one card, and the ' +
-      'text is rewritten in your language and voice. You only make the call: publish to Telegram, Threads or both, edit, ' +
-      'schedule or reject.',
+      'Running a channel means reading everything your sources publish, every day: catching the few stories that fit, ' +
+      'noticing that five of them are the same news, then rewriting it in your language before someone else posts it first. ' +
+      'Zmistik takes that work off you. It follows the X and Threads accounts, RSS feeds, Telegram and YouTube channels and ' +
+      'websites you pick, puts first what you would actually publish, folds one story from many sources into one card and ' +
+      'drafts the text in your language and voice. You spend minutes deciding instead of hours searching: publish to ' +
+      'Telegram, Threads or both, edit, schedule or reject.',
     primary: 'Get started',
     secondary: 'How it works',
   },
@@ -283,13 +285,15 @@ const uk: LandingContent = {
   connect: 'Підключити',
   languageSwitch: { label: 'Мова', names: { en: 'EN', uk: 'UK' } },
   hero: {
-    eyebrow: 'AI-редакція для ваших каналів',
-    title: 'Усе з ваших джерел — у порядку, який обрали б ви',
+    eyebrow: 'Для тих, хто веде новинні канали й акаунти в соцмережах',
+    title: 'Годі гортати двадцять стрічок, щоб знайти три пости, варті публікації',
     lead:
-      'Zmistik стежить за обраними акаунтами в X і Threads, RSS-стрічками, Telegram- і YouTube-каналами та сайтами. ' +
-      'Кожен новий пост отримує оцінку — наскільки ймовірно ви його опублікуєте, — та сама історія з кількох джерел ' +
-      'стає однією карткою, а текст переписується вашою мовою й голосом. Вам лишається тільки рішення: опублікувати ' +
-      'в Telegram, Threads чи в обидва, відредагувати, запланувати або відхилити.',
+      'Вести канал — це щодня читати все, що публікують ваші джерела: вловлювати ті кілька історій, що підходять, помічати, ' +
+      'що п’ять із них — та сама новина, і переписувати її своєю мовою, поки хтось не опублікував першим. Zmistik бере цю ' +
+      'роботу на себе. Він стежить за обраними акаунтами в X і Threads, RSS-стрічками, Telegram- і YouTube-каналами та ' +
+      'сайтами, ставить першим те, що ви справді опублікували б, збирає одну історію з багатьох джерел в одну картку й ' +
+      'готує текст вашою мовою та голосом. Ви витрачаєте хвилини на рішення замість годин на пошук: опублікувати в ' +
+      'Telegram, Threads чи в обидва, відредагувати, запланувати або відхилити.',
     primary: 'Почати',
     secondary: 'Як це працює',
   },
