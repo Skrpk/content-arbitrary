@@ -50,7 +50,7 @@ const env = {
   THREADS_APP_ID: APP_ID,
   THREADS_APP_SECRET: APP_SECRET,
 };
-const app = { appId: APP_ID, appSecret: APP_SECRET, redirectUri: `${WEB}/api/threads/callback` };
+const app = { appId: APP_ID, appSecret: APP_SECRET, redirectUri: `${WEB}/api/threads/callback`, requestProfileDiscovery: false };
 
 let graphCalls: string[];
 let username: string;
@@ -171,7 +171,7 @@ describeIfDb('connecting a channel’s Threads account', () => {
     expect(`${location.origin}${location.pathname}`).toBe('https://threads.com/oauth/authorize');
     expect(location.searchParams.get('client_id')).toBe(APP_ID);
     expect(location.searchParams.get('redirect_uri')).toBe(`${WEB}/api/threads/callback`);
-    expect(location.searchParams.get('scope')).toBe('threads_basic,threads_content_publish,threads_profile_discovery');
+    expect(location.searchParams.get('scope')).toBe('threads_basic,threads_content_publish');
     expect(location.searchParams.get('response_type')).toBe('code');
     expect(cookiesOf(started)['__Host-threads-state']).toBe(location.searchParams.get('state'));
 
@@ -224,6 +224,26 @@ describeIfDb('connecting a channel’s Threads account', () => {
     const accounts = await db.select().from(threadsAccounts);
     expect(accounts).toHaveLength(1);
     expect(accounts[0]!.username).toBe('zmistik_two');
+  });
+
+  it('asks for profile discovery only once that is switched on, and records what it asked for', async () => {
+    const session = await sessionFor(REVIEWER_ID);
+    const started = await withEnv({ ...env, THREADS_REQUEST_PROFILE_DISCOVERY: 'true' }, () =>
+      startRoute(new Request(`${WEB}/api/threads/start?workspaceId=${DEFAULT_WORKSPACE_ID}`, { headers: { cookie: `__Host-session=${session}` } })),
+    );
+    const state = new URL(started.headers.get('location')!).searchParams.get('state')!;
+    expect(new URL(started.headers.get('location')!).searchParams.get('scope')).toBe(
+      'threads_basic,threads_content_publish,threads_profile_discovery',
+    );
+    await withEnv({ ...env, THREADS_REQUEST_PROFILE_DISCOVERY: 'true' }, () =>
+      callbackRoute(
+        new Request(`${WEB}/api/threads/callback?code=AQBx-code&state=${state}`, {
+          headers: { cookie: `__Host-session=${session}; __Host-threads-state=${state}` },
+        }),
+      ),
+    );
+    const [account] = await db.select().from(threadsAccounts);
+    expect(account!.scopes).toEqual(['threads_basic', 'threads_content_publish', 'threads_profile_discovery']);
   });
 
   it('is not started for a channel the reviewer does not review, nor signed out', async () => {

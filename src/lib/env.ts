@@ -228,6 +228,13 @@ const schema = z
       .optional()
       .or(z.literal('').transform(() => undefined)),
     /**
+     * Ask for profile discovery when an account is connected — needed by the
+     * account that reads Threads sources. Off until Meta approves the
+     * permission for the app: asking for it before then turns away everyone
+     * but the app's testers. See threadsScopes.
+     */
+    THREADS_REQUEST_PROFILE_DISCOVERY: booleanish(false),
+    /**
      * `shared`: that one account reads every channel's Threads sources.
      * `own_first`: a channel's own connected account reads its sources, the shared one the rest.
      */

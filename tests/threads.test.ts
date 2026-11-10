@@ -9,7 +9,12 @@ import { decryptToken, encryptToken } from '@/lib/threads/token-crypto';
 /** The parts of connecting Threads that need no database: tokens at rest, Meta's signatures, and its API's answers. */
 
 const SECRET = 'threads-app-secret-for-tests-0123456789';
-const app: ThreadsApp = { appId: '4645779255666888', appSecret: SECRET, redirectUri: 'https://app.example.com/api/threads/callback' };
+const app: ThreadsApp = {
+  appId: '4645779255666888',
+  appSecret: SECRET,
+  redirectUri: 'https://app.example.com/api/threads/callback',
+  requestProfileDiscovery: false,
+};
 
 function signed(payload: Record<string, unknown> | string, secret = SECRET): string {
   const body = Buffer.from(typeof payload === 'string' ? payload : JSON.stringify(payload)).toString('base64url');

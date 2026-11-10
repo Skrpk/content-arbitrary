@@ -11,27 +11,41 @@ export const THREADS_AUTHORIZE_URL = 'https://threads.com/oauth/authorize';
 export const THREADS_GRAPH_URL = 'https://graph.threads.com';
 export const THREADS_API_VERSION = 'v1.0';
 
-/**
- * What a connected account allows: reading who it is, publishing to it, and
- * reading public profiles' posts — the account that reads Threads sources.
- * Asking for more means everyone connected so far connects again.
- */
-export const THREADS_SCOPES = ['threads_basic', 'threads_content_publish', 'threads_profile_discovery'] as const;
-
 /** The permission reading a public profile's posts takes. */
 export const THREADS_DISCOVERY_SCOPE = 'threads_profile_discovery';
+
+/**
+ * What connecting asks for: reading who the account is and publishing to it,
+ * and — only once THREADS_REQUEST_PROFILE_DISCOVERY is on — reading public
+ * profiles' posts, which the account that reads Threads sources needs. Meta
+ * grants a permission it has not approved for the app only to the app's own
+ * testers, so asking for it before then would turn everyone else away.
+ * Asking for more later means connecting again.
+ */
+export function threadsScopes(app: Pick<ThreadsApp, 'requestProfileDiscovery'>): string[] {
+  return ['threads_basic', 'threads_content_publish', ...(app.requestProfileDiscovery ? [THREADS_DISCOVERY_SCOPE] : [])];
+}
 
 export interface ThreadsApp {
   appId: string;
   appSecret: string;
   /** Where Meta sends people back to; registered in the app's Threads settings. */
   redirectUri: string;
+  /** Whether connecting asks for profile discovery too; see threadsScopes. */
+  requestProfileDiscovery: boolean;
 }
 
 /** The app, or null while Threads is not configured — no app, or no website to come back to. */
-export function threadsApp(env: Pick<Env, 'THREADS_APP_ID' | 'THREADS_APP_SECRET' | 'WEB_APP_URL'>): ThreadsApp | null {
+export function threadsApp(
+  env: Pick<Env, 'THREADS_APP_ID' | 'THREADS_APP_SECRET' | 'WEB_APP_URL'> & Partial<Pick<Env, 'THREADS_REQUEST_PROFILE_DISCOVERY'>>,
+): ThreadsApp | null {
   if (!env.THREADS_APP_ID || !env.THREADS_APP_SECRET || !env.WEB_APP_URL) return null;
-  return { appId: env.THREADS_APP_ID, appSecret: env.THREADS_APP_SECRET, redirectUri: threadsCallbackUrl(env.WEB_APP_URL) };
+  return {
+    appId: env.THREADS_APP_ID,
+    appSecret: env.THREADS_APP_SECRET,
+    redirectUri: threadsCallbackUrl(env.WEB_APP_URL),
+    requestProfileDiscovery: env.THREADS_REQUEST_PROFILE_DISCOVERY ?? false,
+  };
 }
 
 export function threadsCallbackUrl(webAppUrl: string): string {

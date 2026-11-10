@@ -4,7 +4,7 @@ import { threadsAccounts, threadsConnectAttempts, type ThreadsAccount } from '@/
 import type { Database } from '@/lib/db';
 import { workspacesForUser } from '@/lib/accounts/users';
 import { exchangeCode, exchangeForLongLived, threadsMe, type ThreadsCallOptions } from '@/lib/threads/client';
-import { THREADS_AUTHORIZE_URL, THREADS_SCOPES, type ThreadsApp } from '@/lib/threads/config';
+import { THREADS_AUTHORIZE_URL, threadsScopes, type ThreadsApp } from '@/lib/threads/config';
 import { decryptToken, encryptToken } from '@/lib/threads/token-crypto';
 
 /**
@@ -52,7 +52,7 @@ export async function startThreadsConnect(
   url.search = new URLSearchParams({
     client_id: app.appId,
     redirect_uri: app.redirectUri,
-    scope: THREADS_SCOPES.join(','),
+    scope: threadsScopes(app).join(','),
     response_type: 'code',
     state,
   }).toString();
@@ -93,7 +93,7 @@ export async function finishThreadsConnect(
     accessTokenEncrypted: encryptToken(token.accessToken, app.appSecret),
     tokenExpiresAt: new Date(now.getTime() + token.expiresIn * 1000),
     tokenRefreshedAt: now,
-    scopes: [...THREADS_SCOPES],
+    scopes: threadsScopes(app),
     connectedByUserId: input.userId,
     lastError: null,
     updatedAt: now,
