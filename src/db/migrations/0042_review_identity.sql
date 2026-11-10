@@ -1,0 +1,2 @@
+ALTER TABLE "user_identities" DROP CONSTRAINT "user_identities_provider_check";--> statement-breakpoint
+ALTER TABLE "user_identities" ADD CONSTRAINT "user_identities_provider_check" CHECK ("user_identities"."provider" IN ('telegram', 'review'));

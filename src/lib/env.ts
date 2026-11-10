@@ -234,6 +234,30 @@ const schema = z
     THREADS_READER_MODE: enumWithDefault(['shared', 'own_first'] as const, 'shared'),
 
     /**
+     * A way in for an app store's reviewers — Meta's, checking the Threads app —
+     * who cannot sign in with a channel's Telegram account: this username and
+     * password on the website's sign-in page, into this one workspace only.
+     * Unset password or workspace, and there is no such way in.
+     */
+    REVIEW_LOGIN_USERNAME: z
+      .string()
+      .trim()
+      .optional()
+      .transform((value) => (value ? value : 'meta-reviewer')),
+    REVIEW_LOGIN_PASSWORD: z
+      .string()
+      .min(20, 'REVIEW_LOGIN_PASSWORD must be at least 20 characters')
+      .optional()
+      .or(z.literal('').transform(() => undefined)),
+    REVIEW_LOGIN_WORKSPACE_ID: z
+      .string()
+      .trim()
+      .regex(/^\d{1,9}$/, 'REVIEW_LOGIN_WORKSPACE_ID must be a workspace id')
+      .transform(Number)
+      .optional()
+      .or(z.literal('').transform(() => undefined)),
+
+    /**
      * Which model Shadow Radar asks: OpenAI's GPT-6 Luna (the default) or
      * Anthropic's Claude Haiku 4.5. Radar scores each post sent for review —
      * never shown, never acted on — for tenants that have an editorial

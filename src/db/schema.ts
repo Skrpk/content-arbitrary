@@ -147,7 +147,12 @@ export const users = pgTable(
 export type User = typeof users.$inferSelect;
 
 /** Ways of signing in. Another is one value here and one provider config. */
-export const IDENTITY_PROVIDERS = ['telegram'] as const;
+/**
+ * Ways of signing in: Telegram for everyone, and `review` — a username and
+ * password from the environment — for an app store's reviewers, into one
+ * demo channel (src/lib/accounts/review-access.ts).
+ */
+export const IDENTITY_PROVIDERS = ['telegram', 'review'] as const;
 export type IdentityProvider = (typeof IDENTITY_PROVIDERS)[number];
 
 /**
@@ -173,7 +178,7 @@ export const userIdentities = pgTable(
   (table) => [
     uniqueIndex('user_identities_provider_subject_key').on(table.provider, table.subject),
     index('user_identities_user_idx').on(table.userId),
-    check('user_identities_provider_check', sql`${table.provider} IN ('telegram')`),
+    check('user_identities_provider_check', sql`${table.provider} IN ('telegram', 'review')`),
   ],
 );
 

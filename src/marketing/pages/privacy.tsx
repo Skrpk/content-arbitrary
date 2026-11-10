@@ -15,7 +15,7 @@ const GOOGLE_PRIVACY = 'https://policies.google.com/privacy';
 const en: PublicPage = {
   title: 'Privacy Policy',
   description: 'What data Zmistik processes, why, who it goes to, how long it is kept and what your rights are.',
-  effective: 'In effect from 6 November 2026.',
+  effective: 'In effect from 9 November 2026.',
   body: (
     <>
       <p>
@@ -50,13 +50,18 @@ const en: PublicPage = {
               <td>Your browser</td>
             </tr>
             <tr>
+              <td>Threads account</td>
+              <td>Your Threads user ID and username, an access token (stored encrypted), when it was connected and the permissions you granted</td>
+              <td>Threads, when you connect your account</td>
+            </tr>
+            <tr>
               <td>Channel settings</td>
               <td>Channel ID and name, reviewer ID, editorial profile, language, post footer, notification settings</td>
               <td>You</td>
             </tr>
             <tr>
               <td>Sources</td>
-              <td>The X accounts, RSS feeds, Telegram and YouTube channels and website sitemaps you chose</td>
+              <td>The X accounts, RSS feeds, Telegram and YouTube channels, website sitemaps and Threads accounts you chose</td>
               <td>You</td>
             </tr>
             <tr>
@@ -88,7 +93,8 @@ const en: PublicPage = {
         </table>
       </div>
       <p>
-        We do not ask for a password: you sign in through Telegram. We do not process payment details, as the service takes
+        We do not ask for a password: you sign in through Telegram, and connect Threads through Meta’s own window, so we never
+        see your Threads password. We do not process payment details, as the service takes
         no payments for now.
       </p>
 
@@ -183,11 +189,15 @@ const en: PublicPage = {
               <td>Supadata</td>
               <td>Video transcripts, by the link to a public video</td>
             </tr>
+            <tr>
+              <td>Meta (Threads)</td>
+              <td>Connecting your Threads account, publishing the posts you choose to it, reading public posts of Threads accounts you follow</td>
+            </tr>
           </tbody>
         </table>
       </div>
       <p>
-        To read sources we call the X API, the YouTube Data API, RSS feeds and public websites. These requests carry none of
+        To read sources we call the X API, the YouTube Data API, the Threads API, RSS feeds and public websites. These requests carry none of
         your personal data: they concern only the sources chosen.
       </p>
       <p>
@@ -203,7 +213,25 @@ const en: PublicPage = {
         videos and has no access to your Google account.
       </p>
 
-      <h2>8. Cookies</h2>
+      <h2>8. Threads</h2>
+      <p>
+        If you connect a Threads account to a channel, the service uses Meta’s Threads API to publish to that account the posts
+        you choose to send there — when you approve or schedule a post you pick Telegram, Threads or both — and to read the
+        public posts of Threads accounts you add as sources. It does not read your private data, messages or followers, and
+        publishes nothing you did not choose. To publish a picture or video, the service briefly stores a copy where Threads
+        can fetch it, and deletes it once the post is published or given up on. Your use of Threads is also governed by the{' '}
+        <a href="https://help.instagram.com/769983657850450" rel="noopener">Threads Terms of Use</a> and the{' '}
+        <a href="https://help.instagram.com/515230437301944" rel="noopener">Threads Privacy Policy</a>.
+      </p>
+      <p>
+        <strong>Disconnecting and deleting your Threads data.</strong> Press Disconnect next to the account in the service’s
+        Settings, or remove Zmistik under Website permissions in your Threads account settings. Either way we delete the
+        account’s ID, username and access token at once; when Meta tells us you asked for your data to be deleted, we do the
+        same and give you a confirmation code. Posts already published to your Threads account stay there until you delete
+        them in Threads. You can also ask us to delete your data by writing to <Contact />.
+      </p>
+
+      <h2>9. Cookies</h2>
       <p>We use only the cookies the service needs:</p>
       <div className="table-scroll">
         <table>
@@ -232,7 +260,7 @@ const en: PublicPage = {
       </div>
       <p>There are no advertising or analytics cookies on the site. We count visits to the public pages with Vercel Web Analytics, which sets no cookies and gives us aggregated statistics only.</p>
 
-      <h2>9. How long we keep data</h2>
+      <h2>10. How long we keep data</h2>
       <div className="table-scroll">
         <table>
           <thead>
@@ -255,6 +283,14 @@ const en: PublicPage = {
               <td>Deleted from storage soon after the post is published or rejected</td>
             </tr>
             <tr>
+              <td>Threads account and its access token</td>
+              <td>Until you disconnect it or remove Zmistik in Threads, or until the token runs out unused</td>
+            </tr>
+            <tr>
+              <td>Copies of media made for Threads</td>
+              <td>Deleted once the post is published to Threads or the attempt is given up</td>
+            </tr>
+            <tr>
               <td>Conversation with the AI assistant</td>
               <td>Not kept</td>
             </tr>
@@ -274,23 +310,23 @@ const en: PublicPage = {
         published in your Telegram channel is controlled by you and Telegram, not by us.
       </p>
 
-      <h2>10. Your rights</h2>
+      <h2>11. Your rights</h2>
       <p>
         You may ask for access to your data, its correction or deletion, restriction of its processing and a copy of it. You
         may object to processing based on legitimate interest. Write to <Contact /> and we will answer within 30 days. You may
         also complain to the data protection authority in your country.
       </p>
 
-      <h2>11. Security</h2>
+      <h2>12. Security</h2>
       <p>
         Connections to the service are encrypted. Session tokens are stored only as hashes, and secrets are removed from logs.
         No protection is absolute; if a breach affects you, we will tell you as the law requires.
       </p>
 
-      <h2>12. Children</h2>
+      <h2>13. Children</h2>
       <p>The service is for people aged 16 and over. We do not knowingly collect children’s data.</p>
 
-      <h2>13. Changes</h2>
+      <h2>14. Changes</h2>
       <p>
         We may update this policy. We will announce material changes on the site or through the bot and update the date at the
         top of this page.
@@ -302,7 +338,7 @@ const en: PublicPage = {
 const uk: PublicPage = {
   title: 'Політика конфіденційності',
   description: 'Які дані обробляє Zmistik, навіщо, кому передає, як довго зберігає і які права ви маєте.',
-  effective: 'Чинна з 6 листопада 2026 року.',
+  effective: 'Чинна з 9 листопада 2026 року.',
   body: (
     <>
       <p>
@@ -337,13 +373,18 @@ const uk: PublicPage = {
               <td>Ваш браузер</td>
             </tr>
             <tr>
+              <td>Акаунт Threads</td>
+              <td>Ваш ідентифікатор користувача Threads і username, токен доступу (зберігається зашифрованим), час підключення й надані дозволи</td>
+              <td>Threads, коли ви підключаєте акаунт</td>
+            </tr>
+            <tr>
               <td>Налаштування каналу</td>
               <td>Ідентифікатор і назва каналу, ідентифікатор рев’юера, редакційний профіль, мова, футер постів, налаштування сповіщень</td>
               <td>Ви</td>
             </tr>
             <tr>
               <td>Джерела</td>
-              <td>Обрані акаунти X, RSS-стрічки, канали Telegram і YouTube, sitemap сайтів</td>
+              <td>Обрані акаунти X, RSS-стрічки, канали Telegram і YouTube, sitemap сайтів, акаунти Threads</td>
               <td>Ви</td>
             </tr>
             <tr>
@@ -375,7 +416,8 @@ const uk: PublicPage = {
         </table>
       </div>
       <p>
-        Ми не просимо пароль: вхід відбувається через Telegram. Ми не обробляємо платіжні дані, бо сервіс поки не бере оплату.
+        Ми не просимо пароль: вхід відбувається через Telegram, а Threads підключається у вікні самої Meta, тож пароля від
+        Threads ми не бачимо. Ми не обробляємо платіжні дані, бо сервіс поки не бере оплату.
       </p>
 
       <h2>3. Контент із публічних джерел</h2>
@@ -470,11 +512,15 @@ const uk: PublicPage = {
               <td>Supadata</td>
               <td>Транскрипти відео за посиланням на публічне відео</td>
             </tr>
+            <tr>
+              <td>Meta (Threads)</td>
+              <td>Підключення вашого акаунта Threads, публікація в нього обраних вами постів, читання публічних постів акаунтів Threads, за якими ви стежите</td>
+            </tr>
           </tbody>
         </table>
       </div>
       <p>
-        Для читання джерел ми звертаємося до X API, YouTube Data API, RSS-стрічок і публічних сайтів. У цих запитах ми не
+        Для читання джерел ми звертаємося до X API, YouTube Data API, Threads API, RSS-стрічок і публічних сайтів. У цих запитах ми не
         передаємо ваші персональні дані: вони стосуються лише обраних джерел.
       </p>
       <p>
@@ -490,7 +536,26 @@ const uk: PublicPage = {
         відео та не отримує доступу до вашого акаунта Google.
       </p>
 
-      <h2>8. Cookies</h2>
+      <h2>8. Threads</h2>
+      <p>
+        Якщо ви підключаєте акаунт Threads до каналу, сервіс через Threads API від Meta публікує в цей акаунт пости, які ви
+        вирішите туди відправити (затверджуючи чи плануючи пост, ви обираєте Telegram, Threads або обидва), і читає публічні
+        пости акаунтів Threads, які ви додали як джерела. Сервіс не читає ваших приватних даних, повідомлень чи підписників і
+        не публікує нічого, чого ви не обрали. Щоб опублікувати фото чи відео, сервіс ненадовго зберігає їх копію там, звідки
+        Threads може її забрати, і видаляє її, щойно пост опубліковано або спробу облишено. Користування Threads також
+        регулюють{' '}
+        <a href="https://help.instagram.com/769983657850450" rel="noopener">Умови використання Threads</a> і{' '}
+        <a href="https://help.instagram.com/515230437301944" rel="noopener">Політика конфіденційності Threads</a>.
+      </p>
+      <p>
+        <strong>Відключення і видалення даних Threads.</strong> Натисніть Disconnect біля акаунта в налаштуваннях сервісу або
+        приберіть Zmistik у розділі «Дозволи вебсайтів» налаштувань вашого акаунта Threads. В обох випадках ми одразу видаляємо
+        ідентифікатор акаунта, username і токен доступу; коли Meta повідомляє, що ви попросили видалити свої дані, ми робимо те
+        саме й даємо вам код підтвердження. Пости, вже опубліковані у вашому Threads, залишаються там, доки ви не видалите їх у
+        Threads. Попросити видалити дані можна й написавши <Contact />.
+      </p>
+
+      <h2>9. Cookies</h2>
       <p>Ми використовуємо лише необхідні cookies:</p>
       <div className="table-scroll">
         <table>
@@ -519,7 +584,7 @@ const uk: PublicPage = {
       </div>
       <p>На сайті немає рекламних чи аналітичних cookies. Відвідування публічних сторінок ми рахуємо через Vercel Web Analytics: цей сервіс не ставить cookies і дає нам лише узагальнену статистику.</p>
 
-      <h2>9. Як довго ми зберігаємо дані</h2>
+      <h2>10. Як довго ми зберігаємо дані</h2>
       <div className="table-scroll">
         <table>
           <thead>
@@ -542,6 +607,14 @@ const uk: PublicPage = {
               <td>Видаляються зі сховища невдовзі після публікації або відхилення поста</td>
             </tr>
             <tr>
+              <td>Акаунт Threads і його токен доступу</td>
+              <td>Доки ви не відключите акаунт чи не приберете Zmistik у Threads, або доки невикористаний токен не спливе</td>
+            </tr>
+            <tr>
+              <td>Копії медіа, зроблені для Threads</td>
+              <td>Видаляються, щойно пост опубліковано в Threads або спробу облишено</td>
+            </tr>
+            <tr>
               <td>Переписка з AI-асистентом</td>
               <td>Не зберігається</td>
             </tr>
@@ -561,23 +634,23 @@ const uk: PublicPage = {
         Telegram-каналі, контролюєте ви і Telegram, а не ми.
       </p>
 
-      <h2>10. Ваші права</h2>
+      <h2>11. Ваші права</h2>
       <p>
         Ви можете попросити доступ до своїх даних, їх виправлення, видалення, обмеження обробки, а також копію даних. Ви можете
         заперечити проти обробки на підставі законного інтересу. Напишіть <Contact />, і ми відповімо протягом 30 днів. Ви також
         можете подати скаргу до органу із захисту даних у вашій країні.
       </p>
 
-      <h2>11. Безпека</h2>
+      <h2>12. Безпека</h2>
       <p>
         З’єднання з сервісом зашифровані. Токени сесій зберігаються лише як хеші, а секрети прибираються з журналів. Жоден захист
         не є абсолютним; якщо станеться витік, який торкнеться вас, ми повідомимо згідно із законом.
       </p>
 
-      <h2>12. Діти</h2>
+      <h2>13. Діти</h2>
       <p>Сервіс призначений для осіб від 16 років. Ми свідомо не збираємо дані дітей.</p>
 
-      <h2>13. Зміни</h2>
+      <h2>14. Зміни</h2>
       <p>
         Ми можемо оновлювати цю політику. Про суттєві зміни повідомимо на сайті або через бота й оновимо дату вгорі сторінки.
       </p>

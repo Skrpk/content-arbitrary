@@ -9,7 +9,7 @@ import { Contact, type PublicPage } from './shared';
 const en: PublicPage = {
   title: 'Terms of Service',
   description: 'The rules for using Zmistik: your account, your responsibility for what you publish, AI results and limits.',
-  effective: 'In effect from 6 November 2026.',
+  effective: 'In effect from 9 November 2026.',
   body: (
     <>
       <p>
@@ -20,7 +20,8 @@ const en: PublicPage = {
       <h2>1. What the service does</h2>
       <p>
         Zmistik reads the public sources you choose, scores new material for your channel, groups reports of one event, prepares
-        text in your channel’s language and publishes what you approve. If you set it so, a channel can publish without review.
+        text in your channel’s language and publishes what you approve — to your Telegram channel, and, if you connect one, to
+        your Threads account, wherever you choose for each post. If you set it so, a channel can publish without review.
       </p>
 
       <h2>2. Account and access</h2>
@@ -47,7 +48,7 @@ const en: PublicPage = {
           videos, translations and rewritten texts;
         </li>
         <li>respect copyright, credit sources where required and do not infringe other people’s rights;</li>
-        <li>follow the rules of Telegram and of the platforms you chose as sources.</li>
+        <li>follow the rules of Telegram, of Threads if you publish there, and of the platforms you chose as sources.</li>
       </ul>
       <p>We do not check, and do not grant you, rights to other people’s content.</p>
 
@@ -76,10 +77,10 @@ const en: PublicPage = {
 
       <h2>8. Third-party services</h2>
       <p>
-        Zmistik depends on Telegram, X, YouTube, AI services and the sites it reads. They may change their rules, limit access or
+        Zmistik depends on Telegram, Threads, X, YouTube, AI services and the sites it reads. They may change their rules, limit access or
         stop working, and some features may then not work. Sites that block automated access or show articles only through
         JavaScript may not be readable. These services are not affiliated with us. X is a trademark of X Corp., Telegram of
-        Telegram FZ-LLC and YouTube of Google LLC.
+        Telegram FZ-LLC, YouTube of Google LLC and Threads of Meta Platforms, Inc.
       </p>
 
       <h2>9. Availability and changes</h2>
@@ -125,7 +126,7 @@ const en: PublicPage = {
 const uk: PublicPage = {
   title: 'Умови використання',
   description: 'Правила користування Zmistik: акаунт, ваша відповідальність за публікації, результати AI та обмеження.',
-  effective: 'Чинні з 6 листопада 2026 року.',
+  effective: 'Чинні з 9 листопада 2026 року.',
   body: (
     <>
       <p>
@@ -136,7 +137,8 @@ const uk: PublicPage = {
       <h2>1. Що робить сервіс</h2>
       <p>
         Zmistik читає обрані вами публічні джерела, оцінює нові матеріали для вашого каналу, групує повідомлення про одну подію,
-        готує текст мовою каналу й публікує те, що ви схвалили. За вашим налаштуванням канал може публікувати пости без рев’ю.
+        готує текст мовою каналу й публікує те, що ви схвалили: у ваш Telegram-канал, а якщо ви підключили акаунт Threads, то й
+        туди, куди ви оберете для кожного поста. За вашим налаштуванням канал може публікувати пости без рев’ю.
       </p>
 
       <h2>2. Акаунт і доступ</h2>
@@ -162,7 +164,7 @@ const uk: PublicPage = {
           відео, перекладами й переписаними текстами;
         </li>
         <li>дотримуєтеся авторського права, вказуєте джерела там, де це потрібно, і не порушуєте права інших людей;</li>
-        <li>дотримуєтеся правил Telegram та платформ, які обрали як джерела.</li>
+        <li>дотримуєтеся правил Telegram, Threads (якщо публікуєте туди) та платформ, які обрали як джерела.</li>
       </ul>
       <p>Ми не перевіряємо і не надаємо вам прав на чужий контент.</p>
 
@@ -191,10 +193,10 @@ const uk: PublicPage = {
 
       <h2>8. Сторонні сервіси</h2>
       <p>
-        Робота Zmistik залежить від Telegram, X, YouTube, AI-сервісів та сайтів-джерел. Вони можуть змінити правила, обмежити доступ
+        Робота Zmistik залежить від Telegram, Threads, X, YouTube, AI-сервісів та сайтів-джерел. Вони можуть змінити правила, обмежити доступ
         або припинити роботу, і тоді частина функцій може не працювати. Сайти, які блокують автоматичний доступ або показують статті
         лише через JavaScript, можуть не читатися. Ці сервіси не пов’язані з нами. X — торгова марка X Corp., Telegram — Telegram
-        FZ-LLC, YouTube — Google LLC.
+        FZ-LLC, YouTube — Google LLC, Threads — Meta Platforms, Inc.
       </p>
 
       <h2>9. Доступність і зміни</h2>

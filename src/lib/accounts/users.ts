@@ -4,6 +4,7 @@ import {
   users,
   workspaceMembers,
   workspaces,
+  type IdentityProvider,
   type ReviewLinkTarget,
   type User,
   type Workspace,
@@ -108,7 +109,7 @@ export async function findUserById(db: Database, id: number): Promise<User | nul
   return rows[0] ?? null;
 }
 
-async function findUserByIdentity(db: Database, provider: 'telegram', subject: string): Promise<User | null> {
+export async function findUserByIdentity(db: Database, provider: IdentityProvider, subject: string): Promise<User | null> {
   const rows = await db
     .select({ user: users })
     .from(userIdentities)
@@ -123,9 +124,9 @@ async function findUserByIdentity(db: Database, provider: 'telegram', subject: s
  * the website, say — race on the identity's unique key: the loser's user is
  * rolled back and it reads the winner's.
  */
-async function createUserWithIdentity(
+export async function createUserWithIdentity(
   db: Database,
-  provider: 'telegram',
+  provider: IdentityProvider,
   subject: string,
   account: TelegramAccount,
 ): Promise<User> {

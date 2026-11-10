@@ -38,6 +38,6 @@ export function redirectTo(
 }
 
 /** The sign-in page, saying what went wrong. */
-export function loginPageUrl(webAppUrl: string, error?: 'denied' | 'failed' | 'expired' | 'not-a-reviewer'): string {
+export function loginPageUrl(webAppUrl: string, error?: 'denied' | 'failed' | 'expired' | 'not-a-reviewer' | 'review-failed'): string {
   return `${webAppUrl}/login${error ? `?error=${error}` : ''}`;
 }
