@@ -490,6 +490,28 @@ export async function setRichDocument(
 }
 
 /**
+ * The post's own text for Threads, or null to have it follow the Telegram
+ * text again; on a post still open to change.
+ */
+export async function setThreadsText(
+  db: Database,
+  input: { id: number; workspaceId: number; text: string | null },
+): Promise<{ updated: boolean }> {
+  const rows = await db
+    .update(processedPosts)
+    .set({ threadsText: input.text, updatedAt: new Date() })
+    .where(
+      and(
+        eq(processedPosts.id, input.id),
+        eq(processedPosts.workspaceId, input.workspaceId),
+        inArray(processedPosts.status, openStatuses(true)),
+      ),
+    )
+    .returning({ id: processedPosts.id });
+  return { updated: rows.length > 0 };
+}
+
+/**
  * Approve a post for publishing at a later time, or move the time of one
  * already scheduled.
  *

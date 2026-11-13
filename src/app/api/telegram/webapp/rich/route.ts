@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { payloadMediaCount, type ProcessedPost } from '@/db/schema';
 import { assistantAvailable } from '@/lib/assistant/repository';
+import { createRadarProvider } from '@/lib/radar/providers';
 import { describeError } from '@/lib/errors';
 import {
   initialRichDocument,
@@ -9,16 +10,19 @@ import {
   RICH_TEXT_MAX,
 } from '@/lib/rich/document';
 import { sourceLabelOfPost } from '@/lib/sources/display';
-import { findPostAwaitingReview, setRichDocument } from '@/lib/sync/repository';
+import { findPostAwaitingReview, setRichDocument, setThreadsText } from '@/lib/sync/repository';
 import { captionToPlainText, parsePostFooter, stripFooter } from '@/lib/telegram/post-footer';
 import { authorizeReviewer, json, reviewerWorkspaceForPost } from '@/lib/telegram/webapp-request';
 import { loadUploads, uploadMaxBytes, uploadPathPrefix, uploadRef, uploadsAvailable, type UploadRow } from '@/lib/uploads/uploads';
 import { shownMediaUrl } from '@/lib/telegram-channel/media-link';
+import { hasThreadsAccount } from '@/lib/threads/accounts';
+import { threadsLength, THREADS_TEXT_LIMIT } from '@/lib/threads/text';
 
 /**
  * The website editor's API: the post as a document to edit — the one saved,
  * or one made from its text and pictures — and saving it back, or dropping
- * it to publish the post as it was.
+ * it to publish the post as it was. For a channel with a Threads account,
+ * also the post's own Threads text: saved, or cleared to follow Telegram's.
  *
  * Guarded like every reviewer endpoint, on a post of the reviewer's own
  * channel that has not gone out. What is saved is checked against what a
@@ -30,7 +34,16 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
-const saveSchema = z.object({ postId: z.number().int().positive(), doc: z.unknown() }).strict();
+const saveSchema = z
+  .object({
+    postId: z.number().int().positive(),
+    /** The Telegram post; left out when only the Threads text changed. */
+    doc: z.unknown().optional(),
+    /** The post's own Threads text, or null to follow the Telegram text; left out to keep it. */
+    threadsText: z.string().max(10_000).nullable().optional(),
+  })
+  .strict()
+  .refine((body) => body.doc !== undefined || body.threadsText !== undefined, 'nothing to save');
 const dropSchema = z.object({ postId: z.number().int().positive() }).strict();
 
 export async function GET(request: Request): Promise<Response> {
@@ -57,6 +70,11 @@ export async function GET(request: Request): Promise<Response> {
     doc: post.richDoc ?? initialRichDocument({ text: plainTextOf(post, footer), mediaCount: payloadMediaCount(payload) }),
     media: [...mediaOf(post), ...uploads.map(uploadMedia)],
     footer: footer?.text ?? null,
+    // The Threads tab, for a channel with an account there: the post's own text, or null while it follows Telegram's.
+    // "Adapt for Threads" is the assistant's, on the model that rewrites posts (src/app/api/telegram/webapp/threads-adapt).
+    threads: (await hasThreadsAccount(auth.db, workspace.id))
+      ? { text: post.threadsText, adapt: assistantAvailable(auth.env) && createRadarProvider(auth.env) !== null }
+      : null,
     limits: { text: RICH_TEXT_MAX - (footer ? footer.text.length + 2 : 0), media: RICH_MEDIA_MAX },
     // Whether the editor shows the AI assistant (src/app/api/telegram/webapp/assistant).
     assistant: assistantAvailable(auth.env),
@@ -86,17 +104,38 @@ export async function POST(request: Request): Promise<Response> {
   if (!found) return json({ error: 'This post is no longer awaiting review.' }, 409);
   const footer = parsePostFooter(found.workspace.postFooter);
 
-  const parsed = parseRichDocument(body.doc, {
-    mediaCount: payloadMediaCount(found.post.approvalPayload!),
-    uploads: new Set((await loadUploads(auth.db, body.postId)).map(uploadRef)),
-    reservedChars: footer ? footer.text.length + 2 : 0,
-  });
-  if (!parsed.ok) return json({ error: parsed.error }, 422);
+  // Both checked before either is stored, so a save is all or nothing.
+  let doc: Extract<ReturnType<typeof parseRichDocument>, { ok: true }>['doc'] | undefined;
+  if (body.doc !== undefined) {
+    const parsed = parseRichDocument(body.doc, {
+      mediaCount: payloadMediaCount(found.post.approvalPayload!),
+      uploads: new Set((await loadUploads(auth.db, body.postId)).map(uploadRef)),
+      reservedChars: footer ? footer.text.length + 2 : 0,
+    });
+    if (!parsed.ok) return json({ error: parsed.error }, 422);
+    doc = parsed.doc;
+  }
+  let threadsText: string | null | undefined;
+  if (body.threadsText !== undefined) {
+    if (!(await hasThreadsAccount(auth.db, found.workspace.id))) {
+      return json({ error: 'This channel has no Threads account.' }, 422);
+    }
+    threadsText = body.threadsText === null ? null : body.threadsText.trim();
+    if (threadsText === '') return json({ error: 'The Threads text is empty.' }, 422);
+    if (threadsText !== null && threadsLength(threadsText) > THREADS_TEXT_LIMIT) {
+      return json({ error: `Threads takes ${THREADS_TEXT_LIMIT} characters; this text is ${threadsLength(threadsText)}.` }, 422);
+    }
+  }
 
-  const result = await setRichDocument(auth.db, { id: body.postId, workspaceId: found.workspace.id, doc: parsed.doc });
-  if (!result.updated) return json({ error: 'This post is no longer awaiting review.' }, 409);
+  const where = { id: body.postId, workspaceId: found.workspace.id };
+  if (doc !== undefined && !(await setRichDocument(auth.db, { ...where, doc })).updated) {
+    return json({ error: 'This post is no longer awaiting review.' }, 409);
+  }
+  if (threadsText !== undefined && !(await setThreadsText(auth.db, { ...where, text: threadsText })).updated) {
+    return json({ error: 'This post is no longer awaiting review.' }, 409);
+  }
 
-  auth.logger.info('webapp.rich_saved', { postId: body.postId });
+  auth.logger.info('webapp.rich_saved', { postId: body.postId, doc: doc !== undefined, threads: threadsText !== undefined });
   return json({ ok: true });
 }
 

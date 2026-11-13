@@ -1,6 +1,14 @@
 import { and, count, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { processedPosts, workspaces, type ReviewLinkTarget, type SourcePlatform, type Workspace } from '@/db/schema';
+import {
+  payloadMediaCount,
+  processedPosts,
+  workspaces,
+  type ApprovalPayload,
+  type ReviewLinkTarget,
+  type SourcePlatform,
+  type Workspace,
+} from '@/db/schema';
 import type { Database } from '@/lib/db';
 import type { Env } from '@/lib/env';
 import { describeError } from '@/lib/errors';
@@ -13,11 +21,14 @@ import type { TelegramClient } from '@/lib/telegram/client';
 import type { InlineKeyboardButton } from '@/lib/telegram/send-media';
 import { reviewLinkFor, telegramIdsOfMembers } from '@/lib/accounts/users';
 import { TELEGRAM_PARSE_MODE } from '@/lib/telegram/format-caption';
-import { captionToPlainText, parsePostFooter, stripFooter } from '@/lib/telegram/post-footer';
+import { captionToPlainText, parsePostFooter, stripFooter, type PostFooter } from '@/lib/telegram/post-footer';
 import { reviewText } from '@/lib/review/text';
 import { digestButtonText, formatReviewDigest, loadReviewDigest, markDigested } from '@/lib/review/digest';
 import { usesReviewQueue } from '@/lib/workspace';
 import { shownMedia } from '@/lib/review/media';
+import { mediaRefsOf, type RichDocument } from '@/lib/rich/document';
+import { threadsTextFromTelegram } from '@/lib/threads/deliveries';
+import { threadsTextFor } from '@/lib/threads/text';
 
 /**
  * The review queue: posts waiting for a decision, gathered on one Mini App
@@ -140,6 +151,12 @@ export interface ReviewQueueItem {
   alsoInStory: ReviewQueueItem[];
   /** What of its story the channel has already published or scheduled. */
   storyPublished: { sourceLabel: string | null; approvedAt: string }[];
+  /**
+   * What it would go to Threads with, for a channel with an account there:
+   * the text, whether it is the post's own, and — when it is Telegram's —
+   * whether it is shortened to fit, with the whole text attached.
+   */
+  threads: { text: string; own: boolean; cut: boolean; attached: boolean } | null;
 }
 
 /**
@@ -164,6 +181,7 @@ export async function loadReviewQueue(
       sourceMetadata: processedPosts.sourceMetadata,
       captionEditedAt: processedPosts.captionEditedAt,
       richDoc: processedPosts.richDoc,
+      threadsText: processedPosts.threadsText,
       createdAt: processedPosts.createdAt,
     })
     .from(processedPosts)
@@ -195,12 +213,26 @@ export async function loadReviewQueue(
       rich: row.richDoc !== null,
       alsoInStory: [],
       storyPublished: [],
+      threads: row.approvalPayload ? threadsOf(row, row.approvalPayload, footer) : null,
     };
   });
 
   // Newest first already; a stable sort keeps that order among equal scores.
   items.sort((a, b) => (b.score?.score ?? -1) - (a.score?.score ?? -1));
   return { items: await groupByStory(db, workspace.id, items), waiting };
+}
+
+/** What a post would go to Threads with, as the queue's Publish dialog says it. */
+function threadsOf(
+  row: { richDoc: RichDocument | null; caption: string | null; threadsText: string | null },
+  payload: ApprovalPayload,
+  footer: PostFooter | null,
+): NonNullable<ReviewQueueItem['threads']> {
+  if (row.threadsText !== null) return { text: row.threadsText, own: true, cut: false, attached: false };
+  const text = threadsTextFromTelegram(row, payload, footer).trim();
+  const hasMedia = row.richDoc ? mediaRefsOf(row.richDoc).length > 0 : payloadMediaCount(payload) > 0;
+  const fitted = threadsTextFor(text, hasMedia);
+  return { text: fitted.text, own: false, cut: fitted.text !== text, attached: fitted.attachment !== null };
 }
 
 /**

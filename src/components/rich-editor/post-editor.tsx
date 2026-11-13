@@ -4,12 +4,14 @@ import Highlight from '@tiptap/extension-highlight';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { uploadPresigned } from '@vercel/blob/client';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { readJson, type PanelTools } from '@/components/panel-tools';
 import { ASSISTANT_CSS, AssistantPanel } from '@/components/rich-editor/assistant-panel';
 import { EditorMediaContext, PostMedia, type EditorMedia } from '@/components/rich-editor/post-media';
-import { richDocumentAsPlainPost, type RichDocument } from '@/lib/rich/document';
+import { threadsCount, ThreadsTab, type ThreadsVersion } from '@/components/rich-editor/threads-tab';
+import { richDocumentAsPlainPost, richDocumentPlainText, type RichDocument } from '@/lib/rich/document';
 import { theme } from '@/lib/telegram/webapp-client';
+import { threadsLength, threadsTextFor, THREADS_TEXT_LIMIT } from '@/lib/threads/text';
 
 /**
  * The full post editor: a post written as a Telegram rich message —
@@ -21,6 +23,10 @@ import { theme } from '@/lib/telegram/webapp-client';
  * (src/lib/uploads). The server checks the document again before storing it and
  * makes the Telegram HTML itself. Saving makes the post go out as written
  * here; "Back to the plain post" drops it.
+ *
+ * A channel with a Threads account gets two tabs, Telegram and Threads: the
+ * Threads text follows Telegram's until it is edited there, and is then the
+ * post's own (src/components/rich-editor/threads-tab.tsx).
  */
 
 interface EditorData {
@@ -38,6 +44,8 @@ interface EditorData {
   assistant?: boolean;
   /** Where and how large uploads may be; null when the Blob store is not set up. */
   uploads?: { pathPrefix: string; maxBytes: { photo: number; video: number } } | null;
+  /** For a channel with a Threads account: the post's own Threads text, or null while it follows Telegram's. */
+  threads?: { text: string | null; adapt: boolean } | null;
 }
 
 /** What the store and Telegram take, as the server says (src/lib/uploads/uploads.ts). */
@@ -96,6 +104,12 @@ function LoadedEditor({
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [dirty, setDirty] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [tab, setTab] = useState<'telegram' | 'threads'>('telegram');
+  // The Threads text as saved, and as it is in the tab; they differ while it is unsaved.
+  const [savedThreads, setSavedThreads] = useState<string | null>(data.threads?.text ?? null);
+  const [threadsOwn, setThreadsOwn] = useState<string | null>(data.threads?.text ?? null);
+  const [adapting, setAdapting] = useState(false);
+  const threadsDirty = data.threads ? threadsOwn !== savedThreads : false;
   const [media, setMedia] = useState<EditorMedia[]>(data.media);
   const [uploading, setUploading] = useState<{ name: string } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -147,28 +161,79 @@ function LoadedEditor({
 
   const state = editor ? toolbarState(editor) : null;
 
+  // What Threads gets while it follows Telegram: the post as plain text, with the footer, as it goes out.
+  const telegramPlain = editor ? richDocumentPlainText(editor.getJSON() as RichDocument) : '';
+  const autoFull = [telegramPlain, data.footer ?? ''].filter((part) => part.trim() !== '').join('\n\n');
+  const hasMedia = (state?.mediaRefs.length ?? 0) > 0;
+  const threadsVersion: ThreadsVersion = { own: threadsOwn, auto: threadsTextFor(autoFull, hasMedia), autoFull };
+  const threadsCut = threadsOwn === null && threadsVersion.auto.text !== autoFull.trim();
+  const unsaved = dirty || threadsDirty;
+
   // Leaving with unsaved changes asks first, as any editor does.
   useEffect(() => {
-    if (!dirty) return;
+    if (!unsaved) return;
     const warn = (event: BeforeUnloadEvent) => event.preventDefault();
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty]);
+  }, [unsaved]);
+
+  const adaptForThreads = async () => {
+    setAdapting(true);
+    setMessage(null);
+    try {
+      const { text } = await readJson<{ text: string }>(
+        await request('/api/telegram/webapp/threads-adapt', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ postId: data.postId, text: telegramPlain }),
+        }),
+      );
+      setThreadsOwn(text);
+    } catch (reason: unknown) {
+      setMessage({ ok: false, text: reason instanceof Error ? reason.message : 'Could not adapt it.' });
+    } finally {
+      setAdapting(false);
+    }
+  };
 
   const save = async (thenLeave: boolean) => {
     if (!editor) return;
+    if (threadsDirty && threadsOwn !== null) {
+      const problem =
+        threadsOwn.trim() === ''
+          ? 'The Threads text is empty: write one, or reset it to the Telegram text.'
+          : threadsLength(threadsOwn) > THREADS_TEXT_LIMIT
+            ? `The Threads text is ${threadsLength(threadsOwn)} characters; Threads takes ${THREADS_TEXT_LIMIT}.`
+            : null;
+      if (problem) {
+        setTab('threads');
+        setMessage({ ok: false, text: problem });
+        return;
+      }
+    }
     setSaving(true);
     setMessage(null);
     try {
+      // The Telegram post is saved when it changed — or when nothing did, as Save always has; the Threads text when it changed.
+      const saveDoc = dirty || !threadsDirty;
       await readJson(
         await request('/api/telegram/webapp/rich', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ postId: data.postId, doc: editor.getJSON() }),
+          body: JSON.stringify({
+            postId: data.postId,
+            ...(saveDoc ? { doc: editor.getJSON() } : {}),
+            ...(threadsDirty ? { threadsText: threadsOwn === null ? null : threadsOwn.trim() } : {}),
+          }),
         }),
       );
       setDirty(false);
-      setMessage({ ok: true, text: 'Saved. It will go out as laid out here.' });
+      if (threadsDirty) {
+        const stored = threadsOwn === null ? null : threadsOwn.trim();
+        setSavedThreads(stored);
+        setThreadsOwn(stored);
+      }
+      setMessage({ ok: true, text: saveDoc ? 'Saved. It will go out as laid out here.' : 'Saved the Threads text.' });
       if (thenLeave) onDone();
     } catch (reason: unknown) {
       setMessage({ ok: false, text: reason instanceof Error ? reason.message : 'Could not save.' });
@@ -254,7 +319,7 @@ function LoadedEditor({
   });
 
   const leave = async () => {
-    if (!dirty || (await confirm('Leave without saving your changes?'))) onDone();
+    if (!unsaved || (await confirm('Leave without saving your changes?'))) onDone();
   };
 
   const used = new Set(state?.mediaRefs ?? []);
@@ -285,105 +350,153 @@ function LoadedEditor({
             </span>
           </div>
 
-          <Toolbar editor={editor} state={state} />
+          {data.threads ? (
+            <div role="tablist" aria-label="Where it goes" style={{ display: 'flex', gap: '0.25rem', borderBottom: `1px solid ${theme.secondaryBg}`, marginBottom: '0.75rem' }}>
+              <EditorTab active={tab === 'telegram'} onClick={() => setTab('telegram')}>
+                Telegram
+              </EditorTab>
+              <EditorTab active={tab === 'threads'} onClick={() => setTab('threads')}>
+                Threads
+                <span
+                  style={{
+                    fontSize: '0.7rem',
+                    fontWeight: 600,
+                    padding: '0.1rem 0.45rem',
+                    borderRadius: '999px',
+                    background: threadsOwn !== null ? theme.button : theme.secondaryBg,
+                    color: threadsOwn !== null ? theme.buttonText : theme.hint,
+                  }}
+                >
+                  {threadsOwn !== null ? 'Own version' : 'Same as Telegram'}
+                </span>
+                <span style={{ fontSize: '0.75rem', fontWeight: 400, color: threadsCount(threadsVersion) > THREADS_TEXT_LIMIT ? '#e53935' : theme.hint }}>
+                  {threadsCount(threadsVersion)}/{THREADS_TEXT_LIMIT}
+                </span>
+              </EditorTab>
+            </div>
+          ) : null}
 
-          <div
-            style={{
-              border: `1px solid ${theme.secondaryBg}`,
-              borderRadius: '0 0 0.6rem 0.6rem',
-              padding: '0.5rem 1rem 1rem',
-              background: theme.bg,
-            }}
-          >
-            <EditorContent editor={editor} />
-            {data.footer ? (
-              <p style={{ color: theme.hint, fontSize: '0.85rem', borderTop: `1px dashed ${theme.hint}`, paddingTop: '0.5rem', margin: '0.75rem 0 0' }}>
-                {data.footer} <span style={{ fontSize: '0.75rem' }}>— the channel&apos;s footer, added when published</span>
+          {data.threads && tab === 'threads' ? (
+            <ThreadsTab
+              version={threadsVersion}
+              channel={data.channel}
+              hasMedia={hasMedia}
+              onChange={setThreadsOwn}
+              adapt={data.threads.adapt ? { run: () => void adaptForThreads(), busy: adapting } : null}
+            />
+          ) : null}
+
+          {/* Hidden, not unmounted, on the Threads tab: the editor keeps its text, selection and undo. */}
+          <div style={{ display: tab === 'telegram' ? 'block' : 'none' }}>
+            <Toolbar editor={editor} state={state} />
+
+            <div
+              style={{
+                border: `1px solid ${theme.secondaryBg}`,
+                borderRadius: '0 0 0.6rem 0.6rem',
+                padding: '0.5rem 1rem 1rem',
+                background: theme.bg,
+              }}
+            >
+              <EditorContent editor={editor} />
+              {data.footer ? (
+                <p style={{ color: theme.hint, fontSize: '0.85rem', borderTop: `1px dashed ${theme.hint}`, paddingTop: '0.5rem', margin: '0.75rem 0 0' }}>
+                  {data.footer} <span style={{ fontSize: '0.75rem' }}>— the channel&apos;s footer, added when published</span>
+                </p>
+              ) : null}
+            </div>
+
+            {media.length > 0 || data.uploads ? (
+              <section style={{ marginTop: '1rem' }}>
+                <div style={{ fontSize: '0.85rem', marginBottom: '0.4rem' }}>
+                  {media.length > 0
+                    ? 'The post’s pictures — put one where the cursor is, or drag it in the text:'
+                    : 'Add a photo or a video of your own:'}
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  {media.map((media) => {
+                    const placed = used.has(media.ref);
+                    return (
+                      <button
+                        key={media.ref}
+                        type="button"
+                        disabled={placed || !editor}
+                        onClick={() =>
+                          editor?.chain().focus().insertContent({ type: 'postMedia', attrs: { ref: media.ref, caption: null } }).run()
+                        }
+                        title={placed ? 'Already in the post' : 'Insert at the cursor'}
+                        style={{
+                          position: 'relative',
+                          width: '6.5rem',
+                          height: '6.5rem',
+                          padding: 0,
+                          border: `1px solid ${theme.hint}`,
+                          borderRadius: '0.45rem',
+                          overflow: 'hidden',
+                          background: '#111111',
+                          cursor: placed ? 'default' : 'pointer',
+                          opacity: placed ? 0.45 : 1,
+                        }}
+                      >
+                        {media.previewUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={media.previewUrl} alt="" referrerPolicy="no-referrer" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        ) : media.videoUrl ? (
+                          <video src={media.videoUrl} muted playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        ) : (
+                          <span style={{ color: '#bbbbbb', fontSize: '0.75rem' }}>{media.kind}</span>
+                        )}
+                        <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', color: '#ffffff', fontSize: '0.7rem' }}>
+                          {placed ? 'in the post' : media.kind === 'video' ? '+ video' : '+ insert'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {data.uploads ? (
+                    <button
+                      type="button"
+                      disabled={!editor || uploading !== null}
+                      onClick={() => fileInput.current?.click()}
+                      title="Upload a JPEG, PNG or WebP photo, or an MP4 video"
+                      style={{
+                        width: '6.5rem',
+                        height: '6.5rem',
+                        border: `1px dashed ${theme.hint}`,
+                        borderRadius: '0.45rem',
+                        background: 'transparent',
+                        color: theme.text,
+                        fontSize: '0.8rem',
+                        cursor: uploading ? 'default' : 'pointer',
+                      }}
+                    >
+                      {uploading ? 'Uploading…' : '⬆ Upload photo or video'}
+                    </button>
+                  ) : null}
+                  <input
+                    ref={fileInput}
+                    type="file"
+                    accept={Object.keys(UPLOAD_KINDS).join(',')}
+                    multiple
+                    hidden
+                    onChange={(event) => {
+                      const files = Array.from(event.target.files ?? []);
+                      event.target.value = '';
+                      void uploadFiles(files);
+                    }}
+                  />
+                </div>
+              </section>
+            ) : null}
+
+            {data.threads && threadsCut ? (
+              <p style={{ color: '#e53935', fontSize: '0.85rem', margin: '0.75rem 0 0' }}>
+                On Threads this post is shortened to {THREADS_TEXT_LIMIT} characters.{' '}
+                <button type="button" onClick={() => setTab('threads')} style={{ ...linkButton, padding: 0 }}>
+                  Edit the Threads version
+                </button>
               </p>
             ) : null}
           </div>
-
-          {media.length > 0 || data.uploads ? (
-            <section style={{ marginTop: '1rem' }}>
-              <div style={{ fontSize: '0.85rem', marginBottom: '0.4rem' }}>
-                {media.length > 0
-                  ? 'The post’s pictures — put one where the cursor is, or drag it in the text:'
-                  : 'Add a photo or a video of your own:'}
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                {media.map((media) => {
-                  const placed = used.has(media.ref);
-                  return (
-                    <button
-                      key={media.ref}
-                      type="button"
-                      disabled={placed || !editor}
-                      onClick={() =>
-                        editor?.chain().focus().insertContent({ type: 'postMedia', attrs: { ref: media.ref, caption: null } }).run()
-                      }
-                      title={placed ? 'Already in the post' : 'Insert at the cursor'}
-                      style={{
-                        position: 'relative',
-                        width: '6.5rem',
-                        height: '6.5rem',
-                        padding: 0,
-                        border: `1px solid ${theme.hint}`,
-                        borderRadius: '0.45rem',
-                        overflow: 'hidden',
-                        background: '#111111',
-                        cursor: placed ? 'default' : 'pointer',
-                        opacity: placed ? 0.45 : 1,
-                      }}
-                    >
-                      {media.previewUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={media.previewUrl} alt="" referrerPolicy="no-referrer" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      ) : media.videoUrl ? (
-                        <video src={media.videoUrl} muted playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      ) : (
-                        <span style={{ color: '#bbbbbb', fontSize: '0.75rem' }}>{media.kind}</span>
-                      )}
-                      <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', color: '#ffffff', fontSize: '0.7rem' }}>
-                        {placed ? 'in the post' : media.kind === 'video' ? '+ video' : '+ insert'}
-                      </span>
-                    </button>
-                  );
-                })}
-                {data.uploads ? (
-                  <button
-                    type="button"
-                    disabled={!editor || uploading !== null}
-                    onClick={() => fileInput.current?.click()}
-                    title="Upload a JPEG, PNG or WebP photo, or an MP4 video"
-                    style={{
-                      width: '6.5rem',
-                      height: '6.5rem',
-                      border: `1px dashed ${theme.hint}`,
-                      borderRadius: '0.45rem',
-                      background: 'transparent',
-                      color: theme.text,
-                      fontSize: '0.8rem',
-                      cursor: uploading ? 'default' : 'pointer',
-                    }}
-                  >
-                    {uploading ? 'Uploading…' : '⬆ Upload photo or video'}
-                  </button>
-                ) : null}
-                <input
-                  ref={fileInput}
-                  type="file"
-                  accept={Object.keys(UPLOAD_KINDS).join(',')}
-                  multiple
-                  hidden
-                  onChange={(event) => {
-                    const files = Array.from(event.target.files ?? []);
-                    event.target.value = '';
-                    void uploadFiles(files);
-                  }}
-                />
-              </div>
-            </section>
-          ) : null}
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', marginTop: '1.25rem' }}>
             <button type="button" disabled={saving || !editor} onClick={() => void save(true)} style={{ ...mainButton, background: theme.button, color: theme.buttonText }}>
@@ -400,7 +513,7 @@ function LoadedEditor({
                 Back to the plain post
               </button>
             ) : null}
-            <span style={{ marginLeft: 'auto', color: length > data.limits.text ? '#e53935' : theme.hint, fontSize: '0.8rem' }}>
+            <span style={{ marginLeft: 'auto', color: length > data.limits.text ? '#e53935' : theme.hint, fontSize: '0.8rem', display: tab === 'telegram' ? undefined : 'none' }}>
               <span
                 title={
                   state?.ordinary
@@ -430,6 +543,34 @@ function LoadedEditor({
         ) : null}
       </div>
     </EditorMediaContext.Provider>
+  );
+}
+
+/** A tab over the editor: Telegram, or Threads. */
+function EditorTab({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '0.4rem',
+        padding: '0.5rem 0.85rem',
+        border: 'none',
+        borderBottom: `2px solid ${active ? theme.button : 'transparent'}`,
+        marginBottom: '-1px',
+        background: 'transparent',
+        color: active ? theme.text : theme.hint,
+        fontWeight: 600,
+        fontSize: '0.9rem',
+        cursor: 'pointer',
+      }}
+    >
+      {children}
+    </button>
   );
 }
 

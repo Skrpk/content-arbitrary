@@ -8,7 +8,7 @@ import {
   type ThreadsDeliveryContent,
 } from '@/db/schema';
 import type { Database } from '@/lib/db';
-import { mediaRefsOf, richDocumentPlainText } from '@/lib/rich/document';
+import { mediaRefsOf, richDocumentPlainText, type RichDocument } from '@/lib/rich/document';
 import type { PostFooter } from '@/lib/telegram/post-footer';
 import { telegramHtmlToText } from '@/lib/threads/text';
 import { loadUploads, uploadRef } from '@/lib/uploads/uploads';
@@ -28,12 +28,32 @@ export const THREADS_MEDIA_MAX = 20;
 export const DELIVERY_LEASE_MS = 5 * 60 * 1000;
 export const DELIVERY_MAX_ATTEMPTS = 4;
 
+/**
+ * The text a post goes to Threads with when it has none of its own: what
+ * Telegram gets, as plain text — the rich document with the channel's
+ * footer, or the caption, which carries the footer already, and its overflow.
+ */
+export function threadsTextFromTelegram(
+  row: { richDoc: RichDocument | null; caption: string | null },
+  payload: Pick<ApprovalPayload, 'caption' | 'overflowMessage'>,
+  footer?: PostFooter | null,
+): string {
+  if (row.richDoc) {
+    return [richDocumentPlainText(row.richDoc), footer?.text ?? ''].filter((part) => part.trim() !== '').join('\n\n');
+  }
+  return [telegramHtmlToText(row.caption ?? payload.caption), payload.overflowMessage ? telegramHtmlToText(payload.overflowMessage) : '']
+    .filter((part) => part !== '')
+    .join('\n\n');
+}
+
 /** What the post will be on Threads: its text and media, as decided. */
 export async function threadsContentFor(
   db: Database,
   input: { row: ProcessedPost; payload: ApprovalPayload; footer?: PostFooter | null },
 ): Promise<ThreadsDeliveryContent> {
   const { row, payload } = input;
+  // Written for Threads in the editor, or what Telegram gets.
+  const text = row.threadsText ?? threadsTextFromTelegram(row, payload, input.footer);
   const own = (index: number): DeliveryMedia | null => {
     const stored = payload.items[index];
     if (stored) return { kind: stored.kind, telegramFileId: stored.fileId };
@@ -58,16 +78,11 @@ export async function threadsContentFor(
       const item = own(Number(ref.slice(1)));
       if (item) media.push(item);
     }
-    const text = [richDocumentPlainText(row.richDoc), input.footer?.text ?? ''].filter((part) => part.trim() !== '').join('\n\n');
     return { text, media: media.slice(0, THREADS_MEDIA_MAX), externalId: row.externalId, uploadIds };
   }
 
   const count = payload.items.length > 0 ? payload.items.length : (payload.sourceMedia?.length ?? 0);
   const media = Array.from({ length: count }, (_, index) => own(index)).filter((item): item is DeliveryMedia => item !== null);
-  const caption = row.caption ?? payload.caption;
-  const text = [telegramHtmlToText(caption), payload.overflowMessage ? telegramHtmlToText(payload.overflowMessage) : '']
-    .filter((part) => part !== '')
-    .join('\n\n');
   return { text, media: media.slice(0, THREADS_MEDIA_MAX), externalId: row.externalId, uploadIds: [] };
 }
 

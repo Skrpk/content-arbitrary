@@ -702,6 +702,13 @@ export const processedPosts = pgTable(
      */
     richDoc: jsonb('rich_doc').$type<RichDocument>(),
     /**
+     * The post's own text for Threads, written in the editor's Threads tab:
+     * plain text within Threads' 500 characters. Null while it follows the
+     * Telegram text, which is then made into Threads' own when the post goes
+     * out (src/lib/threads/deliveries.ts).
+     */
+    threadsText: text('threads_text'),
+    /**
      * When the reviewer last saved a caption in the editor; null if they never
      * did. Saving does not imply a change — compare the two captions for that.
      */

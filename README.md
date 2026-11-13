@@ -1151,6 +1151,22 @@ like any other media and sent with it, and then deleted from the store, placed o
 uploads of a post turned down, or failed for good, are deleted by a sweep after each sync. The
 store holds a file only while its post waits. Without a store there is no upload button.
 
+**A Threads text of its own.** For a channel with a Threads account the editor has two tabs,
+**Telegram** and **Threads**. The Threads tab shows what the post goes to Threads with: until it
+is edited there, the Telegram text as plain text, with the footer, shortened to Threads' 500
+characters (a post with no pictures keeps the whole text as an attachment) — the tab says so,
+and so does a line under the Telegram editor. Editing it there makes it the post's own
+(**Own version**): changes in the Telegram tab no longer reach it, and **Reset to the Telegram
+text** has it follow again. **✨ Adapt for Threads** asks the model that rewrites posts for
+review for a short Threads post in the channel's language, into the tab, for the reviewer to keep
+or change; it counts towards `ASSISTANT_DAILY_LIMIT`, is recorded in `assistant_requests` under
+the prompt version `threads-adapt-v1`, and is offered only where the assistant is set up and the
+rewriting model has its key (`/api/telegram/webapp/threads-adapt`). **Save** stores the Threads text in
+`processed_posts.threads_text`, up to 500 characters as Threads counts them, and leaves the
+Telegram post as it is when only the Threads text changed. The post's pictures and videos go to
+both. When the post is approved, the queue's **Publish where?** dialog shows the first line of
+the Threads text and whether it is the post's own, the same, or shortened.
+
 ### The AI assistant
 
 **✨ AI assistant** opens a chat beside the post (under it on a narrow screen). Ask it to change

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { PlatformBadge } from '@/app/(app)/platform-badge';
 import { readJson, type PanelTools } from '@/components/panel-tools';
 import { DEFAULT_PUBLISH_TARGETS, PUBLISH_TARGETS, publishedLine, type PublishTarget } from '@/lib/publish/targets';
@@ -49,6 +49,8 @@ export interface QueueItem {
   alsoInStory: QueueItem[];
   /** What of its story the channel has already published or scheduled. */
   storyPublished: { sourceLabel: string | null; approvedAt: string }[];
+  /** What it goes to Threads with: its own text, or Telegram's, shortened to fit when it has to be. */
+  threads?: { text: string; own: boolean; cut: boolean; attached: boolean } | null;
 }
 
 interface Channel {
@@ -861,6 +863,12 @@ export function ReviewQueue({
           state={targetsDialog}
           channelName={channel?.name ?? null}
           others={shown(targetsDialog.card).others.length}
+          threadsText={shown(targetsDialog.card).item.threads ?? null}
+          onEdit={() => {
+            const { card } = targetsDialog;
+            setTargetsDialog(null);
+            edit(card);
+          }}
           onChange={setTargetsDialog}
           onCancel={() => setTargetsDialog(null)}
           onPublish={(targets) => {
@@ -1193,6 +1201,32 @@ function overlayBadge(position: { left?: string; right?: string }): CSSPropertie
 
 const DIALOG_DEFAULT = { telegram: true, threads: true };
 
+/** Under Threads in the Publish dialog: when it goes, and with what text — its own, or Telegram's and whether it is cut. */
+function ThreadsHint({ threads, onEdit }: { threads: QueueItem['threads'] | null; onEdit: () => void }) {
+  const firstLine = threads?.text.split('\n').find((line) => line.trim() !== '') ?? null;
+  const editLink = (
+    <button type="button" onClick={onEdit} style={{ border: 'none', background: 'none', padding: 0, color: theme.link, font: 'inherit', cursor: 'pointer' }}>
+      Edit for Threads
+    </button>
+  );
+  if (!threads) return <>In a minute or so; text past 500 characters is shortened.</>;
+  return (
+    <>
+      {firstLine ? <span style={{ display: 'block', color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '17rem' }}>{firstLine}</span> : null}
+      {threads.own ? (
+        <>In a minute or so, with its own Threads text. </>
+      ) : threads.cut ? (
+        <span style={{ color: '#e53935' }}>
+          Shortened to 500 characters{threads.attached ? ', the whole text attached' : ''}.{' '}
+        </span>
+      ) : (
+        <>In a minute or so, with the same text. </>
+      )}
+      {threads.own ? null : editLink}
+    </>
+  );
+}
+
 /**
  * Where an approved post goes, for a channel with a Threads account: both
  * ticked to begin with, either one unticked, never neither.
@@ -1201,6 +1235,8 @@ function TargetsDialog({
   state,
   channelName,
   others,
+  threadsText,
+  onEdit,
   onChange,
   onCancel,
   onPublish,
@@ -1208,6 +1244,8 @@ function TargetsDialog({
   state: { card: QueueItem; telegram: boolean; threads: boolean };
   channelName: string | null;
   others: number;
+  threadsText: QueueItem['threads'] | null;
+  onEdit: () => void;
   onChange: (state: { card: QueueItem; telegram: boolean; threads: boolean }) => void;
   onCancel: () => void;
   onPublish: (targets: PublishTarget[]) => void;
@@ -1223,7 +1261,7 @@ function TargetsDialog({
     return () => window.removeEventListener('keydown', onKey);
   }, [onCancel]);
 
-  const option = (target: PublishTarget, label: string, hint: string) => (
+  const option = (target: PublishTarget, label: string, hint: ReactNode) => (
     <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem', padding: '0.45rem 0', cursor: 'pointer' }}>
       <input
         type="checkbox"
@@ -1262,7 +1300,7 @@ function TargetsDialog({
           Publish where?
         </div>
         {option('telegram', channelName ? `Telegram · ${channelName}` : 'Telegram', 'Now, to the channel.')}
-        {option('threads', 'Threads', 'In a minute or so; text past 500 characters is shortened.')}
+        {option('threads', 'Threads', <ThreadsHint threads={threadsText} onEdit={onEdit} />)}
         {others > 0 ? (
           <p style={{ color: theme.hint, fontSize: '0.8rem', margin: '0.3rem 0 0' }}>
             The other {others === 1 ? 'post' : `${others} posts`} of this story will be rejected as already covered.

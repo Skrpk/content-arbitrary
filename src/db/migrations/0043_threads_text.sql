@@ -1,0 +1,1 @@
+ALTER TABLE "processed_posts" ADD COLUMN "threads_text" text;

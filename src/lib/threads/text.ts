@@ -7,6 +7,8 @@ import { htmlToText } from '@/lib/rss/text';
  * longer text-only post keeps the whole of its text as a text attachment
  * (up to 10,000 characters) under a first part that fits; a post with media
  * cannot have one, so its text is cut.
+ *
+ * No Node here: the editor's Threads tab counts and cuts with these too.
  */
 
 export const THREADS_TEXT_LIMIT = 500;
@@ -14,6 +16,8 @@ export const THREADS_ATTACHMENT_LIMIT = 10_000;
 /** Headroom under the limit, for a count that might differ from ours at the edges. */
 const BUDGET = THREADS_TEXT_LIMIT - 10;
 
+const encoder = new TextEncoder();
+const byteLength = (text: string) => encoder.encode(text).length;
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 const PICTOGRAPHIC = /\p{Extended_Pictographic}/u;
 
@@ -21,7 +25,7 @@ const PICTOGRAPHIC = /\p{Extended_Pictographic}/u;
 export function threadsLength(text: string): number {
   let length = 0;
   for (const { segment } of segmenter.segment(text)) {
-    length += PICTOGRAPHIC.test(segment) ? Buffer.byteLength(segment, 'utf8') : 1;
+    length += PICTOGRAPHIC.test(segment) ? byteLength(segment) : 1;
   }
   return length;
 }
@@ -42,7 +46,7 @@ export function cutForThreads(text: string, budget = BUDGET): string {
   let kept = '';
   let length = 0;
   for (const { segment } of segmenter.segment(text)) {
-    const size = PICTOGRAPHIC.test(segment) ? Buffer.byteLength(segment, 'utf8') : 1;
+    const size = PICTOGRAPHIC.test(segment) ? byteLength(segment) : 1;
     if (length + size > budget - 1) break;
     kept += segment;
     length += size;
