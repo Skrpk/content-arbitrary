@@ -1,5 +1,6 @@
 import type { NextConfig } from 'next';
 import { SITE_URL } from './src/lib/site';
+import { PUBLIC_SITE_PATHS } from './src/marketing/paths';
 
 /**
  * The review website is this same deployment on its own subdomain
@@ -15,9 +16,10 @@ const webHosts = ['app.localhost', ...(webAppUrl ? [new URL(webAppUrl).hostname]
 const webHost = `(${webHosts.map((host) => host.replace(/[.]/g, '\\.')).join('|')})`;
 
 /**
- * The site's first address. Its public pages move to SITE_URL for good, so
- * search engines carry what they indexed there across; everything else on it —
- * the API, the Mini Apps — stays, for Telegram and the crons call it there.
+ * The site's first address. Its public pages — every one, in every language —
+ * move to SITE_URL for good, so search engines carry what they indexed there
+ * across and see no second copy of a page; everything else on it — the API,
+ * the Mini Apps — stays, for Telegram and the crons call it there.
  */
 const formerSiteHost = 'content-arbitrary\\.vercel\\.app';
 
@@ -45,7 +47,7 @@ const nextConfig: NextConfig = {
 
   async redirects() {
     return [
-      ...['/', '/uk'].map((source) => ({
+      ...PUBLIC_SITE_PATHS.map((source) => ({
         source,
         has: [{ type: 'host' as const, value: formerSiteHost }],
         destination: `${SITE_URL}${source}`,
