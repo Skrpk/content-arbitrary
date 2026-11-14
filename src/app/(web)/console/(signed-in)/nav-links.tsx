@@ -23,11 +23,13 @@ export function NavLinks() {
             href={section.href}
             style={{
               padding: '0.3rem 0.6rem',
-              borderRadius: '0.45rem',
+              borderRadius: '4px',
               fontSize: '0.9rem',
               textDecoration: 'none',
-              color: active ? 'var(--tg-theme-button-text-color)' : 'var(--tg-theme-text-color)',
-              background: active ? 'var(--tg-theme-button-color)' : 'transparent',
+              fontWeight: active ? 700 : 500,
+              // Where you are is under the marker, as the picks in the feed are.
+              color: active ? 'var(--z-mark-ink)' : 'var(--tg-theme-text-color)',
+              background: active ? 'var(--z-mark)' : 'transparent',
             }}
           >
             {section.label}

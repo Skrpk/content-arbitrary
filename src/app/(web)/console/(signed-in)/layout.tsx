@@ -24,12 +24,27 @@ export default async function SignedInLayout({ children }: { children: ReactNode
           flexWrap: 'wrap',
           alignItems: 'center',
           gap: '0.5rem 1rem',
-          padding: '0.6rem 1rem',
+          padding: '0.7rem 1rem',
           background: 'var(--tg-theme-bg-color)',
-          borderBottom: '1px solid var(--tg-theme-secondary-bg-color)',
+          borderBottom: '1px solid var(--tg-theme-text-color)',
         }}
       >
-        <strong>{SITE_NAME}</strong>
+        <strong
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            fontFamily: 'var(--z-display)',
+            fontSize: '1.2rem',
+            fontWeight: 800,
+            letterSpacing: '-0.02em',
+          }}
+        >
+          {/* The site's mark, as on the public site's header. */}
+          {/* eslint-disable-next-line @next/next/no-img-element -- a 400-byte SVG; nothing for next/image to optimise */}
+          <img src="/icon.svg" alt="" width={28} height={28} style={{ transform: 'rotate(-4deg)' }} />
+          {SITE_NAME}
+        </strong>
         <NavLinks />
         <span style={{ flex: 1 }} />
         <span style={{ color: 'var(--tg-theme-hint-color)', fontSize: '0.85rem' }}>
@@ -39,9 +54,9 @@ export default async function SignedInLayout({ children }: { children: ReactNode
           <button
             type="submit"
             style={{
-              padding: '0.3rem 0.7rem',
+              padding: '0.35rem 0.8rem',
               border: '1px solid var(--tg-theme-hint-color)',
-              borderRadius: '0.45rem',
+              borderRadius: '999px',
               background: 'transparent',
               color: 'var(--tg-theme-text-color)',
               fontSize: '0.8rem',

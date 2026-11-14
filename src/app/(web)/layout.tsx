@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
+import { appFontClass } from '@/components/app-fonts';
+import { APP_BASE_CSS, WEB_PALETTE_CSS } from '@/components/app-theme';
 import { SITE_NAME } from '@/lib/site';
 
 /**
@@ -9,7 +11,8 @@ import { SITE_NAME } from '@/lib/site';
  *
  * The pages share their components with the Mini Apps, which take their
  * colours from Telegram's `--tg-theme-*` variables. Here those are set from
- * the browser's light or dark preference instead, so the same components look
+ * the browser's light or dark preference instead — the public site's paper,
+ * ink and marker (src/components/app-theme.ts) — so the same components look
  * right outside Telegram.
  */
 export const metadata: Metadata = {
@@ -17,37 +20,11 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-const themeVariables = `
-:root {
-  color-scheme: light dark;
-  --tg-theme-bg-color: #ffffff;
-  --tg-theme-text-color: #16181a;
-  --tg-theme-hint-color: #6b7177;
-  --tg-theme-link-color: #2481cc;
-  --tg-theme-button-color: #2481cc;
-  --tg-theme-button-text-color: #ffffff;
-  --tg-theme-secondary-bg-color: #f2f3f5;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --tg-theme-bg-color: #17191c;
-    --tg-theme-text-color: #eceef0;
-    --tg-theme-hint-color: #9aa1a8;
-    --tg-theme-link-color: #6ab3f3;
-    --tg-theme-button-color: #3e88d6;
-    --tg-theme-button-text-color: #ffffff;
-    --tg-theme-secondary-bg-color: #23262a;
-  }
-}
-body { background: var(--tg-theme-bg-color); color: var(--tg-theme-text-color); }
-button:disabled { cursor: default; }
-`;
-
 export default function WebLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className={appFontClass}>
       <head>
-        <style>{themeVariables}</style>
+        <style>{APP_BASE_CSS + WEB_PALETTE_CSS}</style>
       </head>
       <body
         style={{

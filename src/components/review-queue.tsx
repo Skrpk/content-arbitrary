@@ -101,16 +101,16 @@ const button = {
   flex: 1,
   padding: '0.6rem 0',
   border: 'none',
-  borderRadius: '0.55rem',
+  borderRadius: '999px',
   fontSize: '0.95rem',
   fontWeight: 600,
   cursor: 'pointer',
 } as const;
 
 const smallButton = {
-  padding: '0.4rem 0.6rem',
+  padding: '0.4rem 0.75rem',
   border: `1px solid ${theme.hint}`,
-  borderRadius: '0.5rem',
+  borderRadius: '999px',
   background: 'transparent',
   color: theme.text,
   fontSize: '0.8rem',
@@ -267,7 +267,8 @@ function ScoreBadges({ score, small = false }: { score: VersionScore & { compare
             padding: small ? '0 0.3rem' : '0.15rem 0.4rem',
             borderRadius: small ? '0.3rem' : '0.4rem',
             background: scoreColour(version.score),
-            color: '#ffffff',
+            color: theme.markInk,
+            fontFamily: theme.mono,
             fontWeight: 700,
             fontSize: small ? '0.75rem' : '0.9rem',
           }}
@@ -281,14 +282,14 @@ function ScoreBadges({ score, small = false }: { score: VersionScore & { compare
 }
 
 /**
- * Green for a likely approval, amber for a maybe, grey for a likely no. Set for
+ * The marker for a likely approval, amber for a maybe, grey for a likely no. Set for
  * v5's scale, which runs lower than v3's: live, the editor took 67% of what v5
  * scored 75–89, 28% of 50–74, 10% of 25–49 and 4% below that.
  */
 function scoreColour(score: number): string {
-  if (score >= 60) return '#2e9e4f';
-  if (score >= 30) return '#d08a00';
-  return '#8a8f94';
+  if (score >= 60) return theme.mark;
+  if (score >= 30) return '#f2b84b';
+  return '#c5c9cf';
 }
 
 /**
@@ -651,8 +652,9 @@ export function ReviewQueue({
             onClick={website ? () => setFocused(card.id) : undefined}
             style={{
               background: theme.secondaryBg,
-              borderRadius: '0.6rem',
-              padding: '0.75rem 0.9rem',
+              border: `1px solid ${theme.border}`,
+              borderRadius: '0.9rem',
+              padding: '0.9rem 1rem',
               marginBottom: '0.9rem',
               opacity: busy ? 0.7 : 1,
               outline: isFocused ? `2px solid ${theme.button}` : 'none',

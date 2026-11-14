@@ -72,7 +72,7 @@ const actionButton = {
   flex: 1,
   padding: '0.45rem 0',
   border: 'none',
-  borderRadius: '0.5rem',
+  borderRadius: '999px',
   fontSize: '0.85rem',
   fontWeight: 600,
   cursor: 'pointer',
