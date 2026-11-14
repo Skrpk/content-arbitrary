@@ -1,35 +1,48 @@
 /*
- * The public site's styles. Plain CSS, no framework and no web fonts: the page
- * is small, and every kilobyte not shipped is time-to-content on a phone.
+ * The public site's styles. Plain CSS, no framework. Two web fonts, served
+ * from the site's own origin (document.tsx): the headline face and the
+ * monospace of the feed and the labels. Body text is the system's.
+ *
+ * The look is an editor's marker over a wire feed: paper, ink, and one
+ * highlighter colour that is only ever a fill under ink text.
  */
 
 :root {
-  --bg: #ffffff;
-  --bg-alt: #f4f7fa;
+  --bg: #f3f4ef;
   --surface: #ffffff;
-  --text: #0f1419;
-  --muted: #536471;
-  --border: #e3e8ee;
-  --accent: #229ed9;
-  --accent-strong: #1c87bb;
-  --accent-text: #ffffff;
-  --shadow: 0 1px 2px rgb(15 20 25 / 6%), 0 8px 24px rgb(15 20 25 / 6%);
-  --radius: 14px;
+  --text: #0e1116;
+  --muted: #4a505a;
+  --dim: #6b7079;
+  --border: #d9dbd3;
+  --rule: #0e1116;
+  --mark: #d4ff3f;
+  --mark-ink: #0e1116;
+  --inverse-bg: #0e1116;
+  --inverse-text: #f3f4ef;
+  --inverse-muted: #c9cdd4;
+  --inverse-rule: #555b65;
+  --button-bg: #0e1116;
+  --button-text: #f3f4ef;
+  --button-hover: #2a303a;
+  --radius: 20px;
+  --display: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+  --mono: var(--font-mono), ui-monospace, 'SF Mono', Menlo, monospace;
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0e1621;
-    --bg-alt: #17212b;
-    --surface: #17212b;
-    --text: #e9eef3;
-    --muted: #8b9aa8;
-    --border: #243241;
-    --accent: #3aa9e3;
-    --accent-strong: #5cb9ea;
-    --accent-text: #0e1621;
-    --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 8px 24px rgb(0 0 0 / 25%);
+    --bg: #0e1116;
+    --surface: #171b22;
+    --text: #f3f4ef;
+    --muted: #b4b9c2;
+    --dim: #9aa0aa;
+    --border: #2c323c;
+    --rule: #555b65;
+    --inverse-bg: #171b22;
+    --button-bg: #d4ff3f;
+    --button-text: #0e1116;
+    --button-hover: #e4ff85;
     color-scheme: dark;
   }
 }
@@ -56,30 +69,36 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  font-size: 1rem;
-  line-height: 1.6;
+  font-size: 1.0625rem;
+  line-height: 1.55;
 }
 
 h1,
 h2,
 h3 {
-  line-height: 1.2;
+  font-family: var(--display);
+  line-height: 1.1;
   margin: 0 0 0.75rem;
   text-wrap: balance;
 }
 
 h1 {
-  font-size: clamp(2rem, 5vw, 3.1rem);
-  letter-spacing: -0.02em;
+  font-size: clamp(2.3rem, 5vw, 4.1rem);
+  font-weight: 800;
+  line-height: 1.03;
+  letter-spacing: -0.035em;
 }
 
 h2 {
-  font-size: clamp(1.6rem, 3.5vw, 2.2rem);
-  letter-spacing: -0.01em;
+  font-size: clamp(1.8rem, 3.4vw, 2.75rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
 }
 
 h3 {
-  font-size: 1.1rem;
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 p {
@@ -87,12 +106,31 @@ p {
 }
 
 a {
-  color: var(--accent);
+  color: var(--text);
+  text-underline-offset: 0.18em;
 }
 
 :focus-visible {
-  outline: 3px solid var(--accent);
+  outline: 3px solid var(--text);
   outline-offset: 2px;
+}
+
+/* The marker: a fill under ink text, on any ground. */
+.marked {
+  padding: 0 0.12em;
+  background: var(--mark);
+  color: var(--mark-ink);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.eyebrow {
+  margin: 0 0 1rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .skip-link {
@@ -100,8 +138,8 @@ a {
   left: 1rem;
   top: -3rem;
   padding: 0.5rem 1rem;
-  background: var(--accent);
-  color: var(--accent-text);
+  background: var(--mark);
+  color: var(--mark-ink);
   border-radius: 8px;
   z-index: 10;
 }
@@ -112,7 +150,7 @@ a {
 
 .container {
   width: 100%;
-  max-width: 72rem;
+  max-width: 76rem;
   margin: 0 auto;
   padding: 0 1rem;
 }
@@ -124,7 +162,7 @@ a {
 }
 
 .container--narrow {
-  max-width: 48rem;
+  max-width: 52rem;
 }
 
 /* Header ------------------------------------------------------------------ */
@@ -133,23 +171,25 @@ a {
   position: sticky;
   top: 0;
   z-index: 5;
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter: saturate(180%) blur(12px);
-  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+  backdrop-filter: blur(12px);
 }
 
 .site-header__inner {
   display: flex;
   align-items: center;
   gap: 1rem;
-  min-height: 3.75rem;
+  min-height: 4rem;
 }
 
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  font-weight: 700;
+  gap: 0.55rem;
+  font-family: var(--display);
+  font-size: 1.3rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
   color: var(--text);
   text-decoration: none;
   margin-right: auto;
@@ -158,7 +198,7 @@ a {
 
 /* On a phone the hero's own button is one glance away; the header keeps
    just the name and the language switch. */
-@media (max-width: 419px) {
+@media (max-width: 479px) {
   .site-header .button {
     display: none;
   }
@@ -170,27 +210,29 @@ a {
   place-items: center;
   width: 2rem;
   height: 2rem;
-  border-radius: 8px;
-  background: var(--accent);
-  color: var(--accent-text);
-  font-size: 0.8rem;
+  border-radius: 6px;
+  background: var(--mark);
+  color: var(--mark-ink);
+  transform: rotate(-4deg);
 }
 
 .site-nav {
   display: none;
-  gap: 1.5rem;
+  gap: 1.75rem;
+  font-size: 0.95rem;
+  font-weight: 500;
 }
 
 .site-nav a {
-  color: var(--muted);
+  color: var(--text);
   text-decoration: none;
 }
 
 .site-nav a:hover {
-  color: var(--text);
+  text-decoration: underline;
 }
 
-@media (min-width: 768px) {
+@media (min-width: 820px) {
   .site-nav {
     display: flex;
   }
@@ -201,17 +243,14 @@ a {
 .language-switch {
   display: flex;
   gap: 0.15rem;
-  padding: 0.15rem;
-  border-radius: 999px;
-  border: 1px solid var(--border);
+  font-family: var(--mono);
   font-size: 0.8rem;
-  font-weight: 600;
 }
 
 .language-switch a,
 .language-switch span {
-  padding: 0.2rem 0.55rem;
-  border-radius: 999px;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
   text-decoration: none;
   color: var(--muted);
 }
@@ -221,8 +260,9 @@ a {
 }
 
 .language-switch [aria-current='true'] {
-  background: var(--accent);
-  color: var(--accent-text);
+  background: var(--mark);
+  color: var(--mark-ink);
+  font-weight: 700;
 }
 
 /* Buttons ----------------------------------------------------------------- */
@@ -234,39 +274,44 @@ a {
   min-height: 3rem;
   padding: 0 1.4rem;
   border-radius: 999px;
-  background: var(--accent);
-  color: var(--accent-text);
+  background: var(--button-bg);
+  color: var(--button-text);
   font-weight: 600;
+  text-align: center;
   text-decoration: none;
-  border: 2px solid var(--accent);
   transition: background-color 0.15s ease;
 }
 
 .button:hover {
-  background: var(--accent-strong);
-  border-color: var(--accent-strong);
+  background: var(--button-hover);
 }
 
 .button--small {
-  min-height: 2.4rem;
-  padding: 0 1rem;
+  min-height: 2.6rem;
+  padding: 0 1.1rem;
   font-size: 0.95rem;
 }
 
-.button--ghost {
-  background: transparent;
-  color: var(--accent);
+.button--large {
+  min-height: 3.6rem;
+  padding: 0 1.75rem;
+  font-size: 1.1rem;
 }
 
-.button--ghost:hover {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  color: var(--accent);
+/* On the marker itself: ink, whatever the colour scheme. */
+.button--ink {
+  background: #0e1116;
+  color: #f3f4ef;
+}
+
+.button--ink:hover {
+  background: #2a303a;
 }
 
 /* Hero -------------------------------------------------------------------- */
 
 .hero {
-  padding: 3rem 0 3.5rem;
+  padding: 2.5rem 0 3.5rem;
 }
 
 .hero__inner {
@@ -275,148 +320,164 @@ a {
   align-items: center;
 }
 
-@media (min-width: 900px) {
+@media (min-width: 960px) {
   .hero {
-    padding: 5rem 0;
+    padding: 4rem 0 5.5rem;
   }
 
   .hero__inner {
-    grid-template-columns: 1.15fr 1fr;
-    gap: 4rem;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+    gap: 3.5rem;
   }
 }
 
-.eyebrow {
-  display: inline-block;
-  margin-bottom: 1rem;
-  padding: 0.25rem 0.75rem;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--accent);
-  font-size: 0.9rem;
-  font-weight: 600;
+.hero h1 {
+  margin-bottom: 1.75rem;
 }
 
 .lead {
-  font-size: 1.15rem;
+  font-size: 1.25rem;
+  line-height: 1.5;
   color: var(--muted);
-  max-width: 36rem;
+  max-width: 33rem;
 }
 
 .hero__actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
-  margin-top: 1.5rem;
+  align-items: center;
+  gap: 0.75rem 1.5rem;
+  margin: 1.75rem 0 1.25rem;
 }
 
-/* Review mock-up ---------------------------------------------------------- */
+.hero__more {
+  padding: 0.75rem 0;
+  font-weight: 600;
+}
+
+.hero__note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* The morning's feed and the card it becomes -------------------------------- */
 
 .mockup {
   margin: 0;
   min-width: 0;
 }
 
-.mockup__step {
-  margin: 0 0 0.4rem;
-  color: var(--muted);
+.feed {
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  font-family: var(--mono);
   font-size: 0.8rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  line-height: 1.4;
 }
 
-.mockup__sources {
+.feed__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0 0 0.5rem;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px dashed var(--border);
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.feed ul {
   display: grid;
-  gap: 0.4rem;
+  gap: 0.15rem;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.mockup__original {
-  padding: 0.55rem 0.8rem;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-  font-size: 0.85rem;
-  color: var(--muted);
+.feed__row {
+  display: flex;
+  gap: 0.75rem;
+  margin: 0 -0.5rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+  color: var(--dim);
 }
 
-.mockup__original p {
-  margin: 0;
+.feed__row--pick {
+  background: var(--mark);
+  color: var(--mark-ink);
+  font-weight: 700;
 }
 
-.mockup__original .mockup__original-label {
-  margin-bottom: 0.15rem;
+.feed__row b {
   color: var(--text);
-  font-weight: 600;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
-.mockup__platform {
-  display: inline-block;
-  min-width: 4.6rem;
-  margin-right: 0.3rem;
-  padding: 0 0.35rem;
-  border-radius: 6px;
-  background: var(--bg-alt);
-  color: var(--muted);
-  font-size: 0.72rem;
-  text-align: center;
+.feed__platform {
+  flex: none;
+  width: 2.4rem;
+}
+
+.feed__text {
+  flex: 1;
+  min-width: 0;
 }
 
 .mockup__arrow {
-  margin: 0.6rem 0;
+  margin: 0.75rem 0;
   text-align: center;
-  color: var(--accent);
   font-size: 0.85rem;
   font-weight: 600;
 }
 
 .mockup__card {
   display: grid;
-  gap: 0.55rem;
-  padding: 0.9rem;
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  font-size: 0.92rem;
+  gap: 0.7rem;
+  padding: 1.25rem;
+  border: 1px solid var(--inverse-bg);
+  border-radius: 16px;
+  background: var(--inverse-bg);
+  color: var(--inverse-text);
+  box-shadow: 0 18px 40px rgb(14 17 22 / 20%);
+  font-size: 0.95rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  .mockup__card,
+  .desk__cell--inverse {
+    border-color: var(--border);
+  }
 }
 
 .mockup__card-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.55rem;
 }
 
 .mockup__score {
-  padding: 0.1rem 0.45rem;
-  border-radius: 7px;
-  background: #2e9e4f;
-  color: #ffffff;
+  padding: 0.1rem 0.5rem;
+  border-radius: 6px;
+  background: var(--mark);
+  color: var(--mark-ink);
+  font-family: var(--mono);
   font-weight: 700;
 }
 
 .mockup__badge {
   margin-left: auto;
-  padding: 0.05rem 0.45rem;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
-  color: var(--accent-strong);
+  color: var(--inverse-muted);
+  font-family: var(--mono);
   font-size: 0.75rem;
-  font-weight: 700;
   white-space: nowrap;
-}
-
-.mockup__media {
-  display: grid;
-  place-items: center;
-  aspect-ratio: 16 / 5;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #10172a, #2a3f6b 55%, #6a5a9b);
-  font-size: 1.8rem;
 }
 
 .mockup__text,
@@ -425,26 +486,30 @@ a {
   margin: 0;
 }
 
+.mockup__text {
+  font-size: 1rem;
+}
+
 .mockup__reason,
 .mockup__others {
-  color: var(--muted);
+  color: var(--inverse-muted);
   font-size: 0.82rem;
 }
 
 .mockup__others {
-  padding-top: 0.45rem;
-  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--inverse-rule);
 }
 
 .mockup__buttons {
   display: grid;
-  gap: 0.35rem;
+  gap: 0.4rem;
 }
 
 /* A row of the chat's keyboard: its buttons share the width, however many. */
 .mockup__row {
   display: flex;
-  gap: 0.35rem;
+  gap: 0.4rem;
 }
 
 .mockup__row a {
@@ -453,164 +518,446 @@ a {
 
 .mockup__buttons a {
   display: block;
-  padding: 0.5rem;
-  border: 1px solid var(--border);
+  padding: 0.65rem 0.5rem;
+  border: 1px solid var(--inverse-rule);
   border-radius: 10px;
   color: inherit;
   text-align: center;
   text-decoration: none;
   font-size: 0.85rem;
   font-weight: 600;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  transition: border-color 0.15s ease;
 }
 
 .mockup__buttons a:hover {
-  border-color: var(--accent);
+  border-color: var(--mark);
 }
 
 .mockup__buttons .mockup__approve {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--accent-text);
-}
-
-.mockup__buttons .mockup__approve:hover {
-  border-color: var(--accent-strong);
-  background: var(--accent-strong);
+  border-color: var(--mark);
+  background: var(--mark);
+  color: var(--mark-ink);
 }
 
 .mockup figcaption {
-  margin-top: 0.75rem;
+  margin-top: 0.9rem;
   text-align: center;
   color: var(--muted);
   font-size: 0.9rem;
 }
 
+/* What it reads, where it publishes ------------------------------------------ */
+
+.strip {
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+
+.strip__inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1.75rem;
+  margin-top: 0;
+  margin-bottom: 0;
+  padding-top: 1.1rem;
+  padding-bottom: 1.1rem;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.strip dt {
+  color: var(--muted);
+}
+
+.strip dd {
+  margin: 0;
+}
+
 /* Sections ---------------------------------------------------------------- */
 
 .section {
-  padding: 3.5rem 0;
+  padding: 4rem 0;
+}
+
+.section--tight {
+  padding: 2rem 0;
 }
 
 @media (min-width: 900px) {
   .section {
-    padding: 5rem 0;
+    padding: 6.5rem 0;
+  }
+
+  .section--tight {
+    padding: 3rem 0;
   }
 }
 
-.section--alt {
-  background: var(--bg-alt);
+.section--inverse {
+  margin-top: 2rem;
+  background: var(--inverse-bg);
+  color: var(--inverse-text);
+}
+
+.section__title {
+  max-width: 48rem;
+  font-size: clamp(2rem, 4vw, 3.25rem);
+  line-height: 1.05;
 }
 
 .section__lead {
   color: var(--muted);
-  font-size: 1.1rem;
+  font-size: 1.15rem;
   max-width: 40rem;
-  margin-bottom: 2rem;
+  margin-bottom: 2.5rem;
 }
 
-.grid {
+.section--inverse .section__lead {
+  color: var(--inverse-muted);
+}
+
+/* The desk: four features with a picture, four without ----------------------- */
+
+.desk,
+.desk-more,
+.steps,
+.ruled {
   display: grid;
-  gap: 1rem;
+  gap: 1.25rem;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-@media (min-width: 640px) {
-  .grid--features,
-  .grid--steps,
-  .grid--audience {
-    grid-template-columns: repeat(2, 1fr);
+.desk {
+  margin-top: 2.5rem;
+}
+
+@media (min-width: 820px) {
+  .desk {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-@media (min-width: 1000px) {
-  .grid--features,
-  .grid--steps {
-    grid-template-columns: repeat(4, 1fr);
-  }
-
-  .grid--audience {
-    grid-template-columns: repeat(3, 1fr);
-  }
-}
-
-.card,
-.step {
-  padding: 1.4rem;
+.desk__cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 1.5rem;
+  border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
-  border: 1px solid var(--border);
 }
 
-.card p,
-.step p {
+@media (min-width: 640px) {
+  .desk__cell {
+    padding: 2.25rem;
+  }
+}
+
+.desk__cell h3 {
+  margin: auto 0 0;
+  font-size: 1.75rem;
+  letter-spacing: -0.02em;
+}
+
+.desk__cell p {
   margin: 0;
   color: var(--muted);
 }
 
-.card__icon {
-  display: block;
-  font-size: 1.6rem;
-  margin-bottom: 0.6rem;
+.desk__cell--inverse {
+  border-color: var(--inverse-bg);
+  background: var(--inverse-bg);
+  color: var(--inverse-text);
+}
+
+.desk__cell--inverse p {
+  color: var(--inverse-muted);
+}
+
+.visual {
+  margin: 0 0 0.5rem;
+  padding: 0;
+  list-style: none;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+
+.desk__cell .visual--score {
+  display: flex;
+  align-items: flex-end;
+  gap: 1rem;
+  color: var(--inverse-muted);
+}
+
+.visual--score span {
+  font-family: var(--display);
+  font-size: clamp(5.5rem, 12vw, 8.25rem);
+  font-weight: 800;
+  line-height: 0.82;
+  letter-spacing: -0.05em;
+  color: var(--mark);
+}
+
+.visual--fold {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.visual--fold ul {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.visual--fold li,
+.visual--voice li {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+
+.visual--fold .marked {
+  padding: 1.35rem 1.1rem;
+  border-radius: 8px;
+  font-weight: 700;
+}
+
+.visual--rewrite {
+  display: grid;
+  gap: 0.6rem;
+  font-family: inherit;
+  font-size: 0.95rem;
+}
+
+.visual--rewrite s {
+  color: var(--dim);
+}
+
+.desk__cell .visual--rewrite p {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.visual--voice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.visual--voice li {
+  border-radius: 999px;
+}
+
+.visual--voice li:last-child {
+  border-color: var(--mark);
+  background: var(--mark);
+  color: var(--mark-ink);
+}
+
+.desk-more {
+  margin-top: 2.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+}
+
+.desk-more li,
+.step {
+  padding-top: 1.25rem;
+  border-top: 2px solid var(--rule);
+}
+
+.desk-more p,
+.step p,
+.ruled p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+/* A day without, a day with ------------------------------------------------ */
+
+.compare {
+  display: grid;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+@media (min-width: 760px) {
+  .compare {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.compare__side {
+  padding: 1.75rem 1.5rem;
+}
+
+@media (min-width: 640px) {
+  .compare__side {
+    padding: 2.5rem;
+  }
+}
+
+.compare__side--after {
+  background: var(--mark);
+  color: var(--mark-ink);
+}
+
+.compare__side--after .eyebrow {
+  color: inherit;
+}
+
+.compare__title {
+  margin: 0 0 1.1rem;
+  font-family: var(--display);
+  font-size: clamp(2rem, 4vw, 2.75rem);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.compare ul {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.compare__side--before ul {
+  color: var(--muted);
+}
+
+/* Steps ------------------------------------------------------------------- */
+
+.steps {
+  gap: 2rem;
+  grid-template-columns: repeat(auto-fit, minmax(13.5rem, 1fr));
+}
+
+.step {
+  border-top: 1px solid var(--inverse-rule);
+}
+
+.step p {
+  color: var(--inverse-muted);
 }
 
 .step__number {
-  display: inline-grid;
-  place-items: center;
-  width: 2.2rem;
-  height: 2.2rem;
+  display: block;
   margin-bottom: 0.75rem;
-  border-radius: 50%;
-  background: var(--accent);
-  color: var(--accent-text);
-  font-weight: 700;
+  color: var(--mark);
+  font-family: var(--mono);
+}
+
+/* Who it is for, and what it does ------------------------------------------ */
+
+.split {
+  display: grid;
+  gap: 3.5rem;
+}
+
+@media (min-width: 900px) {
+  .split {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.split h2 {
+  margin-bottom: 1.5rem;
+}
+
+.ruled li {
+  padding-top: 1rem;
+  border-top: 1px solid var(--rule);
+}
+
+.ruled h3 {
+  margin-bottom: 0.35rem;
+}
+
+.ruled--links a {
+  text-decoration: none;
+}
+
+.ruled--links a::after {
+  content: ' →';
+}
+
+.ruled--links a:hover {
+  text-decoration: underline;
 }
 
 /* FAQ --------------------------------------------------------------------- */
 
 .faq {
-  display: grid;
-  gap: 0.75rem;
   margin-top: 1.5rem;
+  border-bottom: 1px solid var(--rule);
 }
 
 .faq__item {
-  border-radius: var(--radius);
-  background: var(--surface);
-  border: 1px solid var(--border);
+  border-top: 1px solid var(--rule);
 }
 
 .faq__item summary {
   cursor: pointer;
-  padding: 1rem 1.25rem;
+  padding: 1.1rem 0;
+  font-size: 1.1rem;
   font-weight: 600;
-  list-style-position: inside;
 }
 
 .faq__item p {
   margin: 0;
-  padding: 0 1.25rem 1.1rem;
+  padding: 0 0 1.25rem;
   color: var(--muted);
 }
 
 /* Final call to action ---------------------------------------------------- */
 
-.cta__inner {
-  text-align: center;
+.cta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 2rem;
+  margin-bottom: 3rem;
+  padding: clamp(2rem, 6vw, 5rem);
+  border-radius: 28px;
+  background: var(--mark);
+  color: var(--mark-ink);
 }
 
-.cta__inner p {
-  color: var(--muted);
-  font-size: 1.1rem;
-  margin-bottom: 1.5rem;
+.cta > div {
+  flex: 1 1 26rem;
+  min-width: 0;
+}
+
+.cta h2 {
+  margin-bottom: 1.25rem;
+  font-size: clamp(2.2rem, 5vw, 4.25rem);
+  line-height: 1;
+  letter-spacing: -0.035em;
+}
+
+.cta p {
+  margin: 0;
+  max-width: 32rem;
+  font-size: 1.15rem;
 }
 
 /* Footer ------------------------------------------------------------------ */
 
 .site-footer {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--rule);
   padding: 2rem 0;
   color: var(--muted);
   font-size: 0.9rem;
@@ -639,6 +986,11 @@ a {
 .public-page {
   padding-top: 3rem;
   padding-bottom: 4rem;
+}
+
+.public-page h1 {
+  font-size: clamp(2rem, 4vw, 2.75rem);
+  line-height: 1.1;
 }
 
 .public-page h2 {
@@ -692,7 +1044,7 @@ a {
   padding: 1.5rem;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--bg-alt);
+  background: var(--surface);
 }
 
 .page-cta h2 {
