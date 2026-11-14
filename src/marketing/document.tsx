@@ -1,28 +1,7 @@
-import { Analytics } from '@vercel/analytics/next';
 import type { ReactNode } from 'react';
 import { SiteFooter, SiteHeader } from './chrome';
 import { CONTENT } from './content';
 import type { Locale } from './i18n';
-import './marketing.css';
-
-/**
- * The `<html>` of a public page in one language. Each language has its own
- * root layout so that `lang` is right in the server-rendered HTML, which is
- * what search engines and screen readers go by.
- *
- * Visits are counted here and only here: the Mini App and the website editor
- * have documents of their own, and what people do in them is not measured.
- */
-export function MarketingDocument({ locale, children }: { locale: Locale; children: ReactNode }) {
-  return (
-    <html lang={locale}>
-      <body>
-        {children}
-        <Analytics />
-      </body>
-    </html>
-  );
-}
 
 /**
  * What every public page has around it. Part of the page, not the layout: the

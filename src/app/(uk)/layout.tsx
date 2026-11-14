@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { MarketingDocument } from '@/marketing/document';
+import { MarketingDocument } from '@/marketing/html';
 import { marketingMetadata, marketingViewport } from '@/marketing/metadata';
 
 /**

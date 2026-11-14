@@ -21,11 +21,20 @@ export interface LandingContent {
   skipLink: string;
   connect: string;
   languageSwitch: { label: string; names: Record<Locale, string> };
-  hero: { eyebrow: string; title: string; lead: string; primary: string; secondary: string };
+  hero: {
+    eyebrow: string;
+    /** The headline in three runs: the middle one is under the marker. */
+    title: { before: string; marked: string; after: string };
+    lead: string;
+    primary: string;
+    secondary: string;
+    note: string;
+  };
   mockup: {
     label: string;
-    /** Three sources' posts on one event, as they were published, in English. */
-    sourcesLabel: string;
+    /** Above the morning's feed, and above its column of scores. */
+    feedLabel: string;
+    scoreLabel: string;
     merged: string;
     /** Radar's one-line why, in the site's language. */
     reason: string;
@@ -34,7 +43,21 @@ export interface LandingContent {
     textLang: string;
     caption: string;
   };
-  features: { title: string; lead: string; items: (Item & { icon: string })[] };
+  /** What it reads and where it publishes, in one line under the hero. */
+  strip: { reads: string; sources: string[]; publishes: string; targets: string[] };
+  features: {
+    eyebrow: string;
+    title: string;
+    /** The first four get a picture each; the rest are a quiet row under them. */
+    items: Item[];
+    /** What three sources become, in the picture of one story. */
+    foldResult: string;
+    /** What the voice is made of, and where it is learned from. */
+    voiceTraits: string[];
+    voiceSource: string;
+  };
+  /** A day with the service and a day without. */
+  compare: Record<'before' | 'after', { label: string; title: string; items: string[] }>;
   steps: { title: string; lead: string; items: Item[] };
   audiences: { title: string; items: Item[] };
   useCases: { title: string; lead: string; more: string };
@@ -55,6 +78,23 @@ export const MOCKUP_SOURCES = [
   { platform: 'Telegram', name: '@spacenews', text: 'Record radio burst traced by Webb to a faint dwarf galaxy' },
 ] as const;
 
+/**
+ * A morning's feed as the hero shows it: the few posts worth running under the
+ * marker, the two repeats of the lead story folded into it, the rest passed
+ * over. Illustrative, like the three above, and English at the source.
+ */
+export const MOCKUP_FEED: { platform: string; text: string; score?: number; kind: 'pick' | 'same' | 'skip' }[] = [
+  { platform: 'X', text: 'Thread: 10 space photos you missed this week', score: 14, kind: 'skip' },
+  { platform: 'X', text: '@NASA — Webb traces the most distant fast radio burst to its home galaxy', score: 82, kind: 'pick' },
+  { platform: 'RSS', text: 'Space.com — James Webb pins down the farthest FRB yet', kind: 'same' },
+  { platform: 'TG', text: '@spacenews — Record radio burst traced by Webb', kind: 'same' },
+  { platform: 'YT', text: 'Livestream starting soon: weekly Q&A', score: 9, kind: 'skip' },
+  { platform: 'RSS', text: 'ESA — First light from the new Earth-observation satellite', score: 74, kind: 'pick' },
+  { platform: 'X', text: 'Reposting last week’s thread in case you missed it', score: 6, kind: 'skip' },
+  { platform: 'WEB', text: 'Opinion: what the launch delay really means', score: 21, kind: 'skip' },
+  { platform: 'TG', text: '@launchwatch — Crewed lunar flyby gets its launch window', score: 68, kind: 'pick' },
+];
+
 const en: LandingContent = {
   meta: {
     title: 'AI editorial desk for Telegram and Threads',
@@ -73,75 +113,96 @@ const en: LandingContent = {
     main: 'Main navigation',
   },
   skipLink: 'Skip to content',
-  connect: 'Get started',
+  connect: 'Message us',
   languageSwitch: { label: 'Language', names: { en: 'EN', uk: 'UK' } },
   hero: {
     eyebrow: 'For people who run news channels and social accounts',
-    title: 'Stop scrolling twenty feeds to find the three posts worth running',
+    title: { before: 'Twenty feeds in. ', marked: 'Three posts worth running', after: ' out.' },
     lead:
-      'Running a channel means reading everything your sources publish, every day: catching the few stories that fit, ' +
-      'noticing that five of them are the same news, then rewriting it in your language before someone else posts it first. ' +
-      'Zmistik takes that work off you. It follows the X and Threads accounts, RSS feeds, Telegram and YouTube channels and ' +
-      'websites you pick, puts first what you would actually publish, folds one story from many sources into one card and ' +
-      'drafts the text in your language and voice. You spend minutes deciding instead of hours searching: publish to ' +
-      'Telegram, Threads or both, edit, schedule or reject.',
-    primary: 'Get started',
-    secondary: 'How it works',
+      'Zmistik reads every source you follow, folds repeats of one story into a single card and drafts it in your ' +
+      'language and voice. You only decide: publish to Telegram, Threads or both, schedule, or reject.',
+    primary: 'Message us on Telegram',
+    secondary: 'See how it works',
+    note: 'Setup takes a few minutes and needs no code. The score sorts the queue; you decide.',
   },
   mockup: {
     label: 'Three sources report one event, and it reaches the review queue as one ranked card',
-    sourcesLabel: 'Three sources, one event',
+    feedLabel: 'Your sources, this morning',
+    scoreLabel: 'Score',
     merged: 'One card in your queue, ranked and rewritten for a Spanish-language channel',
     reason: 'Record-breaking Webb news, like the posts you publish.',
     text: '🔭 Webb ha rastreado la ráfaga rápida de radio más lejana jamás detectada hasta su galaxia de origen.',
     textLang: 'es',
     caption: 'Best-scored first. Send it to Telegram, Threads or both, and the other two are marked as already covered.',
   },
+  strip: {
+    reads: 'Reads',
+    sources: ['X', 'Threads', 'RSS & Atom', 'Telegram', 'YouTube', 'Any website'],
+    publishes: 'Publishes to',
+    targets: ['Telegram', 'Threads'],
+  },
   features: {
-    title: 'From a stream of sources to your posts',
-    lead: 'The reading, sorting, translating and re-uploading are done for you. What is left is the editorial decision.',
+    eyebrow: 'The desk',
+    title: 'The reading, sorting and rewriting are done. The call is still yours.',
+    foldResult: '1 card',
+    voiceTraits: ['tone', 'length', 'paragraphs', 'emoji'],
+    voiceSource: 'learned from your past posts',
     items: [
       {
-        icon: '📡',
         title: 'Best posts first',
         text: 'Every post gets a score: how likely you are to publish it. It learns from what you approve, the reasons you give when you reject, and what you have published before. You can also describe in Settings what you publish and what you turn down. It sorts the queue; it never decides for you.',
       },
       {
-        icon: '📚',
         title: 'One story, one card',
         text: 'When several sources report the same event, it arrives as one card: pick the best version, and the rest are set aside as already covered. A source posting the same thing again is marked 🔁.',
       },
       {
-        icon: '🌐',
         title: 'In your language',
         text: 'Set your language once, and every post arrives already in it: rewritten the way you write, not translated word for word. Facts, numbers and names stay as in the original.',
       },
       {
-        icon: '🎙',
         title: 'In your voice',
         text: 'We import your Telegram channel’s past posts, and Zmistik picks up how it writes — tone, length, paragraphs, emoji — and writes new posts to match.',
       },
       {
-        icon: '✨',
         title: 'An AI assistant in the editor',
         text: 'Ask “make it shorter” or “add context”, and the post changes in place — one click undoes it. Ask it to fact-check, and it searches the web and answers with sources.',
       },
       {
-        icon: '🔌',
         title: 'Sources of every kind',
         text: 'Follow X and Threads accounts, RSS and Atom feeds, public Telegram and YouTube channels, and websites through their sitemaps — as many as you need for each channel, added in a click or with a command in the bot.',
       },
       {
-        icon: '🗂',
         title: 'Review on your schedule',
         text: 'Posts wait in one queue, in Telegram or in the browser, and you get a note when new ones come in — every hour, once a day at the hour you choose, or post by post. Schedule any post for later.',
       },
       {
-        icon: '📤',
         title: 'Telegram, Threads or both',
         text: 'Connect a Threads account beside your Telegram channel, and choose where each post goes when you approve or schedule it. Photos, videos and albums go too — on Threads an album is a carousel — and nothing is published twice.',
       },
     ],
+  },
+  compare: {
+    before: {
+      label: 'Without Zmistik',
+      title: 'Hours searching',
+      items: [
+        'Read everything every source publishes',
+        'Notice that five posts are the same news',
+        'Rewrite it before someone else posts it first',
+        'Re-upload the photos and videos by hand',
+      ],
+    },
+    after: {
+      label: 'With Zmistik',
+      title: 'Minutes deciding',
+      items: [
+        'Open one queue, best-scored first',
+        'One card per story, already in your language',
+        'Publish, schedule, edit or reject',
+        'Photos and videos go out with the post',
+      ],
+    },
   },
   steps: {
     title: 'How it works',
@@ -250,7 +311,7 @@ const en: LandingContent = {
     ],
   },
   cta: {
-    title: 'Get started',
+    title: 'Tomorrow’s queue could already be sorted.',
     text: 'Message us on Telegram — we will set up your channel, its language and the sources to follow.',
     button: 'Message us on Telegram',
   },
@@ -282,75 +343,96 @@ const uk: LandingContent = {
     main: 'Основна навігація',
   },
   skipLink: 'Перейти до змісту',
-  connect: 'Підключити',
+  connect: 'Написати нам',
   languageSwitch: { label: 'Мова', names: { en: 'EN', uk: 'UK' } },
   hero: {
     eyebrow: 'Для тих, хто веде новинні канали й акаунти в соцмережах',
-    title: 'Годі гортати двадцять стрічок, щоб знайти три пости, варті публікації',
+    title: { before: 'Двадцять стрічок на вході. ', marked: 'Три пости, варті публікації,', after: ' — на виході.' },
     lead:
-      'Вести канал — це щодня читати все, що публікують ваші джерела: вловлювати ті кілька історій, що підходять, помічати, ' +
-      'що п’ять із них — та сама новина, і переписувати її своєю мовою, поки хтось не опублікував першим. Zmistik бере цю ' +
-      'роботу на себе. Він стежить за обраними акаунтами в X і Threads, RSS-стрічками, Telegram- і YouTube-каналами та ' +
-      'сайтами, ставить першим те, що ви справді опублікували б, збирає одну історію з багатьох джерел в одну картку й ' +
-      'готує текст вашою мовою та голосом. Ви витрачаєте хвилини на рішення замість годин на пошук: опублікувати в ' +
-      'Telegram, Threads чи в обидва, відредагувати, запланувати або відхилити.',
-    primary: 'Почати',
+      'Zmistik читає всі ваші джерела, збирає повтори однієї історії в одну картку й готує текст вашою мовою та ' +
+      'голосом. Вам лишається рішення: опублікувати в Telegram, Threads чи в обидва, запланувати або відхилити.',
+    primary: 'Написати в Telegram',
     secondary: 'Як це працює',
+    note: 'Налаштування займає кілька хвилин і не потребує коду. Оцінка сортує чергу — рішення за вами.',
   },
   mockup: {
     label: 'Три джерела пишуть про одну подію — і вона приходить у чергу однією оціненою карткою',
-    sourcesLabel: 'Три джерела, одна подія',
+    feedLabel: 'Ваші джерела, цього ранку',
+    scoreLabel: 'Оцінка',
     merged: 'Одна картка у вашій черзі — оцінена й переписана для україномовного каналу',
     reason: 'Рекордна новина від Webb — як ті, що ви публікуєте.',
     text: '🔭 Webb відстежив найвіддаленіший із відомих швидких радіосплесків до його рідної галактики.',
     textLang: 'uk',
     caption: 'Найкращі — першими. Надішліть у Telegram, Threads чи в обидва — а два інші позначаться як уже висвітлені.',
   },
+  strip: {
+    reads: 'Читає',
+    sources: ['X', 'Threads', 'RSS і Atom', 'Telegram', 'YouTube', 'Будь-який сайт'],
+    publishes: 'Публікує в',
+    targets: ['Telegram', 'Threads'],
+  },
   features: {
-    title: 'Від потоку джерел до ваших постів',
-    lead: 'Читання, сортування, переклад і перезавантаження медіа — не ваша робота. Вам лишається редакторське рішення.',
+    eyebrow: 'Редакція',
+    title: 'Читання, сортування й переписування вже зроблено. Рішення — за вами.',
+    foldResult: '1 картка',
+    voiceTraits: ['тон', 'довжина', 'абзаци', 'емодзі'],
+    voiceSource: 'з ваших минулих постів',
     items: [
       {
-        icon: '📡',
         title: 'Найкращі пости — першими',
         text: 'Кожен пост отримує оцінку: наскільки ймовірно ви його опублікуєте. Вона вчиться на тому, що ви погоджуєте, на причинах відмов і на тому, що ви публікували раніше. У налаштуваннях можна також описати, що ви публікуєте і що відсіваєте. Оцінка лише сортує чергу — рішень за вас не ухвалює.',
       },
       {
-        icon: '📚',
         title: 'Одна історія — одна картка',
         text: 'Коли кілька джерел пишуть про ту саму подію, вона приходить однією карткою: оберіть найкращу версію, а решта відкладеться як уже висвітлена. Якщо джерело повторює той самий пост, він позначений 🔁.',
       },
       {
-        icon: '🌐',
         title: 'Вашою мовою',
         text: 'Вкажіть мову один раз — і кожен пост приходить уже нею: переписаний так, як пишете ви, а не перекладений дослівно. Факти, цифри й імена — як в оригіналі.',
       },
       {
-        icon: '🎙',
         title: 'Вашим голосом',
         text: 'Ми імпортуємо минулі пости вашого Telegram-каналу, і Zmistik переймає, як він пише, — тон, довжину, абзаци, емодзі — та пише нові пости так само.',
       },
       {
-        icon: '✨',
         title: 'AI-асистент у редакторі',
         text: 'Попросіть «зроби коротше» чи «додай контекст» — і пост зміниться на місці, а скасувати можна одним кліком. Попросіть перевірити факти — асистент пошукає в інтернеті й відповість із джерелами.',
       },
       {
-        icon: '🔌',
         title: 'Джерела будь-якого типу',
         text: 'Стежте за акаунтами X і Threads, RSS- і Atom-стрічками, публічними Telegram- і YouTube-каналами та сайтами через їхні sitemap — скільки треба для кожного каналу. Додаються одним кліком або командою в боті.',
       },
       {
-        icon: '🗂',
         title: 'Розгляд у зручному ритмі',
         text: 'Пости чекають в одній черзі — у Telegram або в браузері, — а про нові ви дізнаєтеся тоді, коли зручно: щогодини, раз на день у вибрану годину чи кожен окремо. Будь-який пост можна запланувати.',
       },
       {
-        icon: '📤',
         title: 'Telegram, Threads або обидва',
         text: 'Підключіть акаунт Threads поруч із Telegram-каналом і обирайте, куди йде кожен пост, коли погоджуєте чи плануєте його. Фото, відео й альбоми теж ідуть — у Threads альбом стає каруселлю, — і нічого не вийде двічі.',
       },
     ],
+  },
+  compare: {
+    before: {
+      label: 'Без Zmistik',
+      title: 'Години на пошук',
+      items: [
+        'Читати все, що публікує кожне джерело',
+        'Помічати, що п’ять постів — та сама новина',
+        'Переписувати, поки хтось не опублікував першим',
+        'Перезавантажувати фото й відео вручну',
+      ],
+    },
+    after: {
+      label: 'Із Zmistik',
+      title: 'Хвилини на рішення',
+      items: [
+        'Одна черга: найкращі — першими',
+        'Одна картка на історію, уже вашою мовою',
+        'Опублікувати, запланувати, відредагувати чи відхилити',
+        'Фото й відео виходять разом із постом',
+      ],
+    },
   },
   steps: {
     title: 'Як це працює',
@@ -459,7 +541,7 @@ const uk: LandingContent = {
     ],
   },
   cta: {
-    title: 'Почніть',
+    title: 'Завтрашню чергу вже може бути розібрано.',
     text: 'Напишіть нам у Telegram — налаштуємо ваш канал, його мову й джерела для стеження.',
     button: 'Написати в Telegram',
   },

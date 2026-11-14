@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { CONTACT_URL, SITE_NAME, SITE_URL } from '@/lib/site';
-import { CONTENT, MOCKUP_SOURCES } from './content';
+import { CONTENT, MOCKUP_FEED, MOCKUP_SOURCES } from './content';
 import { LOCALES, localePath, type Locale } from './i18n';
 import { USE_CASE_KEYS, USE_CASE_PAGES } from './pages/use-cases';
 
@@ -18,11 +18,12 @@ const MOCKUP_BUTTON_ROWS = [['✅ Telegram', '✅ Threads', '✅ Both'], ['🚫 
 const MOCKUP_LEAD_BUTTON = '✅ Both';
 
 /**
- * A picture of what the product does: three sources' posts on one event
- * become one card in the review queue — ranked, rewritten in the channel's
- * language, with the review's real labels and buttons, Telegram, Threads or
- * both among them. People press those buttons, so each one opens the same
- * chat as the page's call to action.
+ * A picture of what the product does: a morning's feed with the few posts
+ * worth running under the marker, and the best of them as it reaches the
+ * review queue — one card for three sources, ranked, rewritten in the
+ * channel's language, with the review's real labels and buttons, Telegram,
+ * Threads or both among them. People press those buttons, so each one opens
+ * the same chat as the page's call to action.
  */
 function ReviewMockup({ locale }: { locale: Locale }) {
   const text = CONTENT[locale].mockup;
@@ -30,17 +31,24 @@ function ReviewMockup({ locale }: { locale: Locale }) {
 
   return (
     <figure className="mockup" aria-label={text.label}>
-      <p className="mockup__step">{text.sourcesLabel}</p>
-      <ul className="mockup__sources">
-        {MOCKUP_SOURCES.map((source) => (
-          <li key={source.name} className="mockup__original">
-            <p className="mockup__original-label">
-              <span className="mockup__platform">{source.platform}</span> {source.name}
-            </p>
-            <p lang="en">{source.text}</p>
-          </li>
-        ))}
-      </ul>
+      <div className="feed">
+        <p className="feed__head">
+          <span>{text.feedLabel}</span>
+          <span>{text.scoreLabel}</span>
+        </p>
+        <ul lang="en">
+          {MOCKUP_FEED.map((row) => (
+            <li key={row.text} className={`feed__row feed__row--${row.kind}`}>
+              <span className="feed__platform">{row.platform}</span>
+              <span className="feed__text">
+                {row.text}
+                {row.kind === 'same' && <b> ↳ same story</b>}
+              </span>
+              <span className="feed__score">{row.score ?? '—'}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
       <p className="mockup__arrow">
         <span aria-hidden="true">↓ </span>
         {text.merged}
@@ -53,9 +61,6 @@ function ReviewMockup({ locale }: { locale: Locale }) {
           </span>
           <strong>{lead.name}</strong>
           <span className="mockup__badge">📚 Same story · {others.length} more</span>
-        </div>
-        <div className="mockup__media" aria-hidden="true">
-          <span>🔭</span>
         </div>
         <p className="mockup__text" lang={text.textLang}>
           {text.text}
@@ -88,6 +93,61 @@ function ReviewMockup({ locale }: { locale: Locale }) {
     </figure>
   );
 }
+
+/**
+ * The picture above each of the four features that carry the product: the
+ * score, one story from three sources, the rewrite, the voice. Decoration for
+ * the words under it, which say the same thing.
+ */
+function FeatureVisual({ index, locale }: { index: number; locale: Locale }) {
+  const text = CONTENT[locale];
+
+  if (index === 0) {
+    return (
+      <p className="visual visual--score" aria-hidden="true" lang="en">
+        <span>82</span> likely approve
+      </p>
+    );
+  }
+  if (index === 1) {
+    return (
+      <div className="visual visual--fold" aria-hidden="true">
+        <ul lang="en">
+          {MOCKUP_SOURCES.map((source) => (
+            <li key={source.name}>
+              {source.platform} · {source.name}
+            </li>
+          ))}
+        </ul>
+        <svg width="56" height="24" viewBox="0 0 56 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M2 12h48M42 4l8 8-8 8" />
+        </svg>
+        <span className="marked">{text.features.foldResult}</span>
+      </div>
+    );
+  }
+  if (index === 2) {
+    return (
+      <div className="visual visual--rewrite" aria-hidden="true">
+        <s lang="en">{MOCKUP_SOURCES[0].text}</s>
+        <p lang={text.mockup.textLang}>
+          <span className="marked">{text.mockup.text}</span>
+        </p>
+      </div>
+    );
+  }
+  return (
+    <ul className="visual visual--voice" aria-hidden="true">
+      {text.features.voiceTraits.map((trait) => (
+        <li key={trait}>{trait}</li>
+      ))}
+      <li>{text.features.voiceSource}</li>
+    </ul>
+  );
+}
+
+/** How many features get a picture; the rest are the quiet row. */
+const LEAD_FEATURES = 4;
 
 export function Landing({ locale }: { locale: Locale }) {
   const text = CONTENT[locale];
@@ -145,31 +205,57 @@ export function Landing({ locale }: { locale: Locale }) {
         <div className="container hero__inner">
           <div className="hero__copy">
             <p className="eyebrow">{text.hero.eyebrow}</p>
-            <h1>{text.hero.title}</h1>
+            <h1>
+              {text.hero.title.before}
+              <span className="marked">{text.hero.title.marked}</span>
+              {text.hero.title.after}
+            </h1>
             <p className="lead">{text.hero.lead}</p>
             <div className="hero__actions">
-              <a className="button" href={CONTACT_URL} rel="noopener">
+              <a className="button button--large" href={CONTACT_URL} rel="noopener">
                 {text.hero.primary}
               </a>
-              <a className="button button--ghost" href="#how-it-works">
+              <a className="hero__more" href="#how-it-works">
                 {text.hero.secondary}
               </a>
             </div>
+            <p className="hero__note">{text.hero.note}</p>
           </div>
           <ReviewMockup locale={locale} />
         </div>
       </section>
 
+      <div className="strip">
+        <dl className="container strip__inner">
+          <dt>{text.strip.reads}</dt>
+          {text.strip.sources.map((source) => (
+            <dd key={source}>{source}</dd>
+          ))}
+          <dt>{text.strip.publishes}</dt>
+          {text.strip.targets.map((target) => (
+            <dd key={target}>{target}</dd>
+          ))}
+        </dl>
+      </div>
+
       <section id="features" className="section" aria-labelledby="features-title">
         <div className="container">
-          <h2 id="features-title">{text.features.title}</h2>
-          <p className="section__lead">{text.features.lead}</p>
-          <ul className="grid grid--features">
-            {text.features.items.map((feature) => (
-              <li key={feature.title} className="card">
-                <span className="card__icon" aria-hidden="true">
-                  {feature.icon}
-                </span>
+          <p className="eyebrow">{text.features.eyebrow}</p>
+          <h2 id="features-title" className="section__title">
+            {text.features.title}
+          </h2>
+          <ul className="desk">
+            {text.features.items.slice(0, LEAD_FEATURES).map((feature, index) => (
+              <li key={feature.title} className={index === 0 ? 'desk__cell desk__cell--inverse' : 'desk__cell'}>
+                <FeatureVisual index={index} locale={locale} />
+                <h3>{feature.title}</h3>
+                <p>{feature.text}</p>
+              </li>
+            ))}
+          </ul>
+          <ul className="desk-more">
+            {text.features.items.slice(LEAD_FEATURES).map((feature) => (
+              <li key={feature.title}>
                 <h3>{feature.title}</h3>
                 <p>{feature.text}</p>
               </li>
@@ -178,15 +264,35 @@ export function Landing({ locale }: { locale: Locale }) {
         </div>
       </section>
 
-      <section id="how-it-works" className="section section--alt" aria-labelledby="how-title">
+      <section className="section section--tight" aria-label={`${text.compare.before.label} / ${text.compare.after.label}`}>
         <div className="container">
-          <h2 id="how-title">{text.steps.title}</h2>
+          <div className="compare">
+            {(['before', 'after'] as const).map((side) => (
+              <div key={side} className={`compare__side compare__side--${side}`}>
+                <p className="eyebrow">{text.compare[side].label}</p>
+                <p className="compare__title">{text.compare[side].title}</p>
+                <ul>
+                  {text.compare[side].items.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section id="how-it-works" className="section section--inverse" aria-labelledby="how-title">
+        <div className="container">
+          <h2 id="how-title" className="section__title">
+            {text.steps.title}
+          </h2>
           <p className="section__lead">{text.steps.lead}</p>
-          <ol className="grid grid--steps">
+          <ol className="steps">
             {text.steps.items.map((step, index) => (
               <li key={step.title} className="step">
                 <span className="step__number" aria-hidden="true">
-                  {index + 1}
+                  {String(index + 1).padStart(2, '0')}
                 </span>
                 <h3>{step.title}</h3>
                 <p>{step.text}</p>
@@ -196,38 +302,36 @@ export function Landing({ locale }: { locale: Locale }) {
         </div>
       </section>
 
-      <section className="section" aria-labelledby="audience-title">
-        <div className="container">
-          <h2 id="audience-title">{text.audiences.title}</h2>
-          <ul className="grid grid--audience">
-            {text.audiences.items.map((audience) => (
-              <li key={audience.title} className="card">
-                <h3>{audience.title}</h3>
-                <p>{audience.text}</p>
-              </li>
-            ))}
-          </ul>
+      <section className="section">
+        <div className="container split">
+          <div aria-labelledby="audience-title" role="group">
+            <h2 id="audience-title">{text.audiences.title}</h2>
+            <ul className="ruled">
+              {text.audiences.items.map((audience) => (
+                <li key={audience.title}>
+                  <h3>{audience.title}</h3>
+                  <p>{audience.text}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div aria-labelledby="use-cases-title" role="group">
+            <h2 id="use-cases-title">{text.useCases.title}</h2>
+            <ul className="ruled ruled--links">
+              {USE_CASE_KEYS.map((key) => (
+                <li key={key}>
+                  <h3>
+                    <Link href={localePath(locale, `/${key}`)}>{USE_CASE_PAGES[key][locale].title}</Link>
+                  </h3>
+                  <p>{USE_CASE_PAGES[key][locale].description}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
       </section>
 
-      <section className="section section--alt" aria-labelledby="use-cases-title">
-        <div className="container">
-          <h2 id="use-cases-title">{text.useCases.title}</h2>
-          <p className="section__lead">{text.useCases.lead}</p>
-          <ul className="grid grid--audience">
-            {USE_CASE_KEYS.map((key) => (
-              <li key={key} className="card">
-                <h3>
-                  <Link href={localePath(locale, `/${key}`)}>{USE_CASE_PAGES[key][locale].title}</Link>
-                </h3>
-                <p>{USE_CASE_PAGES[key][locale].description}</p>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </section>
-
-      <section id="faq" className="section" aria-labelledby="faq-title">
+      <section id="faq" className="section section--tight" aria-labelledby="faq-title">
         <div className="container container--narrow">
           <h2 id="faq-title">{text.faq.title}</h2>
           <div className="faq">
@@ -241,13 +345,17 @@ export function Landing({ locale }: { locale: Locale }) {
         </div>
       </section>
 
-      <section className="section cta" aria-labelledby="cta-title">
-        <div className="container container--narrow cta__inner">
-          <h2 id="cta-title">{text.cta.title}</h2>
-          <p>{text.cta.text}</p>
-          <a className="button" href={CONTACT_URL} rel="noopener">
-            {text.cta.button}
-          </a>
+      <section className="section section--tight" aria-labelledby="cta-title">
+        <div className="container">
+          <div className="cta">
+            <div>
+              <h2 id="cta-title">{text.cta.title}</h2>
+              <p>{text.cta.text}</p>
+            </div>
+            <a className="button button--large button--ink" href={CONTACT_URL} rel="noopener">
+              {text.cta.button}
+            </a>
+          </div>
         </div>
       </section>
     </>

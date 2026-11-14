@@ -23,8 +23,8 @@ export function renderOgImage(locale: Locale): ImageResponse {
           flexDirection: 'column',
           justifyContent: 'space-between',
           padding: '72px 80px',
-          background: 'linear-gradient(135deg, #0e1621 0%, #17324a 60%, #229ed9 140%)',
-          color: '#ffffff',
+          background: '#0e1116',
+          color: '#f3f4ef',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', fontSize: 34, fontWeight: 700 }}>
@@ -34,7 +34,8 @@ export function renderOgImage(locale: Locale): ImageResponse {
               padding: '8px 18px',
               marginRight: 20,
               borderRadius: 14,
-              background: '#229ed9',
+              background: '#d4ff3f',
+              color: '#0e1116',
               fontSize: 30,
             }}
           >
@@ -46,7 +47,7 @@ export function renderOgImage(locale: Locale): ImageResponse {
           <div style={{ fontSize: 66, fontWeight: 700, lineHeight: 1.15, maxWidth: 1000 }}>
             {meta.ogHeadline}
           </div>
-          <div style={{ fontSize: 36, marginTop: 24, color: '#b8d6ea' }}>{meta.ogSubline}</div>
+          <div style={{ fontSize: 36, marginTop: 24, color: '#b4b9c2' }}>{meta.ogSubline}</div>
         </div>
       </div>
     ),
