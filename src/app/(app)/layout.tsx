@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
+import { appFontClass } from '@/components/app-fonts';
+import { APP_BASE_CSS } from '@/components/app-theme';
 import { SITE_NAME } from '@/lib/site';
 
 /**
@@ -15,7 +17,10 @@ export const metadata: Metadata = {
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className={appFontClass}>
+      <head>
+        <style>{APP_BASE_CSS}</style>
+      </head>
       {/* Padding belongs to each page: the Mini App needs the full viewport. */}
       <body
         style={{

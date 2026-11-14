@@ -33,6 +33,13 @@ export const theme = {
   button: 'var(--tg-theme-button-color, #2481cc)',
   buttonText: 'var(--tg-theme-button-text-color, #ffffff)',
   secondaryBg: 'var(--tg-theme-secondary-bg-color, #f1f1f1)',
+  /** The site's marker: a fill, with ink text on it, in any theme. */
+  mark: 'var(--z-mark, #d4ff3f)',
+  markInk: 'var(--z-mark-ink, #0e1116)',
+  /** A card's edge: drawn on the website, absent in Telegram, whose cards need none. */
+  border: 'var(--z-border, transparent)',
+  display: 'var(--z-display, inherit)',
+  mono: 'var(--z-mono, monospace)',
 };
 
 /** The post id from the page URL, or null if there is no usable one. */

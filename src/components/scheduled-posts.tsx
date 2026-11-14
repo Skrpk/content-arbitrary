@@ -46,16 +46,16 @@ const button = {
   flex: 1,
   padding: '0.55rem 0',
   border: 'none',
-  borderRadius: '0.55rem',
+  borderRadius: '999px',
   fontSize: '0.9rem',
   fontWeight: 600,
   cursor: 'pointer',
 } as const;
 
 const smallButton = {
-  padding: '0.4rem 0.6rem',
+  padding: '0.4rem 0.75rem',
   border: `1px solid ${theme.hint}`,
-  borderRadius: '0.5rem',
+  borderRadius: '999px',
   background: 'transparent',
   color: theme.text,
   fontSize: '0.8rem',

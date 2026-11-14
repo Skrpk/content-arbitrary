@@ -48,12 +48,15 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           width: '100%',
           maxWidth: '22rem',
           background: 'var(--tg-theme-secondary-bg-color)',
-          borderRadius: '0.8rem',
-          padding: '1.5rem',
+          border: '1px solid var(--z-border)',
+          borderRadius: '1.25rem',
+          padding: '2rem 1.5rem',
           textAlign: 'center',
         }}
       >
-        <h1 style={{ fontSize: '1.25rem', margin: '0 0 0.25rem' }}>{SITE_NAME}</h1>
+        <h1 style={{ fontSize: '2rem', fontWeight: 800, letterSpacing: '-0.03em', margin: '0 0 0.5rem' }}>
+          <span style={{ padding: '0 0.15em', background: 'var(--z-mark)', color: 'var(--z-mark-ink)' }}>{SITE_NAME}</span>
+        </h1>
         <p style={{ color: 'var(--tg-theme-hint-color)', fontSize: '0.9rem', margin: '0 0 1.25rem' }}>
           Sign in to review your channels&apos; posts.
         </p>
@@ -64,9 +67,9 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
             style={{
               display: 'block',
               padding: '0.7rem 0',
-              borderRadius: '0.55rem',
-              background: '#2aabee',
-              color: '#ffffff',
+              borderRadius: '999px',
+              background: 'var(--tg-theme-button-color)',
+              color: 'var(--tg-theme-button-text-color)',
               fontWeight: 600,
               textDecoration: 'none',
             }}
@@ -88,7 +91,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
               <input name="password" type="password" autoComplete="current-password" placeholder="Password" required style={fieldStyle} />
               <button
                 type="submit"
-                style={{ padding: '0.6rem 0', borderRadius: '0.55rem', border: 'none', background: 'var(--tg-theme-button-color)', color: 'var(--tg-theme-button-text-color)', fontWeight: 600 }}
+                style={{ padding: '0.6rem 0', borderRadius: '999px', border: 'none', background: 'var(--tg-theme-button-color)', color: 'var(--tg-theme-button-text-color)', fontWeight: 600 }}
               >
                 Sign in
               </button>
