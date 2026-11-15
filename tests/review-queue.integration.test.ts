@@ -6,6 +6,7 @@ import postgres from 'postgres';
 import * as schema from '@/db/schema';
 import {
   DEFAULT_WORKSPACE_ID,
+  postDeliveries,
   processedPosts,
   radarEvaluations,
   sources,
@@ -13,6 +14,7 @@ import {
   storyPosts,
   syncState,
   telegramMessages,
+  threadsAccounts,
   users,
   workspaces,
   type ApprovalPayload,
@@ -438,6 +440,39 @@ describeIfDb('a sync run with the review queue on', () => {
     const row = (await db.select().from(processedPosts))[0]!;
     expect(row).toMatchObject({ status: 'published', reviewQueuedAt: null, adminMessageId: null });
     expect((await workspaceRow()).reviewDigestSentAt).toBeNull();
+    expect(await db.select().from(postDeliveries)).toEqual([]);
+  });
+
+  it('publishes to Threads as well, for one that publishes without review and has Threads connected', async () => {
+    await db
+      .update(workspaces)
+      .set({ autoPublish: true, telegramAdminChatId: null })
+      .where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+    await db.insert(threadsAccounts).values({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      threadsUserId: '17841400000000001',
+      username: 'photohunt',
+      accessTokenEncrypted: 'v1.not.used.here',
+      tokenExpiresAt: new Date(Date.now() + 50 * 24 * 3600 * 1000),
+      tokenRefreshedAt: new Date(),
+      scopes: ['threads_basic', 'threads_content_publish'],
+    });
+    const stack = makeStack();
+    const summary = await runSync(stack, timelinePayload('1750000000000000042', ['3_1', '3_2']));
+
+    expect(summary).toMatchObject({ published: 1, awaitingApproval: 0 });
+    expect(stack.calls.map((call) => call.method)).toEqual(['sendMediaGroup']);
+    const row = (await db.select().from(processedPosts))[0]!;
+    expect(row).toMatchObject({ status: 'published', publishTargets: ['telegram', 'threads'] });
+
+    const [delivery, ...more] = await db.select().from(postDeliveries);
+    expect(more).toEqual([]);
+    expect(delivery).toMatchObject({ processedPostId: row.id, workspaceId: DEFAULT_WORKSPACE_ID, platform: 'threads' });
+    expect(delivery!.content.externalId).toBe(row.externalId);
+    expect(delivery!.content.media.map((item) => item.kind)).toEqual(['photo', 'photo']);
+    expect(delivery!.content.media.every((item) => 'source' in item)).toBe(true);
+    expect(delivery!.content.text).not.toMatch(/<[a-z]/i);
+    expect(delivery!.content.text.length).toBeGreaterThan(0);
   });
 });
 

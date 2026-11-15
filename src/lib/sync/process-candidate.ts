@@ -29,6 +29,7 @@ import { placeInStory } from '@/lib/stories/cluster';
 import { translateForReview, type Translator } from '@/lib/translation/translate';
 import type { TelegramDestination } from '@/lib/workspace';
 import { recordReviewCopies } from '@/lib/review/copies';
+import { autoPublishedThreadsContent, queueThreadsDelivery } from '@/lib/threads/deliveries';
 import type { NormalizedPost, SourceSyncSummary } from '@/types';
 import type { ImageUnderstanding } from '@/lib/media/understanding';
 
@@ -162,6 +163,8 @@ export async function processCandidate(
     });
 
     if (outcome.status === 'published') {
+      // Published with no review: a workspace with Threads connected has it there too.
+      const toThreads = Boolean(context.destination.threadsConnected);
       await markPublished(db, {
         id: row.id,
         telegramChatId: context.destination.chatId,
@@ -170,7 +173,15 @@ export async function processCandidate(
         mediaCount: outcome.mediaCount,
         messages: outcome.messages,
         caption: outcome.caption,
+        ...(toThreads ? { publishTargets: ['telegram', 'threads'] } : {}),
       });
+      if (toThreads) {
+        await queueThreadsDelivery(db, {
+          postId: row.id,
+          workspaceId: source.workspaceId,
+          content: autoPublishedThreadsContent(post, outcome.caption),
+        });
+      }
       summary.published += 1;
       return { kind: 'published', settled: true };
     }

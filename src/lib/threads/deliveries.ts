@@ -8,6 +8,7 @@ import {
   type ThreadsDeliveryContent,
 } from '@/db/schema';
 import type { Database } from '@/lib/db';
+import type { NormalizedMedia } from '@/types';
 import { mediaRefsOf, richDocumentPlainText, type RichDocument } from '@/lib/rich/document';
 import type { PostFooter } from '@/lib/telegram/post-footer';
 import { telegramHtmlToText } from '@/lib/threads/text';
@@ -84,6 +85,23 @@ export async function threadsContentFor(
   const count = payload.items.length > 0 ? payload.items.length : (payload.sourceMedia?.length ?? 0);
   const media = Array.from({ length: count }, (_, index) => own(index)).filter((item): item is DeliveryMedia => item !== null);
   return { text, media: media.slice(0, THREADS_MEDIA_MAX), externalId: row.externalId, uploadIds: [] };
+}
+
+/**
+ * What a post published with no review goes to Threads with: the caption
+ * Telegram got — the channel's footer in it already — and the source's own
+ * media, looked up afresh when the worker takes it.
+ */
+export function autoPublishedThreadsContent(
+  post: { id: string; media: NormalizedMedia[] },
+  caption: string,
+): ThreadsDeliveryContent {
+  return {
+    text: telegramHtmlToText(caption),
+    media: post.media.slice(0, THREADS_MEDIA_MAX).map((source) => ({ kind: source.kind, source })),
+    externalId: post.id,
+    uploadIds: [],
+  };
 }
 
 /** Queue the post for Threads. A post already queued keeps its delivery: deciding twice publishes once. */
