@@ -97,6 +97,11 @@ export const workspaces = pgTable('workspaces', {
   reviewDigestCoveredUntil: timestamp('review_digest_covered_until', { withTimezone: true }),
   /** That notification's message. Kept in the chat when the next one comes: each lists its own stories. */
   reviewDigestMessageId: bigint('review_digest_message_id', { mode: 'number' }),
+  /**
+   * The topic every post of this channel goes to Threads with — the one tag a
+   * Threads post may carry, which puts it in that topic's feed. Null for none.
+   */
+  threadsTopicTag: text('threads_topic_tag'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [

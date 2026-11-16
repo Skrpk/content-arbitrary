@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { createContainer } from '@/lib/threads/client';
 import { buildApprovalKeyboard, parseCallbackData, targetsOfApproval } from '@/lib/sync/approval';
 import { allowedTargets, normalizeTargets, publishedLine } from '@/lib/publish/targets';
-import { cutForThreads, telegramHtmlToText, threadsLength, threadsTextFor, THREADS_TEXT_LIMIT } from '@/lib/threads/text';
+import { cutForThreads, normalizeTopicTag, telegramHtmlToText, threadsLength, threadsTextFor, THREADS_TEXT_LIMIT } from '@/lib/threads/text';
 
 /** Choosing where a post goes, and its text as Threads takes it. */
 
@@ -87,5 +88,37 @@ describe('the review buttons of a channel with Threads', () => {
       expect(parsed && parsed.action !== 'reject_reason' ? targetsOfApproval(parsed.action) : 'unparsed').toEqual(targets);
     }
     expect(targetsOfApproval('approve')).toBeNull();
+  });
+});
+
+describe('a channel’s Threads topic', () => {
+  it('is taken as typed, a leading # and outer spaces dropped, and empty as none', () => {
+    expect(normalizeTopicTag('Wildlife')).toEqual({ ok: true, tag: 'Wildlife' });
+    expect(normalizeTopicTag('  #Wildlife photography ')).toEqual({ ok: true, tag: 'Wildlife photography' });
+    expect(normalizeTopicTag('   ')).toEqual({ ok: true, tag: null });
+    expect(normalizeTopicTag('#')).toEqual({ ok: true, tag: null });
+  });
+
+  it('is refused as Threads would refuse it', () => {
+    expect(normalizeTopicTag('a'.repeat(50))).toEqual({ ok: true, tag: 'a'.repeat(50) });
+    expect(normalizeTopicTag('a'.repeat(51)).ok).toBe(false);
+    expect(normalizeTopicTag('Nature.Wildlife').ok).toBe(false);
+    expect(normalizeTopicTag('Nature & Wildlife').ok).toBe(false);
+  });
+
+  it('goes on the container that is published, never on a carousel item', async () => {
+    const sent: URLSearchParams[] = [];
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      sent.push(init!.body as URLSearchParams);
+      return new Response(JSON.stringify({ id: '1' }), { headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof fetch;
+    const who = { threadsUserId: '42', token: 't' };
+
+    await createContainer(who, { mediaType: 'IMAGE', imageUrl: 'https://x/a.jpg', topicTag: 'Wildlife' }, { fetchImpl });
+    await createContainer(who, { mediaType: 'IMAGE', imageUrl: 'https://x/b.jpg', carouselItem: true, topicTag: 'Wildlife' }, { fetchImpl });
+    await createContainer(who, { mediaType: 'CAROUSEL', children: ['1', '2'], topicTag: 'Wildlife' }, { fetchImpl });
+    await createContainer(who, { mediaType: 'TEXT', text: 'hi', topicTag: null }, { fetchImpl });
+
+    expect(sent.map((body) => body.get('topic_tag'))).toEqual(['Wildlife', null, 'Wildlife', null]);
   });
 });

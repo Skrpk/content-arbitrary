@@ -9,7 +9,7 @@ import { GET as startRoute } from '@/app/api/threads/start/route';
 import { GET as callbackRoute } from '@/app/api/threads/callback/route';
 import { POST as deauthorizeRoute } from '@/app/api/threads/deauthorize/route';
 import { GET as deletionStatusRoute, POST as deleteRoute } from '@/app/api/threads/delete/route';
-import { DELETE as disconnectRoute, GET as accountsRoute } from '@/app/api/threads/accounts/route';
+import { DELETE as disconnectRoute, GET as accountsRoute, PATCH as topicRoute } from '@/app/api/threads/accounts/route';
 import { createSession } from '@/lib/accounts/sessions';
 import { userForTelegram } from '@/lib/accounts/users';
 import { threadsAccessToken } from '@/lib/threads/accounts';
@@ -301,6 +301,37 @@ describeIfDb('connecting a channel’s Threads account', () => {
     );
     expect(refused.status).toBe(404);
     expect(await db.select().from(threadsAccounts)).toHaveLength(1);
+  });
+
+  it('keeps the channel’s topic, as Threads would take it, and shows it in settings', async () => {
+    const session = await sessionFor(REVIEWER_ID);
+    await connect(session);
+    const setTopic = (workspaceId: number, topicTag: string) =>
+      run(() =>
+        topicRoute(
+          new Request(`${WEB}/api/threads/accounts`, {
+            method: 'PATCH',
+            headers: { cookie: `__Host-session=${session}`, origin: WEB, 'content-type': 'application/json' },
+            body: JSON.stringify({ workspaceId, topicTag }),
+          }),
+        ),
+      );
+    const topicOf = async () =>
+      (await db.select().from(workspaces).where(eq(workspaces.id, DEFAULT_WORKSPACE_ID)))[0]!.threadsTopicTag;
+
+    const saved = await setTopic(DEFAULT_WORKSPACE_ID, ' #Wildlife ');
+    expect(await saved.json()).toEqual({ ok: true, topicTag: 'Wildlife' });
+    expect(await topicOf()).toBe('Wildlife');
+    const listed = await run(() => accountsRoute(new Request(`${WEB}/api/threads/accounts`, { headers: { cookie: `__Host-session=${session}` } })));
+    expect(await listed.json()).toMatchObject({ accounts: [{ workspaceId: DEFAULT_WORKSPACE_ID, topicTag: 'Wildlife' }] });
+
+    const refused = await setTopic(DEFAULT_WORKSPACE_ID, 'Nature & Wildlife');
+    expect(refused.status).toBe(400);
+    expect(await topicOf()).toBe('Wildlife');
+    expect((await setTopic(OTHER_WORKSPACE_ID, 'Wildlife')).status).toBe(404);
+
+    await setTopic(DEFAULT_WORKSPACE_ID, '');
+    expect(await topicOf()).toBeNull();
   });
 });
 

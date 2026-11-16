@@ -1,0 +1,1 @@
+ALTER TABLE "workspaces" ADD COLUMN "threads_topic_tag" text;

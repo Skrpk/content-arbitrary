@@ -68,3 +68,18 @@ export function threadsTextFor(fullText: string, hasMedia: boolean): ThreadsText
   if (hasMedia) return { text: cutForThreads(text), attachment: null };
   return { text: cutForThreads(text), attachment: text.slice(0, THREADS_ATTACHMENT_LIMIT) };
 }
+
+/** Threads' rule for a topic tag: 1 to 50 characters, no period and no ampersand. */
+export const THREADS_TOPIC_TAG_MAX = 50;
+
+/**
+ * A topic tag as typed — a leading # and spaces at its ends dropped — or why
+ * Threads would not take it. An empty one is none.
+ */
+export function normalizeTopicTag(input: string): { ok: true; tag: string | null } | { ok: false; error: string } {
+  const tag = input.trim().replace(/^#+/, '').trim();
+  if (tag === '') return { ok: true, tag: null };
+  if ([...tag].length > THREADS_TOPIC_TAG_MAX) return { ok: false, error: `A topic is at most ${THREADS_TOPIC_TAG_MAX} characters.` };
+  if (/[.&]/.test(tag)) return { ok: false, error: 'A topic cannot have a period (.) or an ampersand (&).' };
+  return { ok: true, tag };
+}

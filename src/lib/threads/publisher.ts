@@ -120,7 +120,8 @@ async function step(
     if (!containerId) {
       const media = await mediaUrls(delivery, input, log);
       hostedUrls = media.hosted;
-      containerId = await makeContainer(who, delivery.content.text, media.items, input);
+      const topicTag = (await findWorkspaceById(db, delivery.workspaceId))?.threadsTopicTag ?? null;
+      containerId = await makeContainer(who, delivery.content.text, media.items, topicTag, input);
       await updateDelivery(db, delivery.id, { status: 'processing', containerId, hostedUrls });
       log.info('threads.container_created', { media: media.items.length });
     }
@@ -254,21 +255,25 @@ async function makeContainer(
   who: { threadsUserId: string; token: string },
   fullText: string,
   media: { kind: 'photo' | 'video'; url: string }[],
+  /** The channel's topic, on the container that is published. */
+  topicTag: string | null,
   options: ThreadsCallOptions,
 ): Promise<string> {
   const { text, attachment } = threadsTextFor(fullText, media.length > 0);
   if (media.length === 0) {
     if (!text) throw new Error('The post has neither text nor media to publish.');
-    return createContainer(who, { mediaType: 'TEXT', text, attachment }, options);
+    return createContainer(who, { mediaType: 'TEXT', text, attachment, topicTag }, options);
   }
-  const spec = (item: (typeof media)[number], carouselItem: boolean) =>
-    item.kind === 'video'
-      ? ({ mediaType: 'VIDEO', videoUrl: item.url, carouselItem, ...(carouselItem ? {} : { text }) } as const)
-      : ({ mediaType: 'IMAGE', imageUrl: item.url, carouselItem, ...(carouselItem ? {} : { text }) } as const);
+  const spec = (item: (typeof media)[number], carouselItem: boolean) => {
+    const own = carouselItem ? {} : { text, topicTag };
+    return item.kind === 'video'
+      ? ({ mediaType: 'VIDEO', videoUrl: item.url, carouselItem, ...own } as const)
+      : ({ mediaType: 'IMAGE', imageUrl: item.url, carouselItem, ...own } as const);
+  };
   if (media.length === 1) return createContainer(who, spec(media[0]!, false), options);
   const children: string[] = [];
   for (const item of media) children.push(await createContainer(who, spec(item, true), options));
-  return createContainer(who, { mediaType: 'CAROUSEL', children, text }, options);
+  return createContainer(who, { mediaType: 'CAROUSEL', children, text, topicTag }, options);
 }
 
 /** Done with: the copies made for Threads, and the editor's uploads once Telegram and Threads both have them. */

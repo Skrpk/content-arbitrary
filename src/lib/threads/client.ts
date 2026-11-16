@@ -101,11 +101,12 @@ function stringField(result: Record<string, unknown>, key: string): string {
 
 /* Publishing ------------------------------------------------------------- */
 
+/** `topicTag` goes on the container that is published — a post's own, or its carousel's — never on a carousel item. */
 export type ThreadsContainerSpec =
-  | { mediaType: 'TEXT'; text: string; attachment?: string | null }
-  | { mediaType: 'IMAGE'; imageUrl: string; text?: string; carouselItem?: boolean }
-  | { mediaType: 'VIDEO'; videoUrl: string; text?: string; carouselItem?: boolean }
-  | { mediaType: 'CAROUSEL'; children: string[]; text?: string };
+  | { mediaType: 'TEXT'; text: string; attachment?: string | null; topicTag?: string | null }
+  | { mediaType: 'IMAGE'; imageUrl: string; text?: string; carouselItem?: boolean; topicTag?: string | null }
+  | { mediaType: 'VIDEO'; videoUrl: string; text?: string; carouselItem?: boolean; topicTag?: string | null }
+  | { mediaType: 'CAROUSEL'; children: string[]; text?: string; topicTag?: string | null };
 
 /** A media container for the account: Threads fetches its media and processes it. Its id. */
 export async function createContainer(
@@ -120,6 +121,8 @@ export async function createContainer(
   if (spec.mediaType === 'VIDEO') body.set('video_url', spec.videoUrl);
   if ((spec.mediaType === 'IMAGE' || spec.mediaType === 'VIDEO') && spec.carouselItem) body.set('is_carousel_item', 'true');
   if (spec.mediaType === 'CAROUSEL') body.set('children', spec.children.join(','));
+  const carouselItem = (spec.mediaType === 'IMAGE' || spec.mediaType === 'VIDEO') && spec.carouselItem;
+  if (spec.topicTag && !carouselItem) body.set('topic_tag', spec.topicTag);
   const result = await call(`${THREADS_GRAPH_URL}/${THREADS_API_VERSION}/${account.threadsUserId}/threads`, { method: 'POST', body }, options);
   return idField(result);
 }

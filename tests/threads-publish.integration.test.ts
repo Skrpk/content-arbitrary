@@ -205,7 +205,7 @@ beforeEach(async () => {
   await ensureTestWorkspace(db);
   await db
     .update(workspaces)
-    .set({ telegramChatId: CHANNEL_CHAT, telegramAdminChatId: String(REVIEWER_ID) })
+    .set({ telegramChatId: CHANNEL_CHAT, telegramAdminChatId: String(REVIEWER_ID), threadsTopicTag: null })
     .where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
 });
 
@@ -232,6 +232,7 @@ describeIfDb('Approve to both', () => {
     expect(await work()).toMatchObject({ published: 1 });
     const create = graph.find((call) => call.path === `/v1.0/${THREADS_USER}/threads`);
     expect(create?.params).toMatchObject({ media_type: 'TEXT', text: 'Webb finds water', access_token: 'long-token' });
+    expect(create?.params.topic_tag).toBeUndefined();
     expect(await deliveryOf(post.id)).toMatchObject({
       status: 'published',
       externalId: '9001',
@@ -276,6 +277,17 @@ describeIfDb('Approve to Threads alone', () => {
     expect(graph.filter((call) => call.path.endsWith('/threads'))).toHaveLength(1);
     expect(removed).toEqual(hosted);
     expect(await deliveryOf(post.id)).toMatchObject({ status: 'published', hostedUrls: [] });
+  });
+
+  it('goes out with the channel’s topic', async () => {
+    await connectThreads();
+    await db.update(workspaces).set({ threadsTopicTag: 'Wildlife' }).where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+    const post = await queuePost();
+
+    await press(`ah:${post.id}`);
+    expect(await work()).toMatchObject({ published: 1 });
+    const create = graph.find((call) => call.path === `/v1.0/${THREADS_USER}/threads`)!;
+    expect(create.params).toMatchObject({ media_type: 'IMAGE', topic_tag: 'Wildlife' });
   });
 
   it('is refused for a channel with no Threads account', async () => {

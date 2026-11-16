@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { readJson, type PanelTools } from '@/components/panel-tools';
 import { theme } from '@/lib/telegram/webapp-client';
+import { normalizeTopicTag, THREADS_TOPIC_TAG_MAX } from '@/lib/threads/text';
 
 /**
  * Settings' Threads section: each channel's Threads account, connected or
@@ -18,6 +19,8 @@ interface AccountView {
   username: string;
   connectedAt: string;
   status: 'active' | 'expired' | 'refresh_failed';
+  /** The topic every post of the channel goes to Threads with; null for none. */
+  topicTag: string | null;
 }
 
 interface ThreadsView {
@@ -164,6 +167,15 @@ export function ThreadsConnection({
               ) : null}
             </div>
             {hint ? <div style={{ color: '#e53935', fontSize: '0.8rem', marginTop: '0.25rem' }}>{hint}</div> : null}
+            {account ? (
+              <TopicField
+                key={channel.id}
+                workspaceId={channel.id}
+                saved={account.topicTag}
+                request={request}
+                onSaved={load}
+              />
+            ) : null}
           </div>
         );
       })}
@@ -171,5 +183,95 @@ export function ThreadsConnection({
         <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: message.error ? '#e53935' : theme.hint }}>{message.text}</p>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * The channel's Threads topic: the one tag a Threads post carries, which puts
+ * it in that topic's feed. Every post of the channel goes out with it.
+ */
+function TopicField({
+  workspaceId,
+  saved,
+  request,
+  onSaved,
+}: {
+  workspaceId: number;
+  saved: string | null;
+  request: PanelTools['request'];
+  onSaved: () => Promise<void>;
+}) {
+  const [value, setValue] = useState(saved ?? '');
+  const [state, setState] = useState<{ kind: 'idle' | 'saving' | 'saved' } | { kind: 'error'; text: string }>({ kind: 'idle' });
+  const checked = normalizeTopicTag(value);
+  const changed = (checked.ok ? checked.tag : value) !== saved;
+
+  const save = async () => {
+    if (!checked.ok) return;
+    setState({ kind: 'saving' });
+    try {
+      const { topicTag } = await readJson<{ topicTag: string | null }>(
+        await request('/api/threads/accounts', {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ workspaceId, topicTag: value }),
+        }),
+      );
+      setValue(topicTag ?? '');
+      setState({ kind: 'saved' });
+      await onSaved();
+    } catch (error) {
+      setState({ kind: 'error', text: error instanceof Error ? error.message : 'Could not save the topic.' });
+    }
+  };
+
+  const error = !checked.ok ? checked.error : state.kind === 'error' ? state.text : null;
+  return (
+    <div style={{ marginTop: '0.5rem' }}>
+      <label style={{ display: 'block', fontSize: '0.8rem', color: theme.hint, marginBottom: '0.25rem' }}>
+        Topic — every post goes to Threads with it, and shows in that topic&apos;s feed
+      </label>
+      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+        <input
+          value={value}
+          onChange={(event) => {
+            setValue(event.target.value);
+            setState({ kind: 'idle' });
+          }}
+          placeholder="e.g. Wildlife"
+          maxLength={THREADS_TOPIC_TAG_MAX + 10}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            padding: '0.4rem 0.6rem',
+            borderRadius: '0.5rem',
+            border: `1px solid ${theme.hint}`,
+            background: 'transparent',
+            color: theme.text,
+            font: 'inherit',
+          }}
+        />
+        <button
+          type="button"
+          disabled={!changed || !checked.ok || state.kind === 'saving'}
+          onClick={() => void save()}
+          style={{
+            padding: '0.45rem 0.85rem',
+            border: 'none',
+            borderRadius: '0.5rem',
+            background: theme.button,
+            color: theme.buttonText,
+            fontWeight: 600,
+            opacity: !changed || !checked.ok || state.kind === 'saving' ? 0.5 : 1,
+          }}
+        >
+          {state.kind === 'saving' ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+      {error ? <div style={{ color: '#e53935', fontSize: '0.8rem', marginTop: '0.25rem' }}>{error}</div> : null}
+      {state.kind === 'saved' && !changed ? (
+        <div style={{ color: theme.hint, fontSize: '0.8rem', marginTop: '0.25rem' }}>Saved. New posts go out with it.</div>
+      ) : null}
+    </div>
   );
 }
