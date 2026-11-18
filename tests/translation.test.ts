@@ -30,6 +30,16 @@ describe('translation instructions', () => {
     expect(instructions).not.toContain('<channel_post>');
   });
 
+  it('asks for short paragraphs and emoji, and no long dashes, which it does not use itself', () => {
+    const instructions = buildTranslationInstructions('uk', { profile: null, examples: ['Пост каналу'] });
+
+    expect(instructions).toContain('short paragraphs');
+    expect(instructions).toContain('Use emoji');
+    expect(instructions).toContain('Never use the long dash (—)');
+    // Outside that rule, the prompt shows no dash for the model to copy.
+    expect(instructions.replace(/^- Never use the long dash.*$/m, '')).not.toMatch(/[—–]/);
+  });
+
   it('describes how the channel writes, from its profile and a few of its posts', () => {
     const instructions = buildTranslationInstructions('uk', {
       profile: profileFixture(),

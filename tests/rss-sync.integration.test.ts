@@ -212,10 +212,8 @@ describeIfDb('an RSS source in the sync', () => {
 
     expect(reviews(telegram.calls)).toBe(1);
     const [preview, control] = telegram.calls;
-    // The post as the channel would get it: the entry, then the article, previewed.
-    expect(preview!.body.text).toBe(
-      'Story number 4\n\nAll about story number 4, in a sentence or two.\n\nhttps://www.esa.int/esa-4',
-    );
+    // The post as the channel would get it: the entry alone, with the article previewed under it.
+    expect(preview!.body.text).toBe('Story number 4\n\nAll about story number 4, in a sentence or two.');
     expect(preview!.body.link_preview_options).toEqual({ url: 'https://www.esa.int/esa-4' });
     // The buttons' message names the feed — without an @ — and links the article.
     expect(control!.body.text).toContain('Source: ESA Space Science\nhttps://www.esa.int/esa-4');
@@ -230,7 +228,7 @@ describeIfDb('an RSS source in the sync', () => {
     expect(row!.externalId).toMatch(/^rss:/);
   });
 
-  it('publishes an approved entry with its article link and preview', async () => {
+  it('publishes an approved entry with its article previewed, not linked in the text', async () => {
     await followFeed();
     feeds.set(FEED_URL, rss([item(1)]));
     await sync();
@@ -245,7 +243,7 @@ describeIfDb('an RSS source in the sync', () => {
     );
 
     expect(channel.calls[0]!.method).toBe('sendMessage');
-    expect(channel.calls[0]!.body.text).toContain('https://www.esa.int/esa-2');
+    expect(channel.calls[0]!.body.text).not.toContain('https://www.esa.int/esa-2');
     expect(channel.calls[0]!.body.link_preview_options).toEqual({ url: 'https://www.esa.int/esa-2' });
   });
 
@@ -404,7 +402,7 @@ describeIfDb('an RSS source in the sync', () => {
     const model = fakeOpenAi(() => responsesResponse({ text: 'Історія номер 2' }));
     const { telegram } = await sync(telegramStack(), { translationProvider: model.provider });
 
-    expect(telegram.calls[0]!.body.text).toBe('Історія номер 2\n\nhttps://www.esa.int/esa-2');
+    expect(telegram.calls[0]!.body.text).toBe('Історія номер 2');
     const [row] = await db.select().from(processedPosts).where(eq(processedPosts.status, 'awaiting_approval'));
     expect(row!.sourceText).toBe('Story number 2\n\nAll about story number 2, in a sentence or two.');
   });

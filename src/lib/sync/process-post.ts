@@ -614,19 +614,20 @@ async function processTextPost(
 }
 
 /**
- * How a post names its source in its own text. A feed entry ends with its
- * article's link — a summary without it would leave readers nowhere to go —
- * and the preview card Telegram draws for it is the post's picture. An X post
- * follows sourceLineInPost, and so does a Telegram channel's, naming its own
- * link rather than one on x.com.
+ * How a post names its source in its own text. A feed entry names none: its
+ * article's link is not written into the post, only previewed under it, as
+ * the card that is the post's picture (see linkPreviewOf). A video and a
+ * website's article end with their link. An X post follows sourceLineInPost,
+ * and so does a Telegram channel's, naming its own link rather than one on x.com.
  */
 function sourceFraming(
   post: NormalizedPost,
   env: Env,
   review: boolean,
 ): { includeSourceLink: boolean; sourceLine?: string } {
+  if (post.platform === 'rss') return { includeSourceLink: false };
   // A video goes out as its text and its link, which Telegram previews with YouTube's player; an article, with its page's.
-  if (post.platform === 'rss' || post.platform === 'youtube' || post.platform === 'website') {
+  if (post.platform === 'youtube' || post.platform === 'website') {
     return post.url ? { includeSourceLink: true, sourceLine: post.url } : { includeSourceLink: false };
   }
   if (post.platform === 'telegram') return { includeSourceLink: sourceLineInPost(env, review), sourceLine: `Source: ${post.url}` };
