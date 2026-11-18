@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
@@ -5,6 +6,7 @@ import postgres from 'postgres';
 import * as schema from '@/db/schema';
 import { channelDrafts, DEFAULT_WORKSPACE_ID, processedPosts, telegramMessages, workspaces } from '@/db/schema';
 import { POST } from '@/app/api/telegram/webhook/route';
+import * as scheduledRoute from '@/app/api/telegram/webapp/scheduled/route';
 import { publishDueDrafts } from '@/lib/drafts/drafts';
 import { TelegramClient } from '@/lib/telegram/client';
 import { ensureTestWorkspace, silentLogger, telegramError, telegramOk, withEnv } from './helpers';
@@ -378,5 +380,78 @@ describeIfDb('Edits and rejection', () => {
     const [answer] = callsTo('answerCallbackQuery');
     expect(answer?.body.show_alert).toBe(true);
     expect(answer?.body.text).toContain('Reply to this message');
+  });
+});
+
+describeIfDb('the Scheduled page', () => {
+  const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
+  const auth = (userId = REVIEWER_ID) => {
+    const fields: Record<string, string> = { auth_date: String(Math.floor(Date.now() / 1000)), user: JSON.stringify({ id: userId }) };
+    const check = Object.keys(fields).sort().map((key) => `${key}=${fields[key]}`).join('\n');
+    const secret = createHmac('sha256', 'WebAppData').update(BOT_TOKEN).digest();
+    const params = new URLSearchParams(fields);
+    params.set('hash', createHmac('sha256', secret).update(check).digest('hex'));
+    return `tma ${params.toString()}`;
+  };
+  const list = async () => {
+    const response = await withEnv(routeEnv, () =>
+      scheduledRoute.GET(new Request('https://example.vercel.app/api/telegram/webapp/scheduled', { headers: { authorization: auth() } })),
+    );
+    const body = (await response.json()) as { channels: { id: number; items: { id: number; draft?: { id: number; link: string | null }; scheduledFor: string }[] }[] };
+    return body.channels.find((channel) => channel.id === DEFAULT_WORKSPACE_ID)!.items;
+  };
+  const act = (body: unknown, userId = REVIEWER_ID) =>
+    withEnv(routeEnv, () =>
+      scheduledRoute.POST(
+        new Request('https://example.vercel.app/api/telegram/webapp/scheduled', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: auth(userId) },
+          body: JSON.stringify(body),
+        }),
+      ),
+    );
+
+  it('lists a post scheduled from the draft channel, with a link to it there', async () => {
+    const { post, draft } = await approveIntoDraft();
+    expect(await list()).toEqual([]);
+
+    await reply('завтра 9:00');
+
+    const [item] = await list();
+    expect(item).toMatchObject({ id: post.id, draft: { id: draft.id, link: `https://t.me/c/3000000003/${DRAFT_POST_ID}` } });
+  });
+
+  it('moves its time, and its control message says so', async () => {
+    const { draft } = await approveIntoDraft();
+    await reply('завтра 9:00');
+    calls.length = 0;
+    const at = new Date(Date.now() + 3 * 86_400_000);
+
+    const response = await act({ action: 'retime_draft', draftId: draft.id, scheduledFor: at.toISOString(), timezone: 'Europe/Prague' });
+
+    expect(response.status).toBe(200);
+    expect((await reloadDraft(draft.id)).scheduledFor?.toISOString()).toBe(at.toISOString());
+    expect(callsTo('editMessageText').at(-1)?.body.text).toContain('🕒 Scheduled for');
+  });
+
+  it('takes it off the schedule, leaving it waiting in the draft channel', async () => {
+    const { draft } = await approveIntoDraft();
+    await reply('завтра 9:00');
+
+    expect((await act({ action: 'unschedule_draft', draftId: draft.id })).status).toBe(200);
+
+    expect((await reloadDraft(draft.id)).status).toBe('waiting');
+    expect(await list()).toEqual([]);
+  });
+
+  it('refuses a draft of a channel the reviewer does not review, and a time gone by', async () => {
+    const { draft } = await approveIntoDraft();
+    await reply('завтра 9:00');
+
+    expect((await act({ action: 'unschedule_draft', draftId: draft.id }, STRANGER_ID)).status).toBe(401);
+    expect(
+      (await act({ action: 'retime_draft', draftId: draft.id, scheduledFor: new Date(Date.now() - 60_000).toISOString() })).status,
+    ).toBe(400);
+    expect((await reloadDraft(draft.id)).status).toBe('scheduled');
   });
 });

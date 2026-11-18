@@ -47,8 +47,16 @@ describe('parseDraftTime', () => {
     expect(at('15.07 12:00')).toBe('2027-07-15T10:00:00.000Z');
   });
 
+  it('passes over other words around the day and the time', () => {
+    expect(at('sent it tomorrow at 8:00')).toBe('2026-11-19T07:00:00.000Z');
+    expect(at('постав на пт 18:00, дякую!')).toBe('2026-11-20T17:00:00.000Z');
+    expect(at('завтра вранці 9:00')).toBe('2026-11-19T08:00:00.000Z');
+    expect(at('publish it 9:00')).toBe('2026-11-19T08:00:00.000Z');
+    expect(at('on 21.11 at 18:30.')).toBe('2026-11-21T17:30:00.000Z');
+  });
+
   it('refuses what is not a time', () => {
-    for (const text of ['', 'soon', '18', '25:00', '18:61', '31.02 10:00', 'завтра вранці 9:00', 'publish it 9:00']) {
+    for (const text of ['', 'soon', '18', 'tomorrow at 8', '25:00', '18:61', '31.02 10:00', 'tomorrow fri 9:00', 'in 2 hours 9:00', '9:00 or 10:00']) {
       expect(read(text)).toEqual({ ok: false, reason: 'unreadable' });
     }
   });

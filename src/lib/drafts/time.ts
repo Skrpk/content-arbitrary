@@ -7,8 +7,10 @@
  *   21.11 18:30      that day this year, or next year once it has passed
  *   21.11.2026 18:30
  *
- * The day and the time come in either order; "at", "о" and "об" may sit
- * between them. Anything else is not a time: null, rather than a guess.
+ * The day and the time come in either order, among any other words —
+ * "publish it tomorrow at 9:00", "постав на пт 18:00" — which are passed
+ * over. What is not read is a reply with no time in it, with two days in it,
+ * or with a number that is neither: those are not guessed at.
  */
 
 /** How far ahead a draft may be scheduled — as far as a post in review. */
@@ -33,7 +35,7 @@ const RELATIVE_DAYS: Record<string, number> = {
   післязавтра: 2,
 };
 
-const FILLERS = new Set(['at', 'о', 'об', 'on', 'в', 'у']);
+const DATE = /^(\d{1,2})[./](\d{1,2})(?:[./](\d{4}))?$/;
 
 export function parseDraftTime(input: string, options: { now: Date; timeZone: string }): DraftTimeResult {
   const { now, timeZone } = options;
@@ -42,20 +44,24 @@ export function parseDraftTime(input: string, options: { now: Date; timeZone: st
     .toLowerCase()
     .replace(/[’ʼ`]/g, "'");
 
-  const clock = /(?:^|\s)(\d{1,2}):(\d{2})(?=\s|$)/.exec(text);
+  const clock = /(?:^|\s)(\d{1,2}):(\d{2})(?=[\s,.!?;]|$)/.exec(text);
   if (!clock) return { ok: false, reason: 'unreadable' };
   const hour = Number(clock[1]);
   const minute = Number(clock[2]);
   if (hour > 23 || minute > 59) return { ok: false, reason: 'unreadable' };
 
-  const rest = (text.slice(0, clock.index) + ' ' + text.slice(clock.index + clock[0].length))
-    .split(/\s+/)
-    .filter((word) => word !== '' && !FILLERS.has(word));
-  if (rest.length > 1) return { ok: false, reason: 'unreadable' };
+  const words = (text.slice(0, clock.index) + ' ' + text.slice(clock.index + clock[0].length))
+    .split(/[\s,!?]+/)
+    .map((word) => word.replace(/^[.:;]+|[.:;]+$/g, ''))
+    .filter((word) => word !== '');
+  // The day, if any: a word that names one, or a date. Other words are passed over,
+  // but a number that is not a date might be a time misread, so it is not.
+  const days = words.filter((word) => word in RELATIVE_DAYS || word in WEEKDAYS || DATE.test(word));
+  if (days.length > 1 || words.some((word) => /\d/.test(word) && !DATE.test(word))) return { ok: false, reason: 'unreadable' };
 
   const today = wallDate(now, timeZone);
   const at = (date: WallDate) => wallTimeToUtc({ ...date, hour, minute }, timeZone);
-  const word = rest[0];
+  const word = days[0];
 
   let result: Date;
   if (word === undefined) {
@@ -69,7 +75,7 @@ export function parseDraftTime(input: string, options: { now: Date; timeZone: st
     result = at(addDays(today, ahead));
     if (result.getTime() <= now.getTime()) result = at(addDays(today, ahead + 7));
   } else {
-    const date = /^(\d{1,2})[./](\d{1,2})(?:[./](\d{4}))?$/.exec(word);
+    const date = DATE.exec(word);
     if (!date) return { ok: false, reason: 'unreadable' };
     const day = Number(date[1]);
     const month = Number(date[2]);
