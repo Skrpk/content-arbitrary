@@ -109,6 +109,7 @@ export async function ensureTestWorkspace(db: Database): Promise<void> {
         reviewDigestCoveredUntil: null,
         reviewDigestMessageId: null,
         threadsTopicTag: null,
+        draftChatId: null,
       },
     });
 }

@@ -1,0 +1,382 @@
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { and, eq } from 'drizzle-orm';
+import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
+import * as schema from '@/db/schema';
+import { channelDrafts, DEFAULT_WORKSPACE_ID, processedPosts, telegramMessages, workspaces } from '@/db/schema';
+import { POST } from '@/app/api/telegram/webhook/route';
+import { publishDueDrafts } from '@/lib/drafts/drafts';
+import { TelegramClient } from '@/lib/telegram/client';
+import { ensureTestWorkspace, silentLogger, telegramError, telegramOk, withEnv } from './helpers';
+
+/**
+ * The draft channel end to end: Approve puts a post in the draft channel with
+ * its control message under it, and the buttons and replies there send it on —
+ * through the webhook route itself, against a real database, with only the
+ * Bot API stubbed out.
+ */
+
+const connectionString = process.env.TEST_DATABASE_URL;
+const describeIfDb = connectionString ? describe : describe.skip;
+
+let sql: postgres.Sql;
+let db: PostgresJsDatabase<typeof schema>;
+
+const SECRET = 'b'.repeat(64);
+const REVIEWER_ID = 555001;
+const STRANGER_ID = 424242;
+const CHANNEL_CHAT = '-1001000000001';
+const DRAFT_CHAT = '-1003000000003';
+const REVIEW_CONTROL_ID = 12;
+const DRAFT_POST_ID = 900;
+const DRAFT_CONTROL_ID = 901;
+const COPY_ID = 5000;
+
+const routeEnv = {
+  DATABASE_URL: connectionString,
+  TELEGRAM_CHAT_ID: CHANNEL_CHAT,
+  TELEGRAM_ADMIN_CHAT_ID: String(REVIEWER_ID),
+  TELEGRAM_WEBHOOK_SECRET: SECRET,
+  REQUIRE_APPROVAL: 'true',
+  APP_BASE_URL: 'https://example.vercel.app',
+};
+
+let calls: { method: string; body: Record<string, unknown> }[];
+let failMethod: string | null;
+
+function stubTelegram() {
+  calls = [];
+  failMethod = null;
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: unknown, init?: RequestInit) => {
+      const method = String(input).split('/').pop()!;
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+      calls.push({ method, body });
+      if (failMethod === method) return telegramError(400, 'Bad Request: something went wrong');
+      if (method === 'sendPhoto') {
+        return telegramOk({ message_id: DRAFT_POST_ID, chat: { id: Number(body.chat_id) }, photo: [{ file_id: 'ONE', file_size: 1 }] });
+      }
+      if (method === 'sendMessage') return telegramOk({ message_id: DRAFT_CONTROL_ID, chat: { id: Number(body.chat_id) } });
+      if (method === 'copyMessages') return telegramOk((body.message_ids as number[]).map((_, index) => ({ message_id: COPY_ID + index })));
+      return telegramOk(true);
+    }),
+  );
+}
+
+const callsTo = (method: string) => calls.filter((call) => call.method === method);
+const buttonData = (call: { body: Record<string, unknown> } | undefined) =>
+  ((call?.body.reply_markup as { inline_keyboard: { callback_data?: string; url?: string }[][] } | undefined)?.inline_keyboard ?? [])
+    .flat()
+    .map((button) => button.callback_data ?? button.url);
+
+function update(body: Record<string, unknown>) {
+  return withEnv(routeEnv, () =>
+    POST(
+      new Request('https://example.vercel.app/api/telegram/webhook', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-telegram-bot-api-secret-token': SECRET },
+        body: JSON.stringify({ update_id: 1, ...body }),
+      }),
+    ),
+  );
+}
+
+const press = (data: string, options: { fromId?: number; chatId?: string; messageId?: number } = {}) =>
+  update({
+    callback_query: {
+      id: 'cb-1',
+      from: { id: options.fromId ?? REVIEWER_ID },
+      data,
+      message: { message_id: options.messageId ?? DRAFT_CONTROL_ID, chat: { id: Number(options.chatId ?? DRAFT_CHAT) } },
+    },
+  });
+
+const reply = (text: string, options: { chatId?: string; to?: number } = {}) =>
+  update({
+    channel_post: {
+      message_id: 950,
+      chat: { id: Number(options.chatId ?? DRAFT_CHAT) },
+      text,
+      reply_to_message: { message_id: options.to ?? DRAFT_CONTROL_ID },
+    },
+  });
+
+async function queuePost() {
+  const [row] = await db
+    .insert(processedPosts)
+    .values({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      externalId: String(1_750_000_000_000_000_000n + BigInt(Math.floor(Math.random() * 1e6))),
+      xPostUrl: 'https://x.com/someone/status/1750000000000000001',
+      xAuthorUsername: 'someone',
+      status: 'awaiting_approval',
+      adminChatId: String(REVIEWER_ID),
+      adminMessageId: REVIEW_CONTROL_ID,
+      approvalPayload: { method: 'sendPhoto', caption: 'A post', items: [{ kind: 'photo', fileId: 'FILE_A' }] },
+      originalCaption: 'A post',
+      caption: 'A post',
+    })
+    .returning();
+  return row!;
+}
+
+/** A post approved into the draft channel, and its draft. */
+async function approveIntoDraft() {
+  const post = await queuePost();
+  await press(`ap:${post.id}`, { chatId: String(REVIEWER_ID), messageId: REVIEW_CONTROL_ID });
+  const [draft] = await db.select().from(channelDrafts).where(eq(channelDrafts.processedPostId, post.id));
+  calls.length = 0;
+  return { post, draft: draft! };
+}
+
+const reloadDraft = async (id: number) => (await db.select().from(channelDrafts).where(eq(channelDrafts.id, id)))[0]!;
+const reloadPost = async (id: number) => (await db.select().from(processedPosts).where(eq(processedPosts.id, id)))[0]!;
+
+beforeAll(() => {
+  if (!connectionString) return;
+  sql = postgres(connectionString, { max: 4, prepare: false });
+  db = drizzle(sql, { schema });
+});
+
+afterAll(async () => {
+  if (sql) await sql.end();
+  await (globalThis as { __contentArbitrarySql?: postgres.Sql }).__contentArbitrarySql?.end();
+});
+
+beforeEach(async () => {
+  if (!connectionString) return;
+  stubTelegram();
+  await db.delete(telegramMessages);
+  await db.delete(processedPosts);
+  await ensureTestWorkspace(db);
+  await db
+    .update(workspaces)
+    .set({
+      name: 'Vector',
+      telegramChatId: CHANNEL_CHAT,
+      telegramAdminChatId: String(REVIEWER_ID),
+      draftChatId: DRAFT_CHAT,
+      reviewDigestTimezone: 'Europe/Prague',
+    })
+    .where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+
+describeIfDb('Approve, with a draft channel', () => {
+  it('publishes to the draft channel, with the control message under the post', async () => {
+    const post = await queuePost();
+
+    await press(`ap:${post.id}`, { chatId: String(REVIEWER_ID), messageId: REVIEW_CONTROL_ID });
+
+    const [photo] = callsTo('sendPhoto');
+    expect(photo?.body.chat_id).toBe(DRAFT_CHAT);
+    const control = callsTo('sendMessage').find((call) => call.body.chat_id === DRAFT_CHAT);
+    expect(control?.body.reply_parameters).toMatchObject({ message_id: DRAFT_POST_ID });
+    expect(control?.body.text).toContain('📝 Draft for <b>Vector</b>');
+
+    const [draft] = await db.select().from(channelDrafts).where(eq(channelDrafts.processedPostId, post.id));
+    expect(draft).toMatchObject({ status: 'waiting', draftChatId: DRAFT_CHAT, messageIds: [DRAFT_POST_ID], controlMessageId: DRAFT_CONTROL_ID, scheduledTimezone: 'Europe/Prague' });
+    expect(buttonData(control)).toEqual([`dn:${draft!.id}`, `dt:${draft!.id}`, `dr:${draft!.id}`]);
+
+    // Nothing reached the channel yet; the reviewer is told where it is.
+    expect(calls.some((call) => call.body.chat_id === CHANNEL_CHAT)).toBe(false);
+    const settled = callsTo('editMessageText').find((call) => call.body.chat_id === String(REVIEWER_ID));
+    expect(settled?.body.text).toContain('📝 In the draft channel');
+    expect((await reloadPost(post.id)).status).toBe('published');
+  });
+
+  it('publishes straight to the channel without one', async () => {
+    await db.update(workspaces).set({ draftChatId: null }).where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+    const post = await queuePost();
+
+    await press(`ap:${post.id}`, { chatId: String(REVIEWER_ID), messageId: REVIEW_CONTROL_ID });
+
+    expect(callsTo('sendPhoto')[0]?.body.chat_id).toBe(CHANNEL_CHAT);
+    expect(await db.select().from(channelDrafts)).toHaveLength(0);
+  });
+});
+
+describeIfDb('Publish now', () => {
+  it('copies the post from the draft channel to the channel and says so under it', async () => {
+    const { post, draft } = await approveIntoDraft();
+
+    await press(`dn:${draft.id}`);
+
+    const [copy] = callsTo('copyMessages');
+    expect(copy?.body).toMatchObject({ chat_id: CHANNEL_CHAT, from_chat_id: DRAFT_CHAT, message_ids: [DRAFT_POST_ID] });
+    const after = await reloadDraft(draft.id);
+    expect(after).toMatchObject({ status: 'published', publishedChatId: CHANNEL_CHAT, publishedMessageIds: [COPY_ID] });
+
+    // The post's record points at the channel's copy now.
+    const row = await reloadPost(post.id);
+    expect(row.telegramChatId).toBe(CHANNEL_CHAT);
+    expect(row.telegramMessageId).toBe(COPY_ID);
+    const messages = await db
+      .select()
+      .from(telegramMessages)
+      .where(and(eq(telegramMessages.processedPostId, post.id), eq(telegramMessages.telegramChatId, CHANNEL_CHAT)));
+    expect(messages.map((message) => message.telegramMessageId)).toEqual([COPY_ID]);
+
+    const control = callsTo('editMessageText').at(-1);
+    expect(control?.body.message_id).toBe(DRAFT_CONTROL_ID);
+    expect(control?.body.text).toContain('✅ Published to <b>Vector</b>');
+    expect(buttonData(control)).toEqual([`https://t.me/c/1000000001/${COPY_ID}`]);
+    expect(callsTo('answerCallbackQuery').at(-1)?.body.text).toBe('Published to the channel.');
+  });
+
+  it('sends it once, however often it is pressed', async () => {
+    const { draft } = await approveIntoDraft();
+
+    await press(`dn:${draft.id}`);
+    await press(`dn:${draft.id}`);
+
+    expect(callsTo('copyMessages')).toHaveLength(1);
+    expect(callsTo('answerCallbackQuery').at(-1)?.body.text).toBe('Already published.');
+  });
+
+  it('puts it back with the error on its control message when the copy fails', async () => {
+    const { draft } = await approveIntoDraft();
+    failMethod = 'copyMessages';
+
+    await press(`dn:${draft.id}`);
+
+    const after = await reloadDraft(draft.id);
+    expect(after.status).toBe('waiting');
+    expect(after.error).toContain('Publishing failed');
+    expect(callsTo('editMessageText').at(-1)?.body.text).toContain('⚠️ Publishing failed');
+    expect(callsTo('answerCallbackQuery').at(-1)?.body.text).toBe('Publishing failed — try again.');
+  });
+
+  it('lets nobody but the channel’s reviewer press it', async () => {
+    const { draft } = await approveIntoDraft();
+
+    await press(`dn:${draft.id}`, { fromId: STRANGER_ID });
+
+    expect(callsTo('copyMessages')).toHaveLength(0);
+    expect((await reloadDraft(draft.id)).status).toBe('waiting');
+  });
+});
+
+describeIfDb('A time in reply', () => {
+  it('schedules the draft, in the reviewer’s zone, and removes the reply', async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-18T13:00:00.000Z'), toFake: ['Date'] });
+    const { draft } = await approveIntoDraft();
+
+    await reply('завтра 9:00');
+
+    const after = await reloadDraft(draft.id);
+    expect(after.status).toBe('scheduled');
+    expect(after.scheduledFor?.toISOString()).toBe('2026-11-19T08:00:00.000Z');
+    expect(callsTo('deleteMessage')[0]?.body).toMatchObject({ chat_id: DRAFT_CHAT, message_id: 950 });
+    const control = callsTo('editMessageText').at(-1);
+    expect(control?.body.text).toContain('🕒 Scheduled for Thu 19 Nov, 09:00');
+    expect(buttonData(control)).toEqual([`dn:${draft.id}`, `du:${draft.id}`, `dr:${draft.id}`]);
+  });
+
+  it('says why when it is not a time, and schedules nothing', async () => {
+    const { draft } = await approveIntoDraft();
+
+    await reply('коли буде час');
+
+    const after = await reloadDraft(draft.id);
+    expect(after.status).toBe('waiting');
+    expect(after.error).toContain('is not a time I can read');
+    expect(callsTo('editMessageText').at(-1)?.body.text).toContain('⚠️');
+    expect(callsTo('deleteMessage')).toHaveLength(1);
+  });
+
+  it('ignores replies to anything but a control message, and other channels’ posts', async () => {
+    const { draft } = await approveIntoDraft();
+
+    await reply('18:30', { to: DRAFT_POST_ID });
+    await reply('18:30', { chatId: CHANNEL_CHAT });
+    await update({ channel_post: { message_id: 951, chat: { id: Number(DRAFT_CHAT) }, text: '18:30' } });
+
+    expect((await reloadDraft(draft.id)).status).toBe('waiting');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('goes out when its time comes, and is unscheduled with its button', async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-18T13:00:00.000Z'), toFake: ['Date'] });
+    const { draft } = await approveIntoDraft();
+    await reply('18:30');
+    await press(`du:${draft.id}`);
+    expect((await reloadDraft(draft.id)).status).toBe('waiting');
+
+    await reply('18:30');
+    const client = new TelegramClient({ token: 'test-token', baseUrl: 'https://api.telegram.org', attempts: 1 });
+    const env = { TELEGRAM_DISABLE_NOTIFICATION: false, MAX_RETRY_ATTEMPTS: 3 };
+
+    const early = await publishDueDrafts({ db, client, env, logger: silentLogger, now: new Date('2026-11-18T17:00:00.000Z') });
+    expect(early.due).toBe(0);
+    const due = await publishDueDrafts({ db, client, env, logger: silentLogger, now: new Date('2026-11-18T17:31:00.000Z') });
+    expect(due).toMatchObject({ due: 1, published: 1 });
+    expect(callsTo('copyMessages')).toHaveLength(1);
+    expect((await reloadDraft(draft.id)).status).toBe('published');
+  });
+
+  it('is tried again next minute when it fails, and handed back after too many tries', async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-18T13:00:00.000Z'), toFake: ['Date'] });
+    const { draft } = await approveIntoDraft();
+    await reply('18:30');
+    failMethod = 'copyMessages';
+    const client = new TelegramClient({ token: 'test-token', baseUrl: 'https://api.telegram.org', attempts: 1 });
+    const env = { TELEGRAM_DISABLE_NOTIFICATION: false, MAX_RETRY_ATTEMPTS: 2 };
+    const now = new Date('2026-11-18T17:31:00.000Z');
+
+    await publishDueDrafts({ db, client, env, logger: silentLogger, now });
+    expect(await reloadDraft(draft.id)).toMatchObject({ status: 'scheduled', attempts: 1 });
+
+    await publishDueDrafts({ db, client, env, logger: silentLogger, now });
+    const after = await reloadDraft(draft.id);
+    expect(after).toMatchObject({ status: 'waiting', scheduledFor: null });
+    expect(after.error).toContain('Publishing failed 2 times');
+  });
+});
+
+describeIfDb('Edits and rejection', () => {
+  it('notes an edit to the post on its control message, once', async () => {
+    const { draft } = await approveIntoDraft();
+    const edit = () => update({ edited_channel_post: { message_id: DRAFT_POST_ID, chat: { id: Number(DRAFT_CHAT) }, text: 'Better' } });
+
+    await edit();
+    await edit();
+
+    expect((await reloadDraft(draft.id)).editedAt).toBeInstanceOf(Date);
+    const refreshes = callsTo('editMessageText');
+    expect(refreshes).toHaveLength(1);
+    expect(refreshes[0]?.body.text).toContain('✏️ Edited here');
+  });
+
+  it('records a rejection on the post, and takes it back on Restore', async () => {
+    const { post, draft } = await approveIntoDraft();
+
+    await press(`dr:${draft.id}`);
+    expect((await reloadDraft(draft.id)).status).toBe('rejected');
+    expect(await reloadPost(post.id)).toMatchObject({ status: 'rejected', rejectionReason: 'other' });
+    expect(buttonData(callsTo('editMessageText').at(-1))).toEqual([`dx:${draft.id}`]);
+
+    // Rejected: Publish now does nothing.
+    await press(`dn:${draft.id}`);
+    expect(callsTo('copyMessages')).toHaveLength(0);
+
+    await press(`dx:${draft.id}`);
+    expect((await reloadDraft(draft.id)).status).toBe('waiting');
+    expect(await reloadPost(post.id)).toMatchObject({ status: 'published', rejectionReason: null });
+  });
+
+  it('explains how to schedule on the Schedule button', async () => {
+    const { draft } = await approveIntoDraft();
+
+    await press(`dt:${draft.id}`);
+
+    const [answer] = callsTo('answerCallbackQuery');
+    expect(answer?.body.show_alert).toBe(true);
+    expect(answer?.body.text).toContain('Reply to this message');
+  });
+});

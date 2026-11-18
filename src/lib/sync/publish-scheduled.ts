@@ -168,7 +168,7 @@ export async function publishDueScheduledPosts(input: {
         client,
         await reviewCopiesOf(db, row),
         [
-          `${publishedLine(result.targets)} as scheduled, ${escapeHtml(formatScheduleTime(row.scheduledFor ?? now, row.scheduledTimezone))}`,
+          `${publishedLine(result.targets, { draft: result.draft })} as scheduled, ${escapeHtml(formatScheduleTime(row.scheduledFor ?? now, row.scheduledTimezone))}`,
           escapeHtml(row.xPostUrl),
         ].join('\n'),
         logger,
