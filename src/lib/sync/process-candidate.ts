@@ -179,7 +179,7 @@ export async function processCandidate(
         await queueThreadsDelivery(db, {
           postId: row.id,
           workspaceId: source.workspaceId,
-          content: autoPublishedThreadsContent(post, outcome.caption),
+          content: autoPublishedThreadsContent(post, outcome.caption, context.footer),
         });
       }
       summary.published += 1;

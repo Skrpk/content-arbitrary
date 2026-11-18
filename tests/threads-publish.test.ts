@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { createContainer } from '@/lib/threads/client';
 import { buildApprovalKeyboard, parseCallbackData, targetsOfApproval } from '@/lib/sync/approval';
 import { allowedTargets, normalizeTargets, publishedLine } from '@/lib/publish/targets';
+import { autoPublishedThreadsContent, threadsTextFromTelegram } from '@/lib/threads/deliveries';
+import { parsePostFooter, withFooter } from '@/lib/telegram/post-footer';
+import type { RichDocument } from '@/lib/rich/document';
 import { cutForThreads, normalizeTopicTag, telegramHtmlToText, threadsLength, threadsTextFor, THREADS_TEXT_LIMIT } from '@/lib/threads/text';
 
 /** Choosing where a post goes, and its text as Threads takes it. */
@@ -120,5 +123,31 @@ describe('a channel’s Threads topic', () => {
     await createContainer(who, { mediaType: 'TEXT', text: 'hi', topicTag: null }, { fetchImpl });
 
     expect(sent.map((body) => body.get('topic_tag'))).toEqual(['Wildlife', null, 'Wildlife', null]);
+  });
+});
+
+describe('the channel’s footer on Threads', () => {
+  const footer = parsePostFooter('[ВЕКТОР | космос · футуризм · sci-fi](https://t.me/vector)')!;
+  const withIt = withFooter('Людина зі штучними органами', footer);
+
+  it('is left out of a post’s caption and of its overflow', () => {
+    expect(threadsTextFromTelegram({ richDoc: null, caption: withIt }, { caption: withIt }, footer)).toBe('Людина зі штучними органами');
+    const overflow = withFooter('The whole long text.', footer);
+    expect(
+      threadsTextFromTelegram({ richDoc: null, caption: withFooter('The whole…', footer) }, { caption: '', overflowMessage: overflow }, footer),
+    ).toBe('The whole…\n\nThe whole long text.');
+  });
+
+  it('is left out of a post written in the editor', () => {
+    const doc = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Webb finds water' }] }] } as RichDocument;
+    expect(threadsTextFromTelegram({ richDoc: doc, caption: null }, { caption: '' }, footer)).toBe('Webb finds water');
+  });
+
+  it('is left out of a post published with no review', () => {
+    expect(autoPublishedThreadsContent({ id: '1', media: [] }, withIt, footer).text).toBe('Людина зі штучними органами');
+  });
+
+  it('leaves a caption that does not end with it as it is', () => {
+    expect(threadsTextFromTelegram({ richDoc: null, caption: 'No footer here' }, { caption: '' }, footer)).toBe('No footer here');
   });
 });

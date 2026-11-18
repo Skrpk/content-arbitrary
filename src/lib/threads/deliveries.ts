@@ -10,7 +10,7 @@ import {
 import type { Database } from '@/lib/db';
 import type { NormalizedMedia } from '@/types';
 import { mediaRefsOf, richDocumentPlainText, type RichDocument } from '@/lib/rich/document';
-import type { PostFooter } from '@/lib/telegram/post-footer';
+import { stripFooter, type PostFooter } from '@/lib/telegram/post-footer';
 import { telegramHtmlToText } from '@/lib/threads/text';
 import { loadUploads, uploadRef } from '@/lib/uploads/uploads';
 
@@ -31,20 +31,24 @@ export const DELIVERY_MAX_ATTEMPTS = 4;
 
 /**
  * The text a post goes to Threads with when it has none of its own: what
- * Telegram gets, as plain text — the rich document with the channel's
- * footer, or the caption, which carries the footer already, and its overflow.
+ * Telegram gets, as plain text — the rich document, or the caption and its
+ * overflow — without the channel's footer. The footer is the Telegram
+ * channel's own line, a link to it; on Threads it does not belong.
  */
 export function threadsTextFromTelegram(
   row: { richDoc: RichDocument | null; caption: string | null },
   payload: Pick<ApprovalPayload, 'caption' | 'overflowMessage'>,
   footer?: PostFooter | null,
 ): string {
-  if (row.richDoc) {
-    return [richDocumentPlainText(row.richDoc), footer?.text ?? ''].filter((part) => part.trim() !== '').join('\n\n');
-  }
-  return [telegramHtmlToText(row.caption ?? payload.caption), payload.overflowMessage ? telegramHtmlToText(payload.overflowMessage) : '']
+  if (row.richDoc) return richDocumentPlainText(row.richDoc);
+  return [withoutFooter(row.caption ?? payload.caption, footer), payload.overflowMessage ? withoutFooter(payload.overflowMessage, footer) : '']
     .filter((part) => part !== '')
     .join('\n\n');
+}
+
+/** A Telegram caption as plain text, the channel's footer taken off its end. */
+function withoutFooter(captionHtml: string, footer: PostFooter | null | undefined): string {
+  return telegramHtmlToText(stripFooter(captionHtml, footer) ?? captionHtml);
 }
 
 /** What the post will be on Threads: its text and media, as decided. */
@@ -89,15 +93,16 @@ export async function threadsContentFor(
 
 /**
  * What a post published with no review goes to Threads with: the caption
- * Telegram got — the channel's footer in it already — and the source's own
- * media, looked up afresh when the worker takes it.
+ * Telegram got, without the channel's footer, and the source's own media,
+ * looked up afresh when the worker takes it.
  */
 export function autoPublishedThreadsContent(
   post: { id: string; media: NormalizedMedia[] },
   caption: string,
+  footer?: PostFooter | null,
 ): ThreadsDeliveryContent {
   return {
-    text: telegramHtmlToText(caption),
+    text: withoutFooter(caption, footer),
     media: post.media.slice(0, THREADS_MEDIA_MAX).map((source) => ({ kind: source.kind, source })),
     externalId: post.id,
     uploadIds: [],

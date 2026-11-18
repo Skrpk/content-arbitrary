@@ -161,9 +161,9 @@ function LoadedEditor({
 
   const state = editor ? toolbarState(editor) : null;
 
-  // What Threads gets while it follows Telegram: the post as plain text, with the footer, as it goes out.
+  // What Threads gets while it follows Telegram: the post as plain text. The footer is Telegram's alone.
   const telegramPlain = editor ? richDocumentPlainText(editor.getJSON() as RichDocument) : '';
-  const autoFull = [telegramPlain, data.footer ?? ''].filter((part) => part.trim() !== '').join('\n\n');
+  const autoFull = telegramPlain;
   const hasMedia = (state?.mediaRefs.length ?? 0) > 0;
   const threadsVersion: ThreadsVersion = { own: threadsOwn, auto: threadsTextFor(autoFull, hasMedia), autoFull };
   const threadsCut = threadsOwn === null && threadsVersion.auto.text !== autoFull.trim();
