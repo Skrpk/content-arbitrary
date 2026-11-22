@@ -421,6 +421,23 @@ describeIfDb('the Scheduled page', () => {
     expect(item).toMatchObject({ id: post.id, draft: { id: draft.id, link: `https://t.me/c/3000000003/${DRAFT_POST_ID}` } });
   });
 
+  it('counts a post scheduled from the draft channel for the header', async () => {
+    const count = async () => {
+      const response = await withEnv(routeEnv, () =>
+        scheduledRoute.GET(
+          new Request('https://example.vercel.app/api/telegram/webapp/scheduled?count=1', { headers: { authorization: auth() } }),
+        ),
+      );
+      return ((await response.json()) as { count: number }).count;
+    };
+    await approveIntoDraft();
+    expect(await count()).toBe(0);
+
+    await reply('завтра 9:00');
+
+    expect(await count()).toBe(1);
+  });
+
   it('moves its time, and its control message says so', async () => {
     const { draft } = await approveIntoDraft();
     await reply('завтра 9:00');

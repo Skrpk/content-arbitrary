@@ -6,6 +6,7 @@ import { readJson, type PanelTools } from '@/components/panel-tools';
 import { DEFAULT_PUBLISH_TARGETS, PUBLISH_TARGETS, publishedLine, type PublishTarget } from '@/lib/publish/targets';
 import { PublishTargetsChoice } from '@/components/publish-targets-choice';
 import { fromQueue, theme } from '@/lib/telegram/webapp-client';
+import { announceScheduledChanged } from '@/components/scheduled-count';
 
 /**
  * The review queue, for the Mini App and the website alike: every post
@@ -1021,6 +1022,7 @@ function ScheduleEditor({
           }),
         }),
       );
+      announceScheduledChanged();
       onScheduled(body.display, body.alsoRejected?.length ?? 0);
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : 'Could not schedule.');

@@ -852,6 +852,26 @@ describeIfDb('the Scheduled page', () => {
     return row;
   };
 
+  it('counts the scheduled posts for the header, and only those', async () => {
+    const count = async () => {
+      const response = await withEnv(queueEnv, () =>
+        scheduledRoute.GET(
+          new Request('https://example.vercel.app/api/telegram/webapp/scheduled?count=1', { headers: { authorization: auth() } }),
+        ),
+      );
+      expect(response.status).toBe(200);
+      return (await response.json()) as unknown;
+    };
+    expect(await count()).toEqual({ count: 0 });
+
+    await scheduledAt(new Date(Date.now() + HOUR));
+    await scheduledAt(new Date(Date.now() + 2 * HOUR));
+    await queuedPost({ caption: 'Still in review' });
+    await queuedPost({ status: 'published', caption: 'Gone out' });
+
+    expect(await count()).toEqual({ count: 2 });
+  });
+
   it('lists only scheduled posts, soonest first, with their time as it was picked', async () => {
     const later = await scheduledAt(new Date(Date.now() + 5 * HOUR), { caption: 'Later' });
     const sooner = await scheduledAt(new Date(Date.now() + HOUR), { caption: 'Sooner' });

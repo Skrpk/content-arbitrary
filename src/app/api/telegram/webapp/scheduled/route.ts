@@ -2,7 +2,7 @@ import { hasThreadsAccount } from '@/lib/threads/accounts';
 import { z } from 'zod';
 import { describeError } from '@/lib/errors';
 import { loadRadarNote } from '@/lib/radar/review-note';
-import { loadScheduledPosts, SCHEDULED_PAGE_LIMIT } from '@/lib/review/scheduled';
+import { countScheduledPosts, loadScheduledPosts, SCHEDULED_PAGE_LIMIT } from '@/lib/review/scheduled';
 import { sourceLabelOfPost } from '@/lib/sources/display';
 import { buildApprovalKeyboard, formatReviewControlText, formatScheduleTime, isKnownTimeZone, reviewLinks } from '@/lib/sync/approval';
 import { findDraft, scheduleDraft, unscheduleDraft } from '@/lib/drafts/drafts';
@@ -16,7 +16,8 @@ import { reviewCopiesOf } from '@/lib/review/copies';
 
 /**
  * The Scheduled page's API: every post waiting for its time in the reviewer's
- * channels, soonest first, and taking one back into the review queue.
+ * channels, soonest first — or with ?count=1 only how many — and taking one
+ * back into the review queue.
  *
  * Moving its time is the Schedule endpoint's, and editing it the editor's —
  * both already take a scheduled post. Guarded like the other endpoints, and
@@ -50,6 +51,11 @@ export async function GET(request: Request): Promise<Response> {
     return json({ error: describeError(error) }, 500);
   }
   if (!auth.ok) return auth.response;
+
+  // Only the number, for the website's header: no posts read for it.
+  if (new URL(request.url).searchParams.get('count') === '1') {
+    return json({ count: await countScheduledPosts(auth.db, auth.workspaces.map((workspace) => workspace.id)) });
+  }
 
   const channels = await Promise.all(
     auth.workspaces.map(async (workspace) => ({
