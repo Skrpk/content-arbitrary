@@ -7,6 +7,7 @@ import { DEFAULT_PUBLISH_TARGETS, PUBLISH_TARGETS, publishedLine, type PublishTa
 import { PublishTargetsChoice } from '@/components/publish-targets-choice';
 import { fromQueue, theme } from '@/lib/telegram/webapp-client';
 import { announceScheduledChanged } from '@/components/scheduled-count';
+import { cardsFromSource, queueSources } from '@/components/queue-sources';
 
 /**
  * The review queue, for the Mini App and the website alike: every post
@@ -94,6 +95,16 @@ type BulkState = { kind: 'choosing-reason' } | { kind: 'writing-note'; note: str
 
 /** Cards Reject all decides at once: each is its own request, as a single Reject is. */
 const BULK_CONCURRENCY = 3;
+
+/** A platform's name in the source filter, as its badge says it. */
+const PLATFORM_NAMES: Record<QueueItem['platform'], string> = {
+  x: 'X',
+  rss: 'RSS',
+  telegram: 'Telegram',
+  youtube: 'YouTube',
+  website: 'Web',
+  threads: 'Threads',
+};
 
 /** Characters of text a card shows before "More". */
 const PREVIEW_CHARS = 420;
@@ -315,6 +326,8 @@ export function ReviewQueue({
   /** For a story's card, the post picked to publish in place of its best-scored one. */
   const [chosen, setChosen] = useState<Record<number, number>>({});
   const [bulk, setBulk] = useState<BulkState | null>(null);
+  /** The source whose cards alone are shown, by `sourceKey`; null for all. */
+  const [sourceFilter, setSourceFilter] = useState<string | null>(null);
   /** Approve in a channel with Threads: where to, ticked before it goes. */
   const [targetsDialog, setTargetsDialog] = useState<{ card: QueueItem; telegram: boolean; threads: boolean } | null>(null);
   const website = surface === 'website';
@@ -415,10 +428,19 @@ export function ReviewQueue({
 
   const channel = data?.channels.find((candidate) => candidate.id === channelId) ?? null;
 
-  /** The channel's cards still to decide: not settled, and not on their way. */
-  const undecided = useMemo(
-    () => channel?.items.filter((card) => !['done', 'sending'].includes(cards[card.id]?.kind ?? 'open')) ?? [],
+  /** The sources of the channel's loaded cards, for the filter. */
+  const sources = useMemo(
+    () => queueSources(channel?.items ?? [], (card) => cards[card.id]?.kind === 'done'),
     [cards, channel],
+  );
+  const source = sources.find((candidate) => candidate.key === sourceFilter) ?? null;
+  /** The cards shown: all of the channel's, or those with a post from the chosen source. */
+  const items = useMemo(() => cardsFromSource(channel?.items ?? [], source?.key ?? null), [channel, source]);
+
+  /** The cards shown still to decide: not settled, and not on their way. */
+  const undecided = useMemo(
+    () => items.filter((card) => !['done', 'sending'].includes(cards[card.id]?.kind ?? 'open')),
+    [cards, items],
   );
 
   /**
@@ -432,7 +454,9 @@ export function ReviewQueue({
       const label = data?.reasons.find((option) => option.value === reason)?.label ?? reason;
       const posts = undecided.reduce((total, card) => total + 1 + card.alsoInStory.length, 0);
       const what = posts === 1 ? 'the 1 post' : `all ${posts} posts`;
-      if (!(await confirm(`Reject ${what} shown in ${channel.name} as “${label}”? This cannot be undone.`))) return;
+      const from = source ? ` from ${source.label}` : '';
+      const stories = source && undecided.some((card) => card.alsoInStory.length > 0) ? ' Stories go whole, with their posts from other sources.' : '';
+      if (!(await confirm(`Reject ${what} shown${from} in ${channel.name} as “${label}”?${stories} This cannot be undone.`))) return;
 
       const queue = [...undecided];
       setBulk({ kind: 'sending', done: 0, total: queue.length });
@@ -445,7 +469,7 @@ export function ReviewQueue({
       await Promise.all(Array.from({ length: Math.min(BULK_CONCURRENCY, queue.length) }, work));
       setBulk(null);
     },
-    [channel, confirm, data, decide, undecided],
+    [channel, confirm, data, decide, source, undecided],
   );
 
   const approve = useCallback(
@@ -481,8 +505,8 @@ export function ReviewQueue({
 
   // The website's keyboard: j / k to move, a to approve, r then 1–6 to reject,
   // e to edit, s to schedule, o for the original, Esc to step back.
-  const open = channel?.items.filter((item) => cards[item.id]?.kind !== 'done') ?? [];
-  const active = website ? activeCard(channel?.items ?? [], cards, focused) : null;
+  const open = items.filter((item) => cards[item.id]?.kind !== 'done');
+  const active = website ? activeCard(items, cards, focused) : null;
   const latest = { open, active, cards, data, approve, decide, edit, schedule, openLink, setCard, dialogOpen: targetsDialog !== null };
   const keyboard = useRef(latest);
   useEffect(() => {
@@ -557,6 +581,7 @@ export function ReviewQueue({
                 onClick={() => {
                   setChannelId(candidate.id);
                   setFocused(null);
+                  setSourceFilter(null);
                   if (bulk?.kind !== 'sending') setBulk(null);
                 }}
                 style={{
@@ -589,6 +614,29 @@ export function ReviewQueue({
         </p>
       ) : null}
 
+      {channel && sources.length > 1 ? (
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '0 0 0.9rem', fontSize: '0.85rem' }}>
+          <span style={{ color: theme.hint, whiteSpace: 'nowrap' }}>Source</span>
+          <select
+            value={source?.key ?? ''}
+            onChange={(event) => {
+              setSourceFilter(event.target.value || null);
+              setFocused(null);
+              if (bulk?.kind !== 'sending') setBulk(null);
+            }}
+            disabled={bulk?.kind === 'sending'}
+            style={{ ...fieldStyle, width: 'auto', maxWidth: '100%', padding: '0.35rem 0.5rem', fontSize: '0.85rem' }}
+          >
+            <option value="">All sources · {channel.waiting - settled}</option>
+            {sources.map((candidate) => (
+              <option key={candidate.key} value={candidate.key}>
+                {candidate.label} ({PLATFORM_NAMES[candidate.platform]}) · {candidate.waiting}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+
       {channel && (undecided.length > 0 || bulk) ? (
         <BulkReject
           state={bulk}
@@ -602,7 +650,7 @@ export function ReviewQueue({
         />
       ) : null}
 
-      {channel?.items.map((card) => {
+      {items.map((card) => {
         const { item, others } = shown(card);
         const state = cards[card.id] ?? { kind: 'open' };
         const error = errors[card.id];
