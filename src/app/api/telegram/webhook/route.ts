@@ -460,11 +460,11 @@ export async function POST(request: Request): Promise<Response> {
       telegramMessageIds: result.messages.map((message) => message.messageId),
     });
 
-    await client.answerCallbackQuery(query.id, publishedNotice(result.targets, { draft: result.draft })).catch(() => {});
+    await client.answerCallbackQuery(query.id, publishedNotice(result.targets)).catch(() => {});
     await settleAllReviewMessages(
       client,
       await reviewCopiesFor(db, claim.row, query),
-      `${publishedLine(result.targets, { draft: result.draft })}\n${escapeHtml(claim.row.xPostUrl)}`,
+      `${publishedLine(result.targets)}\n${escapeHtml(claim.row.xPostUrl)}`,
       postLogger,
     );
     if (result.targets.includes('threads')) publishToThreadsSoon(claim.row.id, postLogger);

@@ -7,7 +7,8 @@ import * as schema from '@/db/schema';
 import { channelDrafts, DEFAULT_WORKSPACE_ID, processedPosts, telegramMessages, workspaces } from '@/db/schema';
 import { POST } from '@/app/api/telegram/webhook/route';
 import * as scheduledRoute from '@/app/api/telegram/webapp/scheduled/route';
-import { publishDueDrafts } from '@/lib/drafts/drafts';
+import { openDraft, publishDueDrafts } from '@/lib/drafts/drafts';
+import { markPublished } from '@/lib/sync/repository';
 import { TelegramClient } from '@/lib/telegram/client';
 import { ensureTestWorkspace, silentLogger, telegramError, telegramOk, withEnv } from './helpers';
 
@@ -123,13 +124,28 @@ async function queuePost() {
   return row!;
 }
 
-/** A post approved into the draft channel, and its draft. */
+/**
+ * A post approved into the draft channel before approving stopped going
+ * there, and its draft: published to the draft channel, with its control
+ * message under it — as the old Approve left it.
+ */
 async function approveIntoDraft() {
   const post = await queuePost();
-  await press(`ap:${post.id}`, { chatId: String(REVIEWER_ID), messageId: REVIEW_CONTROL_ID });
-  const [draft] = await db.select().from(channelDrafts).where(eq(channelDrafts.processedPostId, post.id));
+  await markPublished(db as never, {
+    id: post.id,
+    telegramChatId: DRAFT_CHAT,
+    primaryMessageId: DRAFT_POST_ID,
+    telegramMethod: 'sendPhoto',
+    mediaCount: 1,
+    messages: [{ messageId: DRAFT_POST_ID, mediaIndex: 0, kind: 'photo' }],
+    reviewedAt: new Date(),
+  });
+  const draft = await openDraft(
+    { db: db as never, client: new TelegramClient({ token: '123456:AAHfakeTokenForTestsOnly', baseUrl: 'https://api.telegram.org', sleep: async () => {} }), logger: silentLogger },
+    { postId: post.id, workspaceId: DEFAULT_WORKSPACE_ID, draftChatId: DRAFT_CHAT, messageIds: [DRAFT_POST_ID] },
+  );
   calls.length = 0;
-  return { post, draft: draft! };
+  return { post, draft: (await reloadDraft(draft.id))! };
 }
 
 const reloadDraft = async (id: number) => (await db.select().from(channelDrafts).where(eq(channelDrafts.id, id)))[0]!;
@@ -158,7 +174,7 @@ beforeEach(async () => {
       name: 'Vector',
       telegramChatId: CHANNEL_CHAT,
       telegramAdminChatId: String(REVIEWER_ID),
-      draftChatId: DRAFT_CHAT,
+      previewChatId: DRAFT_CHAT,
       reviewDigestTimezone: 'Europe/Prague',
     })
     .where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
@@ -169,37 +185,22 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describeIfDb('Approve, with a draft channel', () => {
-  it('publishes to the draft channel, with the control message under the post', async () => {
-    const post = await queuePost();
-
-    await press(`ap:${post.id}`, { chatId: String(REVIEWER_ID), messageId: REVIEW_CONTROL_ID });
-
-    const [photo] = callsTo('sendPhoto');
-    expect(photo?.body.chat_id).toBe(DRAFT_CHAT);
-    const control = callsTo('sendMessage').find((call) => call.body.chat_id === DRAFT_CHAT);
-    expect(control?.body.reply_parameters).toMatchObject({ message_id: DRAFT_POST_ID });
-    expect(control?.body.text).toContain('📝 Draft for <b>Vector</b>');
-
-    const [draft] = await db.select().from(channelDrafts).where(eq(channelDrafts.processedPostId, post.id));
-    expect(draft).toMatchObject({ status: 'waiting', draftChatId: DRAFT_CHAT, messageIds: [DRAFT_POST_ID], controlMessageId: DRAFT_CONTROL_ID, scheduledTimezone: 'Europe/Prague' });
-    expect(buttonData(control)).toEqual([`dn:${draft!.id}`, `dt:${draft!.id}`, `dr:${draft!.id}`]);
-
-    // Nothing reached the channel yet; the reviewer is told where it is.
-    expect(calls.some((call) => call.body.chat_id === CHANNEL_CHAT)).toBe(false);
-    const settled = callsTo('editMessageText').find((call) => call.body.chat_id === String(REVIEWER_ID));
-    expect(settled?.body.text).toContain('📝 In the draft channel');
-    expect((await reloadPost(post.id)).status).toBe('published');
-  });
-
-  it('publishes straight to the channel without one', async () => {
-    await db.update(workspaces).set({ draftChatId: null }).where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+describeIfDb('Approve, with a preview channel (the former draft channel)', () => {
+  it('publishes straight to the channel, and opens no draft', async () => {
     const post = await queuePost();
 
     await press(`ap:${post.id}`, { chatId: String(REVIEWER_ID), messageId: REVIEW_CONTROL_ID });
 
     expect(callsTo('sendPhoto')[0]?.body.chat_id).toBe(CHANNEL_CHAT);
+    expect(calls.some((call) => call.body.chat_id === DRAFT_CHAT)).toBe(false);
     expect(await db.select().from(channelDrafts)).toHaveLength(0);
+    const settled = callsTo('editMessageText').find((call) => call.body.chat_id === String(REVIEWER_ID));
+    expect(settled?.body.text).toContain('✅ Published');
+  });
+
+  it('left a draft opened before with its control message under the post', async () => {
+    const { draft } = await approveIntoDraft();
+    expect(draft).toMatchObject({ status: 'waiting', draftChatId: DRAFT_CHAT, messageIds: [DRAFT_POST_ID], controlMessageId: DRAFT_CONTROL_ID, scheduledTimezone: 'Europe/Prague' });
   });
 });
 

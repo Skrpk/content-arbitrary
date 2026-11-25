@@ -60,11 +60,6 @@ export interface TelegramDestination {
    * tenant reposts everything, so nothing is sent for review. See reviewsPosts.
    */
   autoPublish?: boolean;
-  /**
-   * The channel's draft channel: an approved post goes there first, and on to
-   * `chatId` from its buttons there. See src/lib/drafts/drafts.ts.
-   */
-  draftChatId?: string | null;
 }
 
 /**
@@ -249,10 +244,6 @@ export function destinationFor(
       disableNotification: env.TELEGRAM_DISABLE_NOTIFICATION,
       queueForReview: usesReviewQueue(workspace, env),
       ...(workspace.autoPublish ? { autoPublish: true } : {}),
-      // A draft channel that is the channel itself would publish twice to it.
-      ...(workspace.draftChatId && workspace.draftChatId !== workspace.telegramChatId
-        ? { draftChatId: workspace.draftChatId }
-        : {}),
     },
   };
 }

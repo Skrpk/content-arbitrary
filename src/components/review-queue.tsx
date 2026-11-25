@@ -60,6 +60,8 @@ interface Channel {
   name: string;
   /** It has a Threads account: Approve asks where to. */
   threads?: boolean;
+  /** It has a preview channel: Approve offers Send to preview. */
+  preview?: boolean;
   waiting: number;
   items: QueueItem[];
 }
@@ -328,8 +330,8 @@ export function ReviewQueue({
   const [bulk, setBulk] = useState<BulkState | null>(null);
   /** The source whose cards alone are shown, by `sourceKey`; null for all. */
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
-  /** Approve in a channel with Threads: where to, ticked before it goes. */
-  const [targetsDialog, setTargetsDialog] = useState<{ card: QueueItem; telegram: boolean; threads: boolean } | null>(null);
+  /** Approve: the card it is for — when, where, and Send to preview are chosen in the dialog. */
+  const [approving, setApproving] = useState<QueueItem | null>(null);
   const website = surface === 'website';
 
   useEffect(() => {
@@ -472,19 +474,7 @@ export function ReviewQueue({
     [channel, confirm, data, decide, source, undecided],
   );
 
-  const approve = useCallback(
-    async (card: QueueItem) => {
-      const where = channel?.name ? ` to ${channel.name}` : '';
-      const rest = shown(card).others.length;
-      const also = rest > 0 ? ` The other ${rest === 1 ? 'post' : `${rest} posts`} of this story will be rejected as already covered.` : '';
-      if (channel?.threads) {
-        setTargetsDialog({ card, ...DIALOG_DEFAULT });
-        return;
-      }
-      if (await confirm(`Publish this post${where} now?${also}`)) await decide(card, { action: 'approve' });
-    },
-    [channel, confirm, decide, shown],
-  );
+  const approve = useCallback((card: QueueItem) => setApproving(card), []);
 
   const edit = useCallback(
     (card: QueueItem) => {
@@ -507,7 +497,7 @@ export function ReviewQueue({
   // e to edit, s to schedule, o for the original, Esc to step back.
   const open = items.filter((item) => cards[item.id]?.kind !== 'done');
   const active = website ? activeCard(items, cards, focused) : null;
-  const latest = { open, active, cards, data, approve, decide, edit, schedule, openLink, setCard, dialogOpen: targetsDialog !== null };
+  const latest = { open, active, cards, data, approve, decide, edit, schedule, openLink, setCard, dialogOpen: approving !== null };
   const keyboard = useRef(latest);
   useEffect(() => {
     keyboard.current = latest;
@@ -898,23 +888,35 @@ export function ReviewQueue({
           </section>
         );
       })}
-      {targetsDialog ? (
-        <TargetsDialog
-          state={targetsDialog}
-          channelName={channel?.name ?? null}
-          others={shown(targetsDialog.card).others.length}
-          threadsText={shown(targetsDialog.card).item.threads ?? null}
+      {approving && channel ? (
+        <ApproveDialog
+          key={approving.id}
+          postId={shown(approving).item.id}
+          channelName={channel.name}
+          threads={channel.threads ?? false}
+          preview={channel.preview ?? false}
+          others={shown(approving).others.map((post) => post.id)}
+          threadsText={shown(approving).item.threads ?? null}
+          request={request}
+          openLink={openLink}
           onEdit={() => {
-            const { card } = targetsDialog;
-            setTargetsDialog(null);
+            const card = approving;
+            setApproving(null);
             edit(card);
           }}
-          onChange={setTargetsDialog}
-          onCancel={() => setTargetsDialog(null)}
+          onCancel={() => setApproving(null)}
           onPublish={(targets) => {
-            const { card } = targetsDialog;
-            setTargetsDialog(null);
-            void decide(card, { action: 'approve', targets });
+            const card = approving;
+            setApproving(null);
+            void decide(card, { action: 'approve', ...(channel.threads ? { targets } : {}) });
+          }}
+          onScheduled={(display, alsoRejected) => {
+            const card = approving;
+            setApproving(null);
+            setCard(card.id, {
+              kind: 'done',
+              outcome: `🕒 Scheduled for ${display}${restOfStoryOutcome('approve', alsoRejected)}`,
+            });
           }}
         />
       ) : null}
@@ -1240,8 +1242,6 @@ function overlayBadge(position: { left?: string; right?: string }): CSSPropertie
   };
 }
 
-const DIALOG_DEFAULT = { telegram: true, threads: true };
-
 /** Under Threads in the Publish dialog: when it goes, and with what text — its own, or Telegram's and whether it is cut. */
 function ThreadsHint({ threads, onEdit }: { threads: QueueItem['threads'] | null; onEdit: () => void }) {
   const firstLine = threads?.text.split('\n').find((line) => line.trim() !== '') ?? null;
@@ -1268,33 +1268,61 @@ function ThreadsHint({ threads, onEdit }: { threads: QueueItem['threads'] | null
   );
 }
 
+/** An hour from now, on the hour: where the Approve dialog's time starts. */
+function nextHour(): string {
+  const next = new Date(Date.now() + 60 * 60 * 1000);
+  next.setMinutes(0, 0, 0);
+  return localInputValue(next);
+}
+
 /**
- * Where an approved post goes, for a channel with a Threads account: both
- * ticked to begin with, either one unticked, never neither.
+ * Approve: when, where, and a look first.
+ *
+ * Schedule is on to begin with, at the next hour; switched off, the post goes
+ * out now. Send to preview puts the post in the channel's preview channel as
+ * it would go out — as often as wanted, editing in between (Edit) — and
+ * decides nothing. For a channel with Threads, where to as well: both ticked
+ * to begin with, never neither.
  */
-function TargetsDialog({
-  state,
+function ApproveDialog({
+  postId,
   channelName,
+  threads,
+  preview,
   others,
   threadsText,
+  request,
+  openLink,
   onEdit,
-  onChange,
   onCancel,
   onPublish,
+  onScheduled,
 }: {
-  state: { card: QueueItem; telegram: boolean; threads: boolean };
-  channelName: string | null;
-  others: number;
+  /** The post the card shows: the one that goes out, and the one previewed. */
+  postId: number;
+  channelName: string;
+  threads: boolean;
+  /** The channel has a preview channel; without one, Send to preview is off. */
+  preview: boolean;
+  /** The rest of its story's card, rejected as already covered once it goes. */
+  others: number[];
   threadsText: QueueItem['threads'] | null;
+  request: ReviewQueueProps['request'];
+  openLink: (url: string) => void;
   onEdit: () => void;
-  onChange: (state: { card: QueueItem; telegram: boolean; threads: boolean }) => void;
   onCancel: () => void;
   onPublish: (targets: PublishTarget[]) => void;
+  onScheduled: (display: string, alsoRejected: number) => void;
 }) {
-  const targets = PUBLISH_TARGETS.filter((target) => state[target]);
-  const publishRef = useRef<HTMLButtonElement>(null);
+  const [schedule, setSchedule] = useState(true);
+  const [when, setWhen] = useState(nextHour);
+  const [to, setTo] = useState({ telegram: true, threads: true });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [previewing, setPreviewing] = useState<{ state: 'sending' } | { state: 'sent'; link: string | null; at: Date } | null>(null);
+  const targets = threads ? PUBLISH_TARGETS.filter((target) => to[target]) : (['telegram'] as PublishTarget[]);
+
   useEffect(() => {
-    publishRef.current?.focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onCancel();
     };
@@ -1302,12 +1330,58 @@ function TargetsDialog({
     return () => window.removeEventListener('keydown', onKey);
   }, [onCancel]);
 
-  const option = (target: PublishTarget, label: string, hint: ReactNode) => (
-    <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem', padding: '0.45rem 0', cursor: 'pointer' }}>
+  const sendPreview = async () => {
+    setPreviewing({ state: 'sending' });
+    setError(null);
+    try {
+      const body = await readJson<{ link: string | null }>(
+        await request('/api/telegram/webapp/preview', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ postId }),
+        }),
+      );
+      setPreviewing({ state: 'sent', link: body.link, at: new Date() });
+    } catch (reason: unknown) {
+      setPreviewing(null);
+      setError(reason instanceof Error ? reason.message : 'Could not send the preview.');
+    }
+  };
+
+  const submit = async () => {
+    if (!schedule) return onPublish(targets);
+    const at = new Date(when);
+    if (Number.isNaN(at.getTime())) return setError('Pick a date and time.');
+    setSaving(true);
+    setError(null);
+    try {
+      const body = await readJson<{ display: string; alsoRejected?: number[] }>(
+        await request('/api/telegram/webapp/schedule', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            postId,
+            scheduledFor: at.toISOString(),
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            ...(others.length > 0 ? { alsoInStory: others } : {}),
+            ...(threads ? { targets } : {}),
+          }),
+        }),
+      );
+      announceScheduledChanged();
+      onScheduled(body.display, body.alsoRejected?.length ?? 0);
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : 'Could not schedule.');
+      setSaving(false);
+    }
+  };
+
+  const target = (key: PublishTarget, label: string, hint: ReactNode) => (
+    <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem', padding: '0.35rem 0', cursor: 'pointer' }}>
       <input
         type="checkbox"
-        checked={state[target]}
-        onChange={(event) => onChange({ ...state, [target]: event.target.checked })}
+        checked={to[key]}
+        onChange={(event) => setTo({ ...to, [key]: event.target.checked })}
         style={{ marginTop: '0.3rem', accentColor: theme.button }}
       />
       <span>
@@ -1316,14 +1390,20 @@ function TargetsDialog({
       </span>
     </label>
   );
+  const busy = saving || previewing?.state === 'sending';
+  const link = (text: string, onClick: () => void) => (
+    <button type="button" onClick={onClick} style={{ border: 'none', background: 'none', padding: 0, color: theme.link, font: 'inherit', cursor: 'pointer' }}>
+      {text}
+    </button>
+  );
 
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-labelledby="targets-title"
+      aria-labelledby="approve-title"
       onClick={(event) => {
-        if (event.target === event.currentTarget) onCancel();
+        if (event.target === event.currentTarget && !busy) onCancel();
       }}
       style={{
         position: 'fixed',
@@ -1336,29 +1416,83 @@ function TargetsDialog({
         padding: '1rem',
       }}
     >
-      <div style={{ background: theme.bg, color: theme.text, borderRadius: '0.8rem', padding: '1rem 1.1rem', width: '100%', maxWidth: '22rem' }}>
-        <div id="targets-title" style={{ fontWeight: 600, marginBottom: '0.4rem' }}>
-          Publish where?
+      <div style={{ background: theme.bg, color: theme.text, borderRadius: '0.8rem', padding: '1rem 1.1rem', width: '100%', maxWidth: '24rem' }}>
+        <div id="approve-title" style={{ fontWeight: 600, marginBottom: '0.6rem' }}>
+          Approve for {channelName}
         </div>
-        {option('telegram', channelName ? `Telegram · ${channelName}` : 'Telegram', 'Now, to the channel.')}
-        {option('threads', 'Threads', <ThreadsHint threads={threadsText} onEdit={onEdit} />)}
-        {others > 0 ? (
-          <p style={{ color: theme.hint, fontSize: '0.8rem', margin: '0.3rem 0 0' }}>
-            The other {others === 1 ? 'post' : `${others} posts`} of this story will be rejected as already covered.
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            role="switch"
+            checked={schedule}
+            disabled={saving}
+            onChange={(event) => setSchedule(event.target.checked)}
+            style={{ accentColor: theme.button }}
+          />
+          <span>🕒 Schedule</span>
+        </label>
+        {schedule ? (
+          <input
+            type="datetime-local"
+            value={when}
+            disabled={saving}
+            onChange={(event) => setWhen(event.target.value)}
+            style={{ ...fieldStyle, marginTop: '0.4rem' }}
+          />
+        ) : (
+          <div style={{ color: theme.hint, fontSize: '0.8rem', marginTop: '0.25rem' }}>Off: it goes out now.</div>
+        )}
+
+        {threads ? (
+          <div style={{ marginTop: '0.6rem' }}>
+            {target('telegram', `Telegram · ${channelName}`, schedule ? 'At that time, to the channel.' : 'Now, to the channel.')}
+            {target('threads', 'Threads', <ThreadsHint threads={threadsText} onEdit={onEdit} />)}
+          </div>
+        ) : null}
+
+        <div style={{ marginTop: '0.75rem', paddingTop: '0.6rem', borderTop: `1px solid ${theme.secondaryBg}` }}>
+          <button
+            type="button"
+            disabled={!preview || busy}
+            onClick={() => void sendPreview()}
+            style={{ ...smallButton, opacity: !preview || busy ? 0.5 : 1, cursor: !preview || busy ? 'default' : 'pointer' }}
+          >
+            {previewing?.state === 'sending' ? 'Sending…' : '👁 Send to preview'}
+          </button>
+          <div style={{ color: theme.hint, fontSize: '0.8rem', marginTop: '0.3rem' }}>
+            {!preview ? (
+              <>Set a preview channel in Settings to see the post in Telegram first.</>
+            ) : previewing?.state === 'sent' ? (
+              <>
+                Sent{previewing.link ? <> · {link('open it ↗', () => openLink(previewing.link!))}</> : null}. Not right? {link('Edit', onEdit)}, then
+                approve and preview again.
+              </>
+            ) : (
+              <>The post as it will go out, in your preview channel. It stays here, undecided.</>
+            )}
+          </div>
+        </div>
+
+        {others.length > 0 ? (
+          <p style={{ color: theme.hint, fontSize: '0.8rem', margin: '0.6rem 0 0' }}>
+            The other {others.length === 1 ? 'post' : `${others.length} posts`} of this story will be rejected as already covered.
           </p>
         ) : null}
+        {error ? <p style={{ color: '#e53935', fontSize: '0.85rem', margin: '0.5rem 0 0' }}>{error}</p> : null}
+
         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.8rem' }}>
-          <button type="button" onClick={onCancel} style={{ ...button, background: theme.secondaryBg, color: theme.text }}>
+          <button type="button" disabled={saving} onClick={onCancel} style={{ ...button, background: theme.secondaryBg, color: theme.text }}>
             Cancel
           </button>
           <button
-            ref={publishRef}
             type="button"
-            disabled={targets.length === 0}
-            onClick={() => onPublish(targets)}
-            style={{ ...button, background: theme.button, color: theme.buttonText, opacity: targets.length === 0 ? 0.5 : 1 }}
+            autoFocus
+            disabled={targets.length === 0 || busy}
+            onClick={() => void submit()}
+            style={{ ...button, background: theme.button, color: theme.buttonText, opacity: targets.length === 0 || busy ? 0.5 : 1 }}
           >
-            ✅ Publish
+            {saving ? 'Scheduling…' : schedule ? '🕒 Schedule' : '✅ Publish now'}
           </button>
         </div>
       </div>

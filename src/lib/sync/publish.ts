@@ -9,8 +9,6 @@ import { publishApprovedPayload, type PublishResult } from '@/lib/sync/approval'
 import { markPublished, markPublishedElsewhere } from '@/lib/sync/repository';
 import { normalizeTargets, type PublishTarget } from '@/lib/publish/targets';
 import { queueThreadsDelivery, threadsContentFor } from '@/lib/threads/deliveries';
-import { openDraft } from '@/lib/drafts/drafts';
-import { describeError } from '@/lib/errors';
 import { mediaRefsOf, richDocumentAsPlainPost, richDocumentToHtml, type RichDocument } from '@/lib/rich/document';
 import { escapeHtml, truncateForDisplay } from '@/lib/telegram/format-caption';
 import { TELEGRAM_CAPTION_LIMIT, TELEGRAM_MEDIA_GROUP_MAX, TELEGRAM_MESSAGE_TEXT_LIMIT } from '@/lib/telegram/limits';
@@ -67,7 +65,7 @@ export async function publishDecidedPost(input: {
    * with Schedule, or Telegram alone for a post decided with no choice.
    */
   targets?: PublishTarget[];
-}): Promise<PublishResult & { targets: PublishTarget[]; draft: boolean }> {
+}): Promise<PublishResult & { targets: PublishTarget[] }> {
   const targets = normalizeTargets(input.targets ?? input.row.publishTargets);
   // Taken before Telegram has it: publishing there drops the payload this reads.
   const threads = targets.includes('threads')
@@ -75,36 +73,52 @@ export async function publishDecidedPost(input: {
     : null;
 
   let result: PublishResult;
-  // A channel with a draft channel: the post goes there first, as a preview.
-  const draftChatId = targets.includes('telegram') ? (input.destination.draftChatId ?? null) : null;
   if (!targets.includes('telegram')) {
     await markPublishedElsewhere(input.db, { id: input.row.id, publishTargets: targets, reviewedAt: input.reviewedAt });
     result = { messages: [], primaryMessageId: null, method: 'none' };
   } else {
-    const destination = draftChatId ? { ...input.destination, chatId: draftChatId } : input.destination;
-    result = await publishToTelegram({ ...input, destination, targets, keepUploads: threads !== null });
-  }
-
-  if (draftChatId && result.messages.length > 0) {
-    const logger = input.logger ?? createLogger({ app: 'content-arbitrary' });
-    // The post is in the draft channel and settled: a failure here must not send it back to review.
-    await openDraft(
-      { db: input.db, client: input.client, logger },
-      {
-        postId: input.row.id,
-        workspaceId: input.destination.workspaceId,
-        draftChatId,
-        messageIds: result.messages.map((message) => message.messageId),
-      },
-    ).catch((error: unknown) => logger.error('draft.open_failed', { postId: input.row.id, error: describeError(error) }));
+    result = await publishToTelegram({ ...input, targets, keepUploads: threads !== null, record: true });
   }
 
   if (threads) await queueThreadsDelivery(input.db, { postId: input.row.id, workspaceId: input.destination.workspaceId, content: threads });
-  return { ...result, targets, draft: draftChatId !== null };
+  return { ...result, targets };
+}
+
+/**
+ * Send a post to the channel's preview channel, exactly as it would go out
+ * to the channel now — the same path as publishing, its footer, rich layout
+ * and media included — and record nothing: the post stays undecided, its
+ * uploads stay in the store, and it can be edited and previewed again.
+ */
+export async function previewPost(input: {
+  db: Database;
+  env: Env;
+  client: TelegramClient;
+  row: ProcessedPost;
+  payload: ApprovalPayload;
+  destination: TelegramDestination;
+  /** The preview channel. */
+  previewChatId: string;
+  logger?: Logger;
+  fetchImpl?: typeof fetch;
+  footer?: PostFooter | null;
+}): Promise<PublishResult> {
+  return publishToTelegram({
+    ...input,
+    destination: { ...input.destination, chatId: input.previewChatId, disableNotification: true },
+    targets: ['telegram'],
+    keepUploads: true,
+    record: false,
+  });
 }
 
 async function publishToTelegram(
-  input: Parameters<typeof publishDecidedPost>[0] & { targets: PublishTarget[]; keepUploads: boolean },
+  input: Parameters<typeof publishDecidedPost>[0] & {
+    targets: PublishTarget[];
+    keepUploads: boolean;
+    /** False for a preview: sent, but the post neither settled nor its uploads let go. */
+    record: boolean;
+  },
 ): Promise<PublishResult> {
   if (input.row.richDoc) return publishRichPost({ ...input, doc: input.row.richDoc });
 
@@ -131,6 +145,7 @@ async function publishToTelegram(
     payload,
     { logger: input.logger, media },
   );
+  if (!input.record) return result;
 
   await markPublished(input.db, {
     id: input.row.id,
@@ -222,6 +237,7 @@ async function publishRichPost(
       method: 'sendRichMessage',
     };
   }
+  if (!input.record) return result;
 
   await markPublished(input.db, {
     id: input.row.id,

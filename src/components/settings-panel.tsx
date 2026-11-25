@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { PlatformBadge } from '@/app/(app)/platform-badge';
 import { readJson, type PanelTools } from '@/components/panel-tools';
 import { ThreadsConnection } from '@/components/threads-connection';
+import { PreviewChannelSettings, type PreviewChannel } from '@/components/preview-channel-settings';
 import { EDITORIAL_PROFILE_MAX_LENGTH, editorialProfileLength } from '@/lib/radar/editorial-profile';
 import { RADAR_THRESHOLD_MAX, RADAR_THRESHOLD_MIN } from '@/lib/radar/threshold';
 import { theme } from '@/lib/telegram/webapp-client';
@@ -48,6 +49,8 @@ interface ChannelView {
   autoPublish: boolean;
   /** What Radar scores posts against, in the editor's words; null leaves Radar off. */
   editorialProfile: string | null;
+  /** Where Send to preview puts a post; null for none. */
+  previewChannel: PreviewChannel | null;
   sources: SourceView[];
 }
 
@@ -658,6 +661,15 @@ export function SettingsPanel({ request, confirm, openLink }: PanelTools) {
               </p>
             ) : null}
           </section>
+
+          <PreviewChannelSettings
+            channels={channels}
+            request={request}
+            confirm={confirm}
+            onSaved={(channelId, previewChannel) =>
+              setChannels((all) => all.map((item) => (item.id === channelId ? { ...item, previewChannel } : item)))
+            }
+          />
 
           <ThreadsConnection channels={channels} request={request} confirm={confirm} openLink={openLink} />
 

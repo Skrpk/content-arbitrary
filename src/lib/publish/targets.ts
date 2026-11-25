@@ -35,16 +35,14 @@ export function describeTargets(targets: readonly PublishTarget[]): string {
   return targets.map((target) => (target === 'telegram' ? 'Telegram' : 'Threads')).join(' and ');
 }
 
-/** The reviewer's notice once a decided post is on its way; `draft` when it went to the draft channel. */
-export function publishedNotice(targets: readonly PublishTarget[], options?: { draft?: boolean }): string {
-  if (options?.draft) return targets.includes('threads') ? 'In the draft channel; on its way to Threads.' : 'In the draft channel.';
+/** The reviewer's notice once a decided post is on its way. */
+export function publishedNotice(targets: readonly PublishTarget[]): string {
   if (!targets.includes('threads')) return 'Published to the channel.';
   return targets.includes('telegram') ? 'Published to the channel; on its way to Threads.' : 'On its way to Threads.';
 }
 
 /** The line a review message is settled with. */
-export function publishedLine(targets: readonly PublishTarget[], options?: { draft?: boolean }): string {
-  if (options?.draft) return targets.includes('threads') ? '📝 In the draft channel · 🧵 Threads: on its way' : '📝 In the draft channel';
+export function publishedLine(targets: readonly PublishTarget[]): string {
   if (!targets.includes('threads')) return '✅ Published';
   return targets.includes('telegram') ? '✅ Published · 🧵 Threads: on its way' : '✅ 🧵 Threads: on its way';
 }

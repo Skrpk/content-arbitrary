@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { describeError } from '@/lib/errors';
+import { checkPreviewChannel, setPreviewChannel } from '@/lib/review/preview-channel';
 import { isKnownTimeZone } from '@/lib/sync/approval';
+import { TelegramClient } from '@/lib/telegram/client';
 import { authorizeReviewer, json } from '@/lib/telegram/webapp-request';
 import { EDITORIAL_PROFILE_MAX_LENGTH, editorialProfileLength } from '@/lib/radar/editorial-profile';
 import {
@@ -15,8 +17,9 @@ import {
 /**
  * The settings page's per-channel settings: how often the reviewer hears
  * about the review queue — or that posts come to the chat one by one —,
- * whether the channel publishes without review at all, and the editorial
- * profile Radar scores posts against. Each request changes one of the three.
+ * whether the channel publishes without review at all, the editorial
+ * profile Radar scores posts against, and the preview channel Send to preview
+ * puts posts in. Each request changes one of the four.
  *
  * Guarded like the other Mini App endpoints, and scoped to the channels the
  * reviewer reviews for: another tenant's id is answered as if it did not exist.
@@ -47,6 +50,8 @@ const updateSchema = z
       })
       .nullable()
       .optional(),
+    /** The preview channel as typed — @username, t.me link or id — or null for none. */
+    previewChannel: z.string().max(200).nullable().optional(),
     /** For a day or more: the hour, 0–23, in `timezone`; null for whenever it is due; absent to keep it. */
     reviewDigestHour: z.number().int().min(0).max(23).nullable().optional(),
     /** The browser's IANA zone, which the hour is in. */
@@ -58,9 +63,10 @@ const updateSchema = z
   })
   .refine(
     (body) =>
-      [body.reviewDigestMinutes, body.autoPublish, body.editorialProfile].filter((value) => value !== undefined)
-        .length === 1,
-    { message: 'change one of reviewDigestMinutes, autoPublish or editorialProfile' },
+      [body.reviewDigestMinutes, body.autoPublish, body.editorialProfile, body.previewChannel].filter(
+        (value) => value !== undefined,
+      ).length === 1,
+    { message: 'change one of reviewDigestMinutes, autoPublish, editorialProfile or previewChannel' },
   )
   .refine((body) => body.reviewDigestHour === undefined || body.reviewDigestMinutes !== undefined, {
     message: 'an hour goes with reviewDigestMinutes',
@@ -98,6 +104,26 @@ export async function POST(request: Request): Promise<Response> {
       length: updated.editorialProfile === null ? null : editorialProfileLength(updated.editorialProfile),
     });
     return json({ id: updated.id, editorialProfile: updated.editorialProfile });
+  }
+
+  if (body.previewChannel !== undefined) {
+    const workspace = auth.workspaces.find((candidate) => candidate.id === body.workspaceId);
+    if (!workspace) return json({ error: 'No such channel.' }, 404);
+    let chatId: string | null = null;
+    let title: string | null = null;
+    if (body.previewChannel !== null && body.previewChannel.trim() !== '') {
+      const checked = await checkPreviewChannel(new TelegramClient({ logger: auth.logger }), {
+        value: body.previewChannel,
+        channelChatId: workspace.telegramChatId,
+      });
+      if (!checked.ok) return json({ error: checked.error }, 422);
+      chatId = checked.chatId;
+      title = checked.title;
+    }
+    const updated = await setPreviewChannel(auth.db, { workspaceId: workspace.id, reviewerWorkspaceIds, chatId });
+    if (!updated) return json({ error: 'No such channel.' }, 404);
+    auth.logger.info('webapp.preview_channel_changed', { workspaceId: updated.id, set: chatId !== null });
+    return json({ id: updated.id, previewChannel: chatId ? { chatId, title } : null });
   }
 
   if (body.autoPublish !== undefined) {

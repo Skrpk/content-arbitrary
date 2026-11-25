@@ -110,12 +110,16 @@ export const workspaces = pgTable('workspaces', {
    */
   threadsEnabled: boolean('threads_enabled').notNull().default(false),
   /**
-   * A channel where each approved post goes first, as a preview: the reviewer
-   * looks at it there, edits it in Telegram if they like, and sends it on to
-   * the channel — now or at a time — with the buttons under it. Null publishes
-   * straight to the channel. See src/lib/drafts/drafts.ts.
+   * The preview channel: where the reviewer sends a post from the Approve
+   * dialog to see it in Telegram exactly as it will go out, as often as they
+   * edit it, before scheduling or publishing it in Zmistik
+   * (src/app/api/telegram/webapp/preview). Set in Settings; null for none.
+   *
+   * The column is the former draft channel's: approved posts no longer go
+   * there first. Drafts sent there before keep their buttons
+   * (src/lib/drafts/drafts.ts) until they are sent on.
    */
-  draftChatId: text('draft_chat_id'),
+  previewChatId: text('draft_chat_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [

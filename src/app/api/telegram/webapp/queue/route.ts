@@ -79,6 +79,8 @@ export async function GET(request: Request): Promise<Response> {
         name: workspace.name,
         /** Approve asks where to. */
         threads: await hasThreadsAccount(auth.db, workspace.id),
+        /** Approve offers Send to preview. */
+        preview: workspace.previewChatId !== null,
         waiting: queue.waiting,
         items: queue.items,
       };
@@ -181,7 +183,6 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   let published: PublishTarget[];
-  let draft = false;
   try {
     const result = await publishDecidedPost({
       db: auth.db,
@@ -196,7 +197,6 @@ export async function POST(request: Request): Promise<Response> {
       ...(targets ? { targets } : {}),
     });
     published = result.targets;
-    draft = result.draft;
     logger.info('webapp.queue_published', {
       targets: result.targets,
       externalId: row.externalId,
@@ -213,7 +213,7 @@ export async function POST(request: Request): Promise<Response> {
   await settleAllReviewMessages(
     client,
     await reviewCopiesOf(auth.db, row),
-    `${publishedLine(published, { draft })}\n${escapeHtml(row.xPostUrl)}`,
+    `${publishedLine(published)}\n${escapeHtml(row.xPostUrl)}`,
     logger,
   );
   if (published.includes('threads')) publishToThreadsSoon(row.id, logger);
