@@ -692,6 +692,8 @@ export function ReviewQueue({
               borderRadius: '0.9rem',
               padding: '0.9rem 1rem',
               marginBottom: '0.9rem',
+              // Scrolled to below the website's sticky header, not under it.
+              scrollMarginTop: '4.5rem',
               opacity: busy ? 0.7 : 1,
               outline: isFocused ? `2px solid ${theme.button}` : 'none',
               outlineOffset: '2px',

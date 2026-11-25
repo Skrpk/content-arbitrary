@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { PostEditor } from '@/components/rich-editor/post-editor';
 import { useWebsiteTools } from '../../../use-website-tools';
 
-/** The editor, framed for the website: done means back where it was opened from, on the post's channel. */
+/** The editor, framed for the website: done means back where it was opened from, on the post's channel and at its card. */
 export function WebPostEditor({
   postId,
   workspaceId,
@@ -16,7 +16,9 @@ export function WebPostEditor({
 }) {
   const tools = useWebsiteTools();
   const router = useRouter();
-  const back = from === 'scheduled' ? '/scheduled' : workspaceId ? `/queue?workspace=${workspaceId}` : '/queue';
+  // Back to the queue at the post's own card, not at the top of the list.
+  const queue = new URLSearchParams({ ...(workspaceId ? { workspace: String(workspaceId) } : {}), post: String(postId) });
+  const back = from === 'scheduled' ? '/scheduled' : `/queue?${queue}`;
   return (
     <PostEditor
       postId={postId}
