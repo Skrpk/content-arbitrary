@@ -29,13 +29,16 @@ export async function GET(request: Request): Promise<Response> {
   }
   if (!auth.ok) return auth.response;
 
+  // Only the channels with Threads on: for the rest, Settings has no Threads section.
+  const enabled = auth.workspaces.filter((workspace) => workspace.threadsEnabled);
   const accounts = await threadsAccountsFor(
     auth.db,
-    auth.workspaces.map((workspace) => workspace.id),
+    enabled.map((workspace) => workspace.id),
   );
   const now = new Date();
   return json({
     configured: threadsApp(auth.env) !== null,
+    channels: enabled.map((workspace) => workspace.id),
     via: auth.via,
     websiteUrl: auth.env.WEB_APP_URL ?? null,
     accounts: accounts.map((account) => ({
@@ -90,7 +93,7 @@ export async function PATCH(request: Request): Promise<Response> {
   } catch {
     return json({ error: 'bad request' }, 400);
   }
-  if (!auth.workspaces.some((workspace) => workspace.id === body.workspaceId)) {
+  if (!auth.workspaces.some((workspace) => workspace.id === body.workspaceId && workspace.threadsEnabled)) {
     return json({ error: 'No such channel.' }, 404);
   }
   const topic = normalizeTopicTag(body.topicTag);

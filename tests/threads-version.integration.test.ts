@@ -93,7 +93,7 @@ beforeEach(async () => {
   await ensureTestWorkspace(db);
   await db
     .update(workspaces)
-    .set({ name: 'VECTOR', telegramChatId: '-1003906212630', telegramAdminChatId: String(REVIEWER_ID), language: 'uk', postFooter: null })
+    .set({ name: 'VECTOR', telegramChatId: '-1003906212630', telegramAdminChatId: String(REVIEWER_ID), language: 'uk', postFooter: null, threadsEnabled: true })
     .where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
 });
 

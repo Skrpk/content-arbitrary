@@ -3,6 +3,7 @@ import type { Database } from '@/lib/db';
 import { describeError } from '@/lib/errors';
 import type { Logger } from '@/lib/logger';
 import { addSource } from '@/lib/sources/repository';
+import { threadsEnabledFor } from '@/lib/threads/accounts';
 import { profileLookup, type ThreadsCallOptions } from '@/lib/threads/client';
 import { NO_THREADS_READER, threadsReaderFor, type ThreadsReading } from '@/lib/threads/reader';
 import { normalizeThreadsUsername } from '@/lib/threads/source';
@@ -23,6 +24,8 @@ export type AddThreadsResult =
 
 export const THREADS_NOT_CONFIGURED = 'Threads is not set up here: the Threads app is not configured.';
 
+export const THREADS_NOT_ENABLED = 'Threads is not available for this channel.';
+
 export const NOT_A_READABLE_PROFILE =
   'Threads does not show that account: it may be private, have fewer than 100 followers, or not exist. ' +
   'Until Zmistik’s Threads app is approved by Meta, only Threads’ own official accounts can be read.';
@@ -31,6 +34,7 @@ export async function addThreadsSource(
   db: Database,
   input: { account: string; workspaceId: number; reading: ThreadsReading | null; logger?: Logger } & ThreadsCallOptions,
 ): Promise<AddThreadsResult> {
+  if (!(await threadsEnabledFor(db, input.workspaceId))) return { ok: false, reason: THREADS_NOT_ENABLED };
   const checked = normalizeThreadsUsername(input.account);
   if (!checked.ok) {
     return {

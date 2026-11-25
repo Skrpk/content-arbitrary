@@ -12,7 +12,9 @@ import { GET as deletionStatusRoute, POST as deleteRoute } from '@/app/api/threa
 import { DELETE as disconnectRoute, GET as accountsRoute, PATCH as topicRoute } from '@/app/api/threads/accounts/route';
 import { createSession } from '@/lib/accounts/sessions';
 import { userForTelegram } from '@/lib/accounts/users';
-import { threadsAccessToken } from '@/lib/threads/accounts';
+import { hasThreadsAccount, threadsAccessToken } from '@/lib/threads/accounts';
+import { addThreadsSource, THREADS_NOT_ENABLED } from '@/lib/sources/add-threads';
+import { helpText } from '@/lib/telegram/commands';
 import { refreshThreadsTokens, THREADS_REFRESH_AFTER_MS } from '@/lib/threads/refresh';
 import { encryptToken } from '@/lib/threads/token-crypto';
 import { createTestLogger, ensureTestWorkspace, withEnv } from './helpers';
@@ -147,13 +149,14 @@ beforeEach(async () => {
   await ensureTestWorkspace(db);
   await db
     .update(workspaces)
-    .set({ name: 'Space news', telegramChatId: '-1001000000001', telegramAdminChatId: String(REVIEWER_ID) })
+    .set({ name: 'Space news', telegramChatId: '-1001000000001', telegramAdminChatId: String(REVIEWER_ID), threadsEnabled: true })
     .where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
   await db.insert(workspaces).values({
     id: OTHER_WORKSPACE_ID,
     name: 'Someone else',
     telegramChatId: '-1001000000002',
     telegramAdminChatId: String(OTHER_REVIEWER_ID),
+    threadsEnabled: true,
   });
   stubThreads();
 });
@@ -363,6 +366,46 @@ describeIfDb('Meta asking to forget someone', () => {
     expect(await status.text()).toContain('Status: completed');
     const unknown = await run(() => deletionStatusRoute(new Request(`${WEB}/api/threads/delete?code=0000000000aaaaaaaaaaaaaaaaaaaa`)));
     expect(unknown.status).toBe(404);
+  });
+});
+
+describeIfDb('a channel Threads is off for', () => {
+  it('has no Threads section in settings, cannot connect, and its stored account publishes nowhere', async () => {
+    const session = await sessionFor(REVIEWER_ID);
+    await connect(session);
+    expect(await hasThreadsAccount(db as never, DEFAULT_WORKSPACE_ID)).toBe(true);
+
+    await db.update(workspaces).set({ threadsEnabled: false }).where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+    // Kept, but as if Threads were not there.
+    expect(await hasThreadsAccount(db as never, DEFAULT_WORKSPACE_ID)).toBe(false);
+
+    const listed = await run(() => accountsRoute(new Request(`${WEB}/api/threads/accounts`, { headers: { cookie: `__Host-session=${session}` } })));
+    expect(await listed.json()).toMatchObject({ channels: [], accounts: [] });
+
+    const started = await start(session);
+    expect(started.headers.get('location')).toBe(`${WEB}/settings?threads=failed`);
+    expect(await db.select().from(threadsConnectAttempts)).toHaveLength(0);
+
+    const topic = await run(() =>
+      topicRoute(
+        new Request(`${WEB}/api/threads/accounts`, {
+          method: 'PATCH',
+          headers: { cookie: `__Host-session=${session}`, origin: WEB, 'content-type': 'application/json' },
+          body: JSON.stringify({ workspaceId: DEFAULT_WORKSPACE_ID, topicTag: 'Space' }),
+        }),
+      ),
+    );
+    expect(topic.status).toBe(404);
+  });
+
+  it('cannot follow a Threads account, and the bot’s help does not mention Threads', async () => {
+    await db.update(workspaces).set({ threadsEnabled: false }).where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+    expect(await addThreadsSource(db as never, { account: '@nasa', workspaceId: DEFAULT_WORKSPACE_ID, reading: null })).toEqual({
+      ok: false,
+      reason: THREADS_NOT_ENABLED,
+    });
+    expect(helpText(false)).not.toMatch(/threads/i);
+    expect(helpText(true)).toContain('/addthreads');
   });
 });
 

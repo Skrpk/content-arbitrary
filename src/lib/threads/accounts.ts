@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { and, eq, gt, inArray, lt } from 'drizzle-orm';
-import { threadsAccounts, threadsConnectAttempts, type ThreadsAccount } from '@/db/schema';
+import { threadsAccounts, threadsConnectAttempts, workspaces, type ThreadsAccount } from '@/db/schema';
 import type { Database } from '@/lib/db';
 import { workspacesForUser } from '@/lib/accounts/users';
 import { exchangeCode, exchangeForLongLived, threadsMe, type ThreadsCallOptions } from '@/lib/threads/client';
@@ -142,8 +142,24 @@ export function threadsAccountStatus(account: Pick<ThreadsAccount, 'tokenExpires
   return account.lastError ? 'refresh_failed' : 'active';
 }
 
-/** Whether the channel has a Threads account to publish to: what decides if its reviewers get a choice. */
+/**
+ * Whether the channel publishes to Threads: Threads is on for it
+ * (`workspaces.threads_enabled`) and it has an account connected. What
+ * decides if its reviewers get a choice — in the queue, the editor,
+ * scheduling and the chat's buttons — and if auto-published posts go there.
+ */
 export async function hasThreadsAccount(db: Database, workspaceId: number): Promise<boolean> {
-  const [row] = await db.select({ id: threadsAccounts.id }).from(threadsAccounts).where(eq(threadsAccounts.workspaceId, workspaceId)).limit(1);
+  const [row] = await db
+    .select({ id: threadsAccounts.id })
+    .from(threadsAccounts)
+    .innerJoin(workspaces, eq(workspaces.id, threadsAccounts.workspaceId))
+    .where(and(eq(threadsAccounts.workspaceId, workspaceId), eq(workspaces.threadsEnabled, true)))
+    .limit(1);
   return Boolean(row);
+}
+
+/** Whether Threads is offered to the channel at all: connecting it, following it, publishing there. */
+export async function threadsEnabledFor(db: Database, workspaceId: number): Promise<boolean> {
+  const [row] = await db.select({ on: workspaces.threadsEnabled }).from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
+  return row?.on ?? false;
 }

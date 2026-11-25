@@ -205,7 +205,7 @@ beforeEach(async () => {
   await ensureTestWorkspace(db);
   await db
     .update(workspaces)
-    .set({ telegramChatId: CHANNEL_CHAT, telegramAdminChatId: String(REVIEWER_ID), threadsTopicTag: null })
+    .set({ telegramChatId: CHANNEL_CHAT, telegramAdminChatId: String(REVIEWER_ID), threadsTopicTag: null, threadsEnabled: true })
     .where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
 });
 

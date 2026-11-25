@@ -428,7 +428,7 @@ describeIfDb('a sync run with the review queue on', () => {
   it('publishes straight to the channel for one that publishes without review, reviewer or not', async () => {
     await db
       .update(workspaces)
-      .set({ autoPublish: true, telegramAdminChatId: null })
+      .set({ autoPublish: true, telegramAdminChatId: null, threadsEnabled: true })
       .where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
     const stack = makeStack();
     const summary = await runSync(stack, timelinePayload('1750000000000000042', ['3_1', '3_2']));

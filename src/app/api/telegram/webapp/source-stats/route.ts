@@ -54,6 +54,8 @@ export async function GET(request: Request): Promise<Response> {
     channels: auth.workspaces.map((workspace) => ({
       id: workspace.id,
       name: workspace.name,
+      // Threads is offered as a source only where it is on.
+      threads: workspace.threadsEnabled,
       sources: stats
         .filter((entry) => entry.workspaceId === workspace.id)
         .map(({ workspaceId: _workspaceId, lastPostAt, ...entry }) => ({

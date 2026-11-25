@@ -323,6 +323,13 @@
       "when": 1795009213171,
       "tag": "0045_channel_drafts",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1795632688583,
+      "tag": "0046_threads_enabled",
+      "breakpoints": true
     }
   ]
 }

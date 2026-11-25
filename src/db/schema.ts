@@ -103,6 +103,13 @@ export const workspaces = pgTable('workspaces', {
    */
   threadsTopicTag: text('threads_topic_tag'),
   /**
+   * Threads is offered to this tenant at all: connecting an account in
+   * Settings, Threads as a source, and Threads as somewhere to publish (in the
+   * queue, the editor, scheduling and the chat's buttons). Off by default; a
+   * tenant without it works as if Threads did not exist, whatever is stored.
+   */
+  threadsEnabled: boolean('threads_enabled').notNull().default(false),
+  /**
    * A channel where each approved post goes first, as a preview: the reviewer
    * looks at it there, edits it in Telegram if they like, and sends it on to
    * the channel — now or at a time — with the buttons under it. Null publishes

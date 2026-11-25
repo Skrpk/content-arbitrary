@@ -33,7 +33,8 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   const workspaceId = Number(new URL(request.url).searchParams.get('workspaceId'));
-  if (!viewer.viewer.workspaces.some((workspace) => workspace.id === workspaceId)) {
+  // A channel of theirs, with Threads on for it.
+  if (!viewer.viewer.workspaces.some((workspace) => workspace.id === workspaceId && workspace.threadsEnabled)) {
     return redirectTo(threadsSettingsUrl(env.WEB_APP_URL, 'failed'));
   }
 

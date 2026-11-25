@@ -301,9 +301,11 @@ export async function syncPosts(options: SyncOptions = {}): Promise<SyncSummary>
           await bootstrapLegacySource({ db, env, xClient, logger, workspace: tenant });
         }
 
-        const enabled = longestWaitingFirst(await listSyncableSources(db, tenant.id), (source) =>
-          lastSyncTimes.get(lastSyncKey(tenant.id, syncStateKey(source))),
+        // A Threads source is read only for a tenant Threads is on for.
+        const syncable = (await listSyncableSources(db, tenant.id)).filter(
+          (source) => source.platform !== 'threads' || tenant.threadsEnabled,
         );
+        const enabled = longestWaitingFirst(syncable, (source) => lastSyncTimes.get(lastSyncKey(tenant.id, syncStateKey(source))));
 
         if (enabled.length === 0) {
           logger.warn('sync.no_sources', { workspaceId: tenant.id });

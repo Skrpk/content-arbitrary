@@ -158,9 +158,9 @@ beforeEach(async () => {
   await ensureTestWorkspace(db);
   await db
     .update(workspaces)
-    .set({ telegramChatId: '-1003906212630', telegramAdminChatId: '555001' })
+    .set({ telegramChatId: '-1003906212630', telegramAdminChatId: '555001', threadsEnabled: true })
     .where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
-  await db.insert(workspaces).values({ id: OTHER_WORKSPACE, name: 'Other', telegramChatId: '-1003906212631', telegramAdminChatId: '555002' });
+  await db.insert(workspaces).values({ id: OTHER_WORKSPACE, name: 'Other', telegramChatId: '-1003906212631', telegramAdminChatId: '555002', threadsEnabled: true });
   threads.profiles = new Set(['nasa', 'esa', 'spacex']);
   threads.posts.clear();
   threads.requests.length = 0;

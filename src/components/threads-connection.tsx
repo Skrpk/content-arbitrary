@@ -27,6 +27,8 @@ interface ThreadsView {
   configured: boolean;
   via: 'mini-app' | 'website';
   websiteUrl: string | null;
+  /** The channels Threads is on for; the section shows only these, and not at all without any. */
+  channels: number[];
   accounts: AccountView[];
 }
 
@@ -113,7 +115,8 @@ export function ThreadsConnection({
     [confirm, load, request],
   );
 
-  if (!view || !view.configured) return null;
+  const shown = channels.filter((channel) => view?.channels.includes(channel.id));
+  if (!view || !view.configured || shown.length === 0) return null;
 
   const buttonStyle = (primary: boolean, disabled: boolean) => ({
     padding: '0.45rem 0.85rem',
@@ -139,13 +142,13 @@ export function ThreadsConnection({
         A Threads account each channel can publish to as well.
         {view.via === 'mini-app' ? ' Connecting opens the website, where you sign in with Telegram.' : ''}
       </div>
-      {channels.map((channel) => {
+      {shown.map((channel) => {
         const account = view.accounts.find((item) => item.workspaceId === channel.id);
         const working = busy.has(channel.id);
         const hint = account ? STATUS_HINTS[account.status] : null;
         return (
           <div key={channel.id} style={{ marginTop: '0.5rem', opacity: working ? 0.6 : 1 }}>
-            {channels.length > 1 ? <div style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>📢 {channel.name}</div> : null}
+            {shown.length > 1 ? <div style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>📢 {channel.name}</div> : null}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
               <span style={{ flex: 1, minWidth: '10rem' }}>{account ? `@${account.username}` : 'Not connected'}</span>
               {account ? (

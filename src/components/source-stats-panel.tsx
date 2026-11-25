@@ -49,6 +49,8 @@ interface SourceView {
 interface ChannelView {
   id: number;
   name: string;
+  /** Threads is on for it: offered as a source to add. */
+  threads?: boolean;
   sources: SourceView[];
 }
 
@@ -255,7 +257,7 @@ export function SourceStatsPanel({ request, confirm }: Pick<PanelTools, 'request
       {data ? (
         <AddSourceForm
           request={request}
-          channels={data.channels.map((channel) => ({ id: channel.id, name: channel.name }))}
+          channels={data.channels.map((channel) => ({ id: channel.id, name: channel.name, threads: channel.threads ?? false }))}
           onAdded={() => void fetchStats(period)}
         />
       ) : null}

@@ -1,4 +1,5 @@
 import { addThreadsSource } from '@/lib/sources/add-threads';
+import { threadsEnabledFor } from '@/lib/threads/accounts';
 import type { ThreadsReading } from '@/lib/threads/reader';
 import type { Database } from '@/lib/db';
 import type { Logger } from '@/lib/logger';
@@ -181,11 +182,23 @@ function channelsOf(context: CommandContext): WorkspaceRef[] {
     : [{ id: context.workspaceId, name: '' }];
 }
 
+/** Whether Threads is on for any channel the reviewer reviews for. */
+async function threadsOnForAny(context: CommandContext): Promise<boolean> {
+  for (const channel of channelsOf(context)) {
+    if (await threadsEnabledFor(context.db, channel.id)) return true;
+  }
+  return false;
+}
+
 /**
  * The commands in the bot's menu, beside the message field — registered with
  * Telegram by `npm run telegram:commands`. Rerun that after changing this.
  * Telegram takes names of 1–32 lowercase letters, digits and underscores, and
  * descriptions of up to 256 characters.
+ *
+ * The menu is the same for every chat, so /addthreads is not in it: Threads
+ * is on only for some channels (`workspaces.threads_enabled`), whose help
+ * lists it.
  */
 export const BOT_COMMANDS: { command: string; description: string }[] = [
   { command: 'review', description: 'Posts waiting for review, best Radar score first' },
@@ -195,15 +208,21 @@ export const BOT_COMMANDS: { command: string; description: string }[] = [
   { command: 'addtelegram', description: 'Start watching a public Telegram channel: /addtelegram @channel' },
   { command: 'addyoutube', description: 'Start watching a YouTube channel’s new videos: /addyoutube @handle' },
   { command: 'addwebsite', description: 'Start watching a website’s new articles: /addwebsite <sitemap URL>' },
-  { command: 'addthreads', description: 'Start watching a public Threads account: /addthreads @username' },
   { command: 'scheduled', description: 'Posts waiting to be published at a set time' },
   { command: 'help', description: 'What the bot can do' },
 ];
 
-const HELP_TEXT = [
+/** /help: Threads is mentioned only to a reviewer with a channel it is on for. */
+export function helpText(threads: boolean): string {
+  return HELP_LINES.filter((line) => threads || !/threads/i.test(line))
+    .join('\n')
+    .replace('YouTube, a website)', threads ? 'YouTube, a website, Threads)' : 'YouTube, a website)');
+}
+
+const HELP_LINES = [
   '<b>Source management</b>',
   '',
-  '/sourcestats — the Sources page: add any source (X, Telegram, RSS, YouTube, a website, Threads), and see how each performs',
+  '/sourcestats — the Sources page: add any source (X, Telegram, RSS, YouTube, a website), and see how each performs',
   '/addsource @username — start watching an account',
   '/addrss &lt;feed URL&gt; — start watching an RSS or Atom feed (with several channels: /addrss &lt;channel id&gt; &lt;feed URL&gt;)',
   '/addtelegram @channel — start watching a public Telegram channel (with several channels: /addtelegram &lt;channel id&gt; @channel)',
@@ -222,7 +241,10 @@ const HELP_TEXT = [
   'How often new posts are announced — or each sent to the chat on its own — is under ⚙️ Settings.',
   '',
   '/help — this list',
-].join('\n');
+];
+
+/** Every line of the help, Threads included. */
+const HELP_TEXT = helpText(true);
 
 /** Argument handling for a command that takes a handle. */
 async function resolveHandleArgument(
@@ -656,7 +678,7 @@ export async function dispatchCommand(
   switch (command) {
     case 'start':
     case 'help':
-      return { text: HELP_TEXT };
+      return { text: helpText(await threadsOnForAny(context)) };
     case 'review':
       return handleReview(context);
     case 'scheduled':
@@ -664,7 +686,9 @@ export async function dispatchCommand(
     case 'sourcestats':
       return {
         text:
-          '<b>Sources</b>\n\nAdd any source — an X account, a Telegram channel, an RSS feed, a YouTube channel, a website, a Threads account — at the top of ' +
+          '<b>Sources</b>\n\nAdd any source — an X account, a Telegram channel, an RSS feed, a YouTube channel, a website' +
+          ((await threadsOnForAny(context)) ? ', a Threads account' : '') +
+          ' — at the top of ' +
           'the page. Per source: posts it brought in, how many you approved and why the rest were rejected, ' +
           'and roughly what reading them from X cost — with buttons to pause, resume or remove each. ' +
           '⚙️ Settings has the per-source options.',

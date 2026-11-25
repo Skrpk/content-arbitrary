@@ -1,12 +1,13 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { PanelTools } from '@/components/panel-tools';
 import { theme } from '@/lib/telegram/webapp-client';
 
 /**
  * Add a source of any kind — an X account, a public Telegram channel, an RSS
- * or Atom feed, a YouTube channel, a website by its sitemap, a Threads account — to one of the reviewer's channels. For the Sources page, in
+ * or Atom feed, a YouTube channel, a website by its sitemap, a Threads account
+ * where Threads is on for the channel — to one of the reviewer's channels. For the Sources page, in
  * the Mini App and on the website alike.
  *
  * The kind is picked, and a pasted link picks it too: an `@name` alone could
@@ -103,7 +104,8 @@ export function AddSourceForm({
   channels,
   onAdded,
 }: Pick<PanelTools, 'request'> & {
-  channels: { id: number; name: string }[];
+  /** `threads`: Threads is on for the channel, so it is offered as a kind of source. */
+  channels: { id: number; name: string; threads?: boolean }[];
   /** A source was added, or was there already; the page shows it. */
   onAdded: (added: AddedSource) => void;
 }) {
@@ -113,8 +115,11 @@ export function AddSourceForm({
   const [adding, setAdding] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const chosen = KINDS.find((option) => option.key === kind)!;
   const workspaceId = channel ?? channels[0]?.id ?? null;
+  // Threads only for a channel it is on for; switching to another falls back to X.
+  const threadsOn = channels.find((option) => option.id === workspaceId)?.threads ?? false;
+  const kinds = useMemo(() => (threadsOn ? KINDS : KINDS.filter((option) => option.key !== 'threads')), [threadsOn]);
+  const chosen = useMemo(() => kinds.find((option) => option.key === kind) ?? kinds[0]!, [kind, kinds]);
 
   const add = useCallback(async () => {
     if (workspaceId === null || value.trim() === '') return;
@@ -166,8 +171,8 @@ export function AddSourceForm({
       <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>➕ Add a source</div>
 
       <div role="radiogroup" aria-label="Kind of source" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.5rem' }}>
-        {KINDS.map((option) => {
-          const active = option.key === kind;
+        {kinds.map((option) => {
+          const active = option.key === chosen.key;
           return (
             <button
               key={option.key}
@@ -207,7 +212,7 @@ export function AddSourceForm({
         onChange={(event) => {
           setValue(event.target.value);
           const linked = kindOfLink(event.target.value);
-          if (linked) setKind(linked);
+          if (linked && kinds.some((option) => option.key === linked)) setKind(linked);
         }}
         onKeyDown={(event) => {
           if (event.key === 'Enter') void add();
