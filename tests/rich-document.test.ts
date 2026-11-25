@@ -146,6 +146,15 @@ describe('a post opened in the editor for the first time', () => {
     expect(richDocumentPlainText(doc)).toBe('First line\nsecond line\n\nNext paragraph');
     expect(parseRichDocument(doc, { mediaCount: 2 }).ok).toBe(true);
   });
+
+  it('places the uploads it starts with after its own pictures, such as the article picture of a link post', () => {
+    const doc = initialRichDocument({ text: 'Ice on Mars', mediaCount: 1, uploads: ['u7'] });
+    expect(doc.content.slice(0, 2)).toEqual([
+      { type: 'postMedia', attrs: { ref: 'm0', caption: null } },
+      { type: 'postMedia', attrs: { ref: 'u7', caption: null } },
+    ]);
+    expect(parseRichDocument(doc, { mediaCount: 1, uploads: new Set(['u7']) }).ok).toBe(true);
+  });
 });
 
 describe('a post edited only for its words', () => {

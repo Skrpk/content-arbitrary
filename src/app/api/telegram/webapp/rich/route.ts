@@ -15,6 +15,7 @@ import { captionToPlainText, parsePostFooter, stripFooter } from '@/lib/telegram
 import { authorizeReviewer, json, reviewerWorkspaceForPost } from '@/lib/telegram/webapp-request';
 import { loadUploads, uploadMaxBytes, uploadPathPrefix, uploadRef, uploadsAvailable, type UploadRow } from '@/lib/uploads/uploads';
 import { shownMediaUrl } from '@/lib/telegram-channel/media-link';
+import { articleImageUpload, vercelArticleImageStore } from '@/lib/uploads/article-image';
 import { hasThreadsAccount } from '@/lib/threads/accounts';
 import { threadsLength, THREADS_TEXT_LIMIT } from '@/lib/threads/text';
 
@@ -58,6 +59,12 @@ export async function GET(request: Request): Promise<Response> {
   const { post, workspace } = found;
   const payload = post.approvalPayload!;
   const footer = parsePostFooter(workspace.postFooter);
+  // A post with no media of its own, opened for the first time, starts with its article's picture, as a tweet does with its photo.
+  const mediaCount = payloadMediaCount(payload);
+  const articleImage =
+    post.richDoc === null && mediaCount === 0 && uploadsAvailable(auth.env)
+      ? await articleImageUpload(auth.db, vercelArticleImageStore(auth.env.BLOB_READ_WRITE_TOKEN), { post, logger: auth.logger })
+      : null;
   const uploads = await loadUploads(auth.db, post.id);
 
   return json({
@@ -67,7 +74,9 @@ export async function GET(request: Request): Promise<Response> {
     sourceLabel: sourceLabelOfPost(post.externalId, post.xAuthorUsername),
     url: post.xPostUrl,
     isRich: post.richDoc !== null,
-    doc: post.richDoc ?? initialRichDocument({ text: plainTextOf(post, footer), mediaCount: payloadMediaCount(payload) }),
+    doc:
+      post.richDoc ??
+      initialRichDocument({ text: plainTextOf(post, footer), mediaCount, uploads: articleImage ? [uploadRef(articleImage)] : [] }),
     media: [...mediaOf(post), ...uploads.map(uploadMedia)],
     footer: footer?.text ?? null,
     // The Threads tab, for a channel with an account there: the post's own text, or null while it follows Telegram's.

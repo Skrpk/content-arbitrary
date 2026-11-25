@@ -18,9 +18,22 @@ const store = vi.hoisted(() => ({
   blobs: new Map<string, { url: string; pathname: string; contentType: string; size: number }>(),
   deleted: [] as string[],
   signed: [] as { pathname: string; operations: string[] }[],
+  put: [] as string[],
+}));
+
+// Every host is a public one: the article pictures' hosts are made up.
+vi.mock('@/lib/rss/url', async (original) => ({
+  ...(await original<typeof import('@/lib/rss/url')>()),
+  lookupHost: async () => ['93.184.215.14'],
 }));
 
 vi.mock('@vercel/blob', () => ({
+  put: async (pathname: string, body: Buffer, options: { contentType: string }) => {
+    const url = `https://store123.public.blob.vercel-storage.com/${pathname}`;
+    store.put.push(pathname);
+    store.blobs.set(url, { url, pathname, contentType: options.contentType, size: body.byteLength });
+    return { url, pathname, contentType: options.contentType };
+  },
   head: async (url: string) => {
     const blob = store.blobs.get(url);
     if (!blob) throw new Error('BlobNotFoundError');
@@ -85,6 +98,9 @@ afterAll(async () => {
 });
 
 const telegramCalls: { method: string; body: Record<string, unknown> }[] = [];
+const JPEG = new Uint8Array([0xff, 0xd8, 0xff, ...new Array(253).fill(0)]);
+/** What a picture's address answers with, outside the store; a test may change it. */
+let articleBody: Uint8Array | string = JPEG;
 const fetched: string[] = [];
 
 beforeEach(async () => {
@@ -92,6 +108,8 @@ beforeEach(async () => {
   store.blobs.clear();
   store.deleted.length = 0;
   store.signed.length = 0;
+  store.put.length = 0;
+  articleBody = JPEG;
   telegramCalls.length = 0;
   fetched.length = 0;
   await db.delete(processedPosts);
@@ -107,9 +125,10 @@ beforeEach(async () => {
       const url = String(input);
       if (!url.includes('/bot')) {
         fetched.push(url);
-        return new Response(new Uint8Array([0xff, 0xd8, 0xff, ...new Array(253).fill(0)]), {
+        const body = url.startsWith('https://store123.') ? JPEG : articleBody;
+        return new Response(body as BodyInit, {
           status: 200,
-          headers: { 'content-type': 'image/jpeg', 'content-length': '256' },
+          headers: { 'content-type': typeof body === 'string' ? 'text/html' : 'image/jpeg', 'content-length': String(body.length) },
         });
       }
       const raw = init?.body;
@@ -321,5 +340,60 @@ describeIfDb('an upload in a rich post', () => {
     expect(store.deleted).toEqual([gone.url]);
     expect(store.blobs.has(kept.url)).toBe(true);
     expect(await sweepUploads(db as never, vercelBlobStore('token'), createTestLogger())).toBe(0);
+  });
+});
+
+describeIfDb('the article picture of a post with no media of its own', () => {
+  const ARTICLE_IMAGE = 'https://cdn.example/article.jpg';
+  const LINK_ONLY: ApprovalPayload = { method: 'sendMessage', caption: 'Ice on Mars', items: [] };
+
+  type Editor = { doc: { content: { type: string; attrs?: { ref: string } }[] }; media: { ref: string; uploaded?: boolean }[] };
+  const open = async (postId: number) =>
+    (await (await call(richRoute.GET, `/api/telegram/webapp/rich?post=${postId}`, undefined, { method: 'GET' })).json()) as Editor;
+
+  it('is put in the store as an upload and starts the post in the editor, once', async () => {
+    const row = await post({ approvalPayload: LINK_ONLY, sourceMetadata: { previewImageUrl: ARTICLE_IMAGE } });
+
+    const editor = await open(row.id);
+    const [upload] = await db.select().from(postUploads).where(eq(postUploads.processedPostId, row.id));
+    expect(upload).toMatchObject({ kind: 'photo', contentType: 'image/jpeg', pathname: `posts/${row.id}/article-image.jpg` });
+    expect(editor.doc.content[0]).toEqual({ type: 'postMedia', attrs: { ref: `u${upload!.id}`, caption: null } });
+    expect(editor.doc.content[1]).toMatchObject({ type: 'paragraph' });
+    expect(editor.media).toEqual([expect.objectContaining({ ref: `u${upload!.id}`, uploaded: true })]);
+
+    // Opened again, it is the same upload, not fetched again.
+    expect((await open(row.id)).doc.content[0]).toEqual(editor.doc.content[0]);
+    expect(fetched).toEqual([ARTICLE_IMAGE]);
+    expect(store.put).toEqual([`posts/${row.id}/article-image.jpg`]);
+  });
+
+  it('is taken from a website page’s og:image as well', async () => {
+    const row = await post({
+      approvalPayload: LINK_ONLY,
+      sourceMetadata: { website: { sitemapUrl: 'https://site.example/sitemap.xml', extractedLength: 900, imageUrl: ARTICLE_IMAGE } },
+    });
+    expect((await open(row.id)).doc.content[0]).toMatchObject({ type: 'postMedia' });
+  });
+
+  it('is left alone for a post with media of its own, or one already laid out in the editor', async () => {
+    const withMedia = await post({ sourceMetadata: { previewImageUrl: ARTICLE_IMAGE } });
+    expect((await open(withMedia.id)).doc.content[0]).toEqual({ type: 'postMedia', attrs: { ref: 'm0', caption: null } });
+
+    const laidOut = await post({
+      approvalPayload: LINK_ONLY,
+      sourceMetadata: { previewImageUrl: ARTICLE_IMAGE },
+      richDoc: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Mine' }] }] },
+    });
+    expect((await open(laidOut.id)).doc.content).toEqual([{ type: 'paragraph', content: [{ type: 'text', text: 'Mine' }] }]);
+    expect(fetched).toEqual([]);
+  });
+
+  it('opens the editor as before when the address is not a photo Telegram takes', async () => {
+    articleBody = '<html>not a picture</html>';
+    const row = await post({ approvalPayload: LINK_ONLY, sourceMetadata: { previewImageUrl: ARTICLE_IMAGE } });
+    const editor = await open(row.id);
+    expect(editor.doc.content.every((block) => block.type === 'paragraph')).toBe(true);
+    expect(editor.media).toEqual([]);
+    expect(store.put).toEqual([]);
   });
 });

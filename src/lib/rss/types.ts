@@ -35,7 +35,8 @@ export interface ParsedFeedEntry {
   /**
    * The entry's picture, as the feed names it: an image enclosure, a Media
    * RSS image or thumbnail, or else the first picture in its content or
-   * summary. Only shown to the reviewer — never downloaded or published.
+   * summary. Shown to the reviewer; downloaded only when the editor is
+   * opened on the post, which starts with it (src/lib/uploads/article-image.ts).
    */
   imageUrl: string | null;
 }

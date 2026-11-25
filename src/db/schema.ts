@@ -399,8 +399,9 @@ export const DEFAULT_WORKSPACE_ID = 1;
 export interface SourceMetadata {
   /**
    * A feed entry's picture, as the feed named it (src/lib/rss/parser.ts):
-   * shown to the reviewer in place of the link preview Telegram will make,
-   * never downloaded or sent.
+   * shown to the reviewer in place of the link preview Telegram will make.
+   * Sent only when the reviewer keeps it in the post in the editor, which
+   * starts with it (src/lib/uploads/article-image.ts).
    */
   previewImageUrl?: string | null;
   /** Its length, for a video. */
@@ -429,7 +430,7 @@ export interface SourceMetadata {
     language?: string | null;
     /** How long the extracted article was, in characters, before it was bounded. */
     extractedLength: number;
-    /** Its og:image, noted for later; never downloaded or sent. */
+    /** Its og:image: shown to the reviewer, and where the editor starts, like a feed entry's picture. */
     imageUrl?: string | null;
   } | null;
 }

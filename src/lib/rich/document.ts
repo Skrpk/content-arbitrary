@@ -368,13 +368,15 @@ function hasHighlight(content: RichInline[] | undefined): boolean {
 
 /**
  * Where the editor starts for a post never opened in it: its pictures first,
- * as they are in the post now, then its text — a paragraph per blank-line
- * break, a line break per newline.
+ * as they are in the post now — then any uploads it starts with, such as the
+ * picture of the article it links to — then its text: a paragraph per
+ * blank-line break, a line break per newline.
  */
-export function initialRichDocument(input: { text: string; mediaCount: number }): RichDocument {
-  const media: RichBlock[] = Array.from({ length: Math.min(input.mediaCount, RICH_MEDIA_MAX) }, (_, index) => ({
+export function initialRichDocument(input: { text: string; mediaCount: number; uploads?: string[] }): RichDocument {
+  const refs = [...Array.from({ length: input.mediaCount }, (_, index) => `m${index}`), ...(input.uploads ?? [])];
+  const media: RichBlock[] = refs.slice(0, RICH_MEDIA_MAX).map((ref) => ({
     type: 'postMedia',
-    attrs: { ref: `m${index}`, caption: null },
+    attrs: { ref, caption: null },
   }));
   const paragraphs: RichBlock[] = input.text
     .split(/\n{2,}/)

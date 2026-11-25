@@ -6,7 +6,7 @@ import { shownMediaUrl } from '@/lib/telegram-channel/media-link';
  * reviewer was shown them — or, for a post with none, the picture of the
  * article it links to, where its source named one (a feed entry's picture, a
  * website page's og:image), standing in for the link preview Telegram will
- * make of it. That picture is only shown, never sent.
+ * make of it. Shown here; the editor starts with it, and sends it only if it is kept (src/lib/uploads/article-image.ts).
  */
 export function shownMedia(
   row: Pick<ProcessedPost, 'externalId' | 'reviewMedia' | 'sourceMetadata'>,
