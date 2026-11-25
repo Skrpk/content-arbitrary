@@ -135,7 +135,7 @@ export function PreviewChannelSettings({
                   autoCapitalize="none"
                   autoCorrect="off"
                   spellCheck={false}
-                  placeholder="@my_previews or -1001234567890"
+                  placeholder="@username, t.me link or channel id"
                   value={draft ?? ''}
                   onChange={(event) => setDrafts((all) => ({ ...all, [channel.id]: event.target.value }))}
                   onKeyDown={(event) => {
