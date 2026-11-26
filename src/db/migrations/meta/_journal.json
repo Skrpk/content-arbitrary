@@ -330,6 +330,13 @@
       "when": 1795632688583,
       "tag": "0046_threads_enabled",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1795707340064,
+      "tag": "0047_drop_preview_channel",
+      "breakpoints": true
     }
   ]
 }

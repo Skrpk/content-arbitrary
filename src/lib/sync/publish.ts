@@ -85,10 +85,10 @@ export async function publishDecidedPost(input: {
 }
 
 /**
- * Send a post to the channel's preview channel, exactly as it would go out
- * to the channel now — the same path as publishing, its footer, rich layout
- * and media included — and record nothing: the post stays undecided, its
- * uploads stay in the store, and it can be edited and previewed again.
+ * Send a post to the reviewer's own chat with the bot, exactly as it would go
+ * out to the channel now — the same path as publishing, its footer, rich
+ * layout and media included — and record nothing: the post stays undecided,
+ * its uploads stay in the store, and it can be edited and previewed again.
  */
 export async function previewPost(input: {
   db: Database;
@@ -97,15 +97,15 @@ export async function previewPost(input: {
   row: ProcessedPost;
   payload: ApprovalPayload;
   destination: TelegramDestination;
-  /** The preview channel. */
-  previewChatId: string;
+  /** The reviewer's private chat with the bot: their Telegram id. */
+  chatId: string;
   logger?: Logger;
   fetchImpl?: typeof fetch;
   footer?: PostFooter | null;
 }): Promise<PublishResult> {
   return publishToTelegram({
     ...input,
-    destination: { ...input.destination, chatId: input.previewChatId, disableNotification: true },
+    destination: { ...input.destination, chatId: input.chatId, disableNotification: true },
     targets: ['telegram'],
     keepUploads: true,
     record: false,

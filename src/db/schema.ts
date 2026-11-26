@@ -109,17 +109,6 @@ export const workspaces = pgTable('workspaces', {
    * tenant without it works as if Threads did not exist, whatever is stored.
    */
   threadsEnabled: boolean('threads_enabled').notNull().default(false),
-  /**
-   * The preview channel: where the reviewer sends a post from the Approve
-   * dialog to see it in Telegram exactly as it will go out, as often as they
-   * edit it, before scheduling or publishing it in Zmistik
-   * (src/app/api/telegram/webapp/preview). Set in Settings; null for none.
-   *
-   * The column is the former draft channel's: approved posts no longer go
-   * there first. Drafts sent there before keep their buttons
-   * (src/lib/drafts/drafts.ts) until they are sent on.
-   */
-  previewChatId: text('draft_chat_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
@@ -811,8 +800,8 @@ export const DRAFT_STATUSES = ['waiting', 'scheduled', 'publishing', 'published'
 export type DraftStatus = (typeof DRAFT_STATUSES)[number];
 
 /**
- * An approved post in its channel's draft channel (workspaces.draft_chat_id),
- * on its way to the channel. What goes out is a copy of its messages there,
+ * An approved post in its channel's former draft channel, on its way to the
+ * channel. No new ones are opened; those sent before keep their buttons. What goes out is a copy of its messages there,
  * taken when it goes — edits made in Telegram included. Its control message,
  * a reply under it, carries the buttons and says where it stands.
  */

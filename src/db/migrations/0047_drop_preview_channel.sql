@@ -1,0 +1,1 @@
+ALTER TABLE "workspaces" DROP COLUMN "draft_chat_id";

@@ -18,10 +18,12 @@ import { TELEGRAM_PARSE_MODE, escapeHtml } from '@/lib/telegram/format-caption';
 import { sendText, type InlineKeyboardMarkup } from '@/lib/telegram/send-media';
 
 /**
- * The draft channel: an approved post goes there first, as a preview.
+ * The former draft channel: an approved post went there first, as a preview.
+ * No new drafts are opened — Send to preview now puts a post in the
+ * reviewer's own chat with the bot — but drafts sent before keep working
+ * here until they are sent on.
  *
- * A channel with a draft channel (workspaces.draft_chat_id) publishes each
- * approved post there instead, and puts a control message under it — a reply
+ * A channel with a draft channel published each approved post there instead, and puts a control message under it — a reply
  * with the buttons. The reviewer looks the post over in Telegram, edits it
  * there if they like, and sends it on: Publish now, or a time typed in reply
  * to the control message. What reaches the channel is a copy of the post's

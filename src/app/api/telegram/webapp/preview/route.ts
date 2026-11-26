@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { isPublishablePayload } from '@/db/schema';
-import { messageLink } from '@/lib/drafts/drafts';
+import { telegramIdOfUser } from '@/lib/accounts/users';
 import { describeError } from '@/lib/errors';
 import { previewPost } from '@/lib/sync/publish';
 import { findPostAwaitingReview } from '@/lib/sync/repository';
@@ -11,14 +11,15 @@ import { destinationFor } from '@/lib/workspace';
 
 /**
  * Send to preview: the Approve dialog's button. The post goes to the
- * channel's preview channel exactly as it would go out to the channel now —
- * its edits, layout, media and footer — and nothing is decided: it stays in
- * the queue (or on the schedule), to be edited and previewed again, then
- * scheduled or published from Zmistik.
+ * reviewer's own chat with the bot exactly as it would go out to the channel
+ * now — its edits, layout, media and footer — and nothing is decided: it
+ * stays in the queue (or on the schedule), to be edited and previewed again,
+ * then scheduled or published from Zmistik.
  *
- * Guarded like every reviewer endpoint, on a post of the reviewer's own
- * channel that has not gone out, for a channel with a preview channel set in
- * Settings. Each press sends a new copy; earlier ones are left as they are.
+ * Only ever to the person who pressed it, never to a chat they name, so a
+ * preview cannot be made to land anywhere else. Guarded like every reviewer
+ * endpoint, on a post of the reviewer's own channel that has not gone out.
+ * Each press sends a new copy; earlier ones are left as they are.
  */
 
 export const runtime = 'nodejs';
@@ -49,8 +50,10 @@ export async function POST(request: Request): Promise<Response> {
     ? await findPostAwaitingReview(auth.db, { id: body.postId, workspaceId: workspace.id, includeScheduled: true })
     : null;
   if (!workspace || !post) return json({ error: 'This post is no longer awaiting review.' }, 409);
-  if (!workspace.previewChatId) return json({ error: 'This channel has no preview channel. Set one in Settings.' }, 422);
   if (!isPublishablePayload(post.approvalPayload)) return json({ error: 'Cannot preview: the post’s media are not on record.' }, 422);
+
+  const chatId = await telegramIdOfUser(auth.db, auth.user.id);
+  if (!chatId) return json({ error: 'Previews go to your chat with the bot: sign in with Telegram to get them.' }, 422);
 
   const resolved = destinationFor(workspace, auth.env);
   if (!resolved.ok) return json({ error: 'This channel is not configured.' }, 500);
@@ -64,16 +67,19 @@ export async function POST(request: Request): Promise<Response> {
       row: post,
       payload: post.approvalPayload,
       destination: resolved.destination,
-      previewChatId: workspace.previewChatId,
+      chatId,
       footer: parsePostFooter(workspace.postFooter),
       logger,
     });
-    const first = result.messages[0]?.messageId ?? result.primaryMessageId;
     logger.info('webapp.previewed', { messages: result.messages.length });
-    return json({ ok: true, link: first ? messageLink(workspace.previewChatId, first) : null });
+    return json({ ok: true });
   } catch (error) {
     const message = describeError(error);
     logger.warn('webapp.preview_failed', { error: message });
+    // Telegram lets a bot write to someone only once they have started it.
+    if (/can't initiate conversation|bot was blocked by the user|chat not found/i.test(message)) {
+      return json({ error: 'The bot cannot write to you yet: open your chat with the bot, press Start, then try again.' }, 409);
+    }
     return json({ error: `The preview could not be sent: ${message.slice(0, 300)}` }, 502);
   }
 }

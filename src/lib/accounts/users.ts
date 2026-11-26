@@ -120,6 +120,20 @@ export async function findUserByIdentity(db: Database, provider: IdentityProvide
 }
 
 /**
+ * The user's Telegram id — their private chat with the bot — or null for
+ * someone who signs in some other way (an app store's reviewer).
+ */
+export async function telegramIdOfUser(db: Database, userId: number): Promise<string | null> {
+  const rows = await db
+    .select({ subject: userIdentities.subject })
+    .from(userIdentities)
+    .where(and(eq(userIdentities.userId, userId), eq(userIdentities.provider, 'telegram')))
+    .orderBy(asc(userIdentities.id))
+    .limit(1);
+  return rows[0]?.subject ?? null;
+}
+
+/**
  * A new user with this identity. Two first sign-ins at once — a Mini App and
  * the website, say — race on the identity's unique key: the loser's user is
  * rolled back and it reads the winner's.

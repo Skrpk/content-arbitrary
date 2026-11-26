@@ -174,7 +174,6 @@ beforeEach(async () => {
       name: 'Vector',
       telegramChatId: CHANNEL_CHAT,
       telegramAdminChatId: String(REVIEWER_ID),
-      previewChatId: DRAFT_CHAT,
       reviewDigestTimezone: 'Europe/Prague',
     })
     .where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
@@ -185,7 +184,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describeIfDb('Approve, with a preview channel (the former draft channel)', () => {
+describeIfDb('Approve, now that drafts are no longer opened', () => {
   it('publishes straight to the channel, and opens no draft', async () => {
     const post = await queuePost();
 

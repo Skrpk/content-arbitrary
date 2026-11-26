@@ -4,8 +4,6 @@ import { deleteSource, listSources, updateSourceSettings } from '@/lib/sources/r
 import { RADAR_THRESHOLD_MAX, RADAR_THRESHOLD_MIN } from '@/lib/radar/threshold';
 import { authorizeReviewer, json } from '@/lib/telegram/webapp-request';
 import { sourceView } from '@/lib/sources/view';
-import { previewChannelTitle } from '@/lib/review/preview-channel';
-import { TelegramClient } from '@/lib/telegram/client';
 
 /**
  * The source Mini Apps' API: list the reviewer's sources, channel by
@@ -46,9 +44,6 @@ export async function GET(request: Request): Promise<Response> {
   }
   if (!auth.ok) return auth.response;
 
-  // Made only when a channel has a preview channel to name.
-  let telegram: TelegramClient | null = null;
-  const client = () => (telegram ??= new TelegramClient({ logger: auth.logger, attempts: 1 }));
   const channels = await Promise.all(
     auth.workspaces.map(async (workspace) => ({
       id: workspace.id,
@@ -58,9 +53,6 @@ export async function GET(request: Request): Promise<Response> {
       reviewDigestTimezone: workspace.reviewDigestTimezone,
       autoPublish: workspace.autoPublish,
       editorialProfile: workspace.editorialProfile,
-      previewChannel: workspace.previewChatId
-        ? { chatId: workspace.previewChatId, title: await previewChannelTitle(client(), workspace.previewChatId) }
-        : null,
       sources: (await listSources(auth.db, workspace.id)).map(sourceView),
     })),
   );

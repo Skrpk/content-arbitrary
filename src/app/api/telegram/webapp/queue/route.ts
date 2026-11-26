@@ -79,8 +79,6 @@ export async function GET(request: Request): Promise<Response> {
         name: workspace.name,
         /** Approve asks where to. */
         threads: await hasThreadsAccount(auth.db, workspace.id),
-        /** Approve offers Send to preview. */
-        preview: workspace.previewChatId !== null,
         waiting: queue.waiting,
         items: queue.items,
       };

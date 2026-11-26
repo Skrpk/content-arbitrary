@@ -60,8 +60,6 @@ interface Channel {
   name: string;
   /** It has a Threads account: Approve asks where to. */
   threads?: boolean;
-  /** It has a preview channel: Approve offers Send to preview. */
-  preview?: boolean;
   waiting: number;
   items: QueueItem[];
 }
@@ -894,11 +892,9 @@ export function ReviewQueue({
           postId={shown(approving).item.id}
           channelName={channel.name}
           threads={channel.threads ?? false}
-          preview={channel.preview ?? false}
           others={shown(approving).others.map((post) => post.id)}
           threadsText={shown(approving).item.threads ?? null}
           request={request}
-          openLink={openLink}
           onEdit={() => {
             const card = approving;
             setApproving(null);
@@ -1279,20 +1275,18 @@ function nextHour(): string {
  * Approve: when, where, and a look first.
  *
  * Schedule is on to begin with, at the next hour; switched off, the post goes
- * out now. Send to preview puts the post in the channel's preview channel as
- * it would go out — as often as wanted, editing in between (Edit) — and
- * decides nothing. For a channel with Threads, where to as well: both ticked
+ * out now. Send to preview puts the post in the reviewer's own chat with the
+ * bot as it would go out — as often as wanted, editing in between (Edit) —
+ * and decides nothing. For a channel with Threads, where to as well: both ticked
  * to begin with, never neither.
  */
 function ApproveDialog({
   postId,
   channelName,
   threads,
-  preview,
   others,
   threadsText,
   request,
-  openLink,
   onEdit,
   onCancel,
   onPublish,
@@ -1302,13 +1296,10 @@ function ApproveDialog({
   postId: number;
   channelName: string;
   threads: boolean;
-  /** The channel has a preview channel; without one, Send to preview is off. */
-  preview: boolean;
   /** The rest of its story's card, rejected as already covered once it goes. */
   others: number[];
   threadsText: QueueItem['threads'] | null;
   request: ReviewQueueProps['request'];
-  openLink: (url: string) => void;
   onEdit: () => void;
   onCancel: () => void;
   onPublish: (targets: PublishTarget[]) => void;
@@ -1319,7 +1310,7 @@ function ApproveDialog({
   const [to, setTo] = useState({ telegram: true, threads: true });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [previewing, setPreviewing] = useState<{ state: 'sending' } | { state: 'sent'; link: string | null; at: Date } | null>(null);
+  const [previewing, setPreviewing] = useState<{ state: 'sending' } | { state: 'sent'; at: Date } | null>(null);
   const targets = threads ? PUBLISH_TARGETS.filter((target) => to[target]) : (['telegram'] as PublishTarget[]);
 
   useEffect(() => {
@@ -1334,14 +1325,14 @@ function ApproveDialog({
     setPreviewing({ state: 'sending' });
     setError(null);
     try {
-      const body = await readJson<{ link: string | null }>(
+      await readJson<{ ok: true }>(
         await request('/api/telegram/webapp/preview', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ postId }),
         }),
       );
-      setPreviewing({ state: 'sent', link: body.link, at: new Date() });
+      setPreviewing({ state: 'sent', at: new Date() });
     } catch (reason: unknown) {
       setPreviewing(null);
       setError(reason instanceof Error ? reason.message : 'Could not send the preview.');
@@ -1454,22 +1445,19 @@ function ApproveDialog({
         <div style={{ marginTop: '0.75rem', paddingTop: '0.6rem', borderTop: `1px solid ${theme.secondaryBg}` }}>
           <button
             type="button"
-            disabled={!preview || busy}
+            disabled={busy}
             onClick={() => void sendPreview()}
-            style={{ ...smallButton, opacity: !preview || busy ? 0.5 : 1, cursor: !preview || busy ? 'default' : 'pointer' }}
+            style={{ ...smallButton, opacity: busy ? 0.5 : 1, cursor: busy ? 'default' : 'pointer' }}
           >
             {previewing?.state === 'sending' ? 'Sending…' : '👁 Send to preview'}
           </button>
           <div style={{ color: theme.hint, fontSize: '0.8rem', marginTop: '0.3rem' }}>
-            {!preview ? (
-              <>Set a preview channel in Settings to see the post in Telegram first.</>
-            ) : previewing?.state === 'sent' ? (
+            {previewing?.state === 'sent' ? (
               <>
-                Sent{previewing.link ? <> · {link('open it ↗', () => openLink(previewing.link!))}</> : null}. Not right? {link('Edit', onEdit)}, then
-                approve and preview again.
+                Sent to your chat with the bot. Not right? {link('Edit', onEdit)}, then approve and preview again.
               </>
             ) : (
-              <>The post as it will go out, in your preview channel. It stays here, undecided.</>
+              <>The post as it will go out, in your chat with the bot. It stays here, undecided.</>
             )}
           </div>
         </div>
