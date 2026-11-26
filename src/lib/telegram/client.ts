@@ -361,8 +361,10 @@ export class TelegramClient {
       {
         url,
         secret_token: secretToken,
-        // Button presses and the slash commands that manage the source list.
-        allowed_updates: ['callback_query', 'message'],
+        // Button presses and the slash commands that manage the source list;
+        // and, from a draft channel, the replies that schedule a post and the
+        // edits made to it there (src/lib/drafts/drafts.ts).
+        allowed_updates: ['callback_query', 'message', 'channel_post', 'edited_channel_post'],
         drop_pending_updates: true,
       },
       z.boolean(),
@@ -373,6 +375,29 @@ export class TelegramClient {
     return this.call('deleteWebhook', { drop_pending_updates: true }, z.boolean());
   }
 
+  /**
+   * Copies messages to another chat as they are now — edits included, an
+   * album kept an album — with no "Forwarded from". Media are copied inside
+   * Telegram, nothing is downloaded. The ids must be in increasing order; the
+   * copies' ids come back in the same order.
+   */
+  copyMessages(input: { chatId: string; fromChatId: string; messageIds: number[]; disableNotification?: boolean }) {
+    return this.call(
+      'copyMessages',
+      {
+        chat_id: input.chatId,
+        from_chat_id: input.fromChatId,
+        message_ids: input.messageIds,
+        ...(input.disableNotification ? { disable_notification: true } : {}),
+      },
+      z.array(z.object({ message_id: z.number() })),
+    );
+  }
+
+  /** Removes one of the bot's own messages. Telegram refuses it for one older than 48 hours. */
+  deleteMessage(chatId: string, messageId: number) {
+    return this.call('deleteMessage', { chat_id: chatId, message_id: messageId }, z.boolean());
+  }
 
   /**
    * Fetch the bytes of a file Telegram stores, by file_id. Telegram serves bots

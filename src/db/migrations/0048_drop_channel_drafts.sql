@@ -1,1 +1,0 @@
-DROP TABLE "channel_drafts" CASCADE;
