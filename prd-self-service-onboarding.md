@@ -2,7 +2,11 @@
 
 Product: Zmistik
 Feature: Telegram bot onboarding → channel analysis → automatic sources → best posts pushed to the bot
-Version: v1, revision 3 (checked against the repository on 2026-11-26)
+Version: v1, revision 4 (checked against the repository on 2026-11-26)
+
+> **Revision 4** adds editing the editorial profile in the bot (§14a), learning
+> from the latest 100 posts only (§9), and how the website and Mini App work for
+> a `bot_push` workspace (§33).
 Primary interface: `@ZmistikBot` private chat
 
 > **Revision 3** replaces the "select sources, then get a digest" loop with a
@@ -30,6 +34,9 @@ Primary interface: `@ZmistikBot` private chat
 | D5 | Alpha gate | Global cap of 50 self-service workspaces, at most 30 onboarding runs a day, an optional allowlist; past a cap, a waitlist message |
 | D6 | Discovery model | OpenAI Responses with `web_search`, as `src/lib/assistant/openai.ts` |
 | D7 | Analytics | New `product_events` table |
+| D8 | Editing the editorial profile | Also **in the bot chat**: `/profile` shows it, with buttons to replace it with their own text or to refine it with an instruction (the LLM rewrites, the user confirms). See §14a. Settings (website / Mini App) keeps its editor |
+| D9 | How much history is learned from | **Only the latest 100 usable posts** (scan at most 200 messages) |
+| D10 | Website and Mini App | The same pages, adapted per workspace by `delivery_mode`: no publishing or scheduling in `bot_push`, 👍/👎/✍️ instead of Approve. See §33 |
 
 **Spike before §6:** confirm that Bot API `getChat("@username")` returns `id`, `type` and `title` for a public channel the bot is **not** in. Fallback if it doesn't: validate and take the title from the t.me page, and key history by `tg:<username>` (§10).
 
@@ -107,8 +114,9 @@ Accepted: `@channel`, `t.me/channel`, `https://t.me/channel`, `https://t.me/chan
    - with no workspace, start onboarding;
    - with a workspace, show help (plus a line about `/newchannel`).
 3. `/newchannel`: onboard another channel, within the per-user limit (§28).
-4. Plain text while the session is `awaiting_channel`: treat it as the channel.
-5. `ob:` callbacks (onboarding) and `fb:` callbacks (feedback on pushed posts, §24) are handled before the reviewer check. They are authorised by the session's or workspace's owner Telegram id.
+4. Plain text while the session is `awaiting_channel`: treat it as the channel. Otherwise, plain text with a live `bot_pending_inputs` row is that input (§14a).
+5. `/profile`: the profile screen (§14a).
+6. `ob:` callbacks (onboarding), `pf:` callbacks (profile screen) and `fb:` callbacks (feedback on pushed posts, §24) are handled before the reviewer check. They are authorised by the session's or workspace's owner Telegram id.
 
 ### Step 2: validation (§6)
 
@@ -116,7 +124,7 @@ Accepted: `@channel`, `t.me/channel`, `https://t.me/channel`, `https://t.me/chan
 
 ### Step 3: analysis progress (one message, edited in place)
 
-> ✅ Проаналізував 287 постів. Канал переважно про: • PlayStation і консолі • релізи й анонси • новини індустрії • знижки. Шукаю джерела.
+> ✅ Проаналізував останні 100 постів. Канал переважно про: • PlayStation і консолі • релізи й анонси • новини індустрії • знижки. Шукаю джерела.
 
 ### Step 4: sources connected (§19–§23)
 
@@ -129,7 +137,7 @@ Accepted: `@channel`, `t.me/channel`, `https://t.me/channel`, `https://t.me/chan
 >
 > Надсилатиму сюди лише те, що найбільше пасує каналу — до 15 постів на день. Решта буде в черзі.
 > [✕ 1] [✕ 2] [✕ 3] [✕ 4] [✕ 5]
-> [📋 Черга]
+> [📝 Профіль каналу] [📋 Черга]
 
 ### Step 5: pushed posts (§24)
 
@@ -204,14 +212,14 @@ Expected timing:
 
 | Step | Work | Time |
 |------|------|------|
-| analyzing_history | 15–25 t.me pages, sequential, about 300 ms apart | 15–40 s |
-| profiling | 3–6 note batches (concurrency 4) + merge + profile; editorial profile + language; embeddings | 60–150 s |
+| analyzing_history | 5–10 t.me pages, sequential, about 300 ms apart | 5–15 s |
+| profiling | 1–2 note batches + profile; editorial profile + language; embeddings | 30–90 s |
 | discovering_sources | link signals + one web-search call + validation of ≤ 25 candidates (concurrency 6, 10 s each, 60 s budget) | 40–90 s |
 | activating_sources | 5 × `add*Source` | 5–20 s |
 
 ## 9. Public history crawl
 
-- Target 300 usable posts (`usableForProfile`); inspect at most 500; stop at either, or when there is no older page.
+- Target **100** usable posts (`usableForProfile`), the channel's latest; inspect at most **200** messages; stop at either, or when there is no older page. (D9: a recent picture of the channel, faster and cheaper. Link and forward signals in §15 come from these same 100 posts; web discovery makes up for the thinner signal.)
 - Fewer than 30 usable posts: continue, with a note that recommendations may be less precise.
 - Paging: `fetchChannelPage(username, { before })`. The cursor lives in `progress`, so a retry resumes rather than restarts.
 - Honour `retryAfterMs`. A 429 reschedules the step; the crawl never restarts.
@@ -265,6 +273,42 @@ One LLM call (`initial-profile.ts`) over the publication profile returns:
 
 - `editorialProfile`: at most 2,000 characters; describes what the channel publishes; no invented dislikes; an absent topic is not a rejection. Stored with `editorial_profile_source = 'auto'` (**new column**, `'auto' | 'editor'`). Saving in Settings sets `'editor'`.
 - `languageCode`: BCP 47, written to `workspaces.language` if it passes `workspaces_language_check`.
+
+## 14a. Editing the editorial profile in the bot (D8)
+
+The profile is what Radar scores against, so it decides what gets pushed. The user must be able to change it without leaving the chat.
+
+**Entry points:** the `/profile` command; a `[📝 Профіль каналу]` button on the "Стежу за" message (§23); a line in `/help`. With several workspaces, the bot first asks which channel, reusing the channel-choice keyboard (`buildChannelChoiceData`).
+
+**Screen:**
+
+> 📝 **Профіль каналу PlayStation Україна** (згенерований автоматично)
+> <the profile text, at most 2,000 characters, fits one message>
+> Мова постів: українська
+> [✏️ Написати свій] [💬 Уточнити]
+> [🌐 Мова] [⚙️ Налаштування]
+
+- **✏️ Написати свій:** "Надішли новий текст профілю одним повідомленням (до 2000 символів)." The next plain-text message in that chat replaces the profile. Over 2,000 characters: refuse and say by how much.
+- **💬 Уточнити:** "Напиши, що змінити — наприклад: «більше про інді-ігри, без знижок і розіграшів»." One LLM call (`refine-profile.ts`) rewrites the current profile to apply the instruction, within 2,000 characters. The bot shows the result with `[✅ Зберегти] [↩️ Скасувати] [💬 Ще уточнити]`. Here dislikes **are** allowed: the user stated them. The "no invented dislikes" rule applies only to auto-generation (§14).
+- **🌐 Мова:** a short list (українська, English, as is / без перекладу, Інша… → the user types a code) sets `workspaces.language`.
+- **⚙️ Налаштування:** the existing Settings Mini App.
+
+Saving, from the bot or from Settings, goes through `setEditorialProfile` and sets `editorial_profile_source = 'editor'`. Radar uses the new profile from the next post it scores (its `editorialProfileHash` changes). Posts already scored are not re-scored. The confirmation says so: "Збережено. Нові пости оцінюватиму за оновленим профілем."
+
+In `bot_push` the profile **cannot be cleared**. An empty profile turns Radar off, and then nothing would be pushed. Settings' "Clear" button is hidden there (§33).
+
+**Waiting for the next message.** A new table:
+
+```
+bot_pending_inputs
+  telegram_user_id text pk      -- one pending prompt per user
+  kind            'profile_replace' | 'profile_refine' | 'language_custom' | 'manual_source'
+  workspace_id    → workspaces
+  payload         jsonb          -- e.g. the refined draft awaiting ✅
+  expires_at      timestamptz    -- 15 minutes
+```
+
+Message routing (§5a) checks it right after the onboarding session: a plain-text message with a live pending input is that input. A `/command` cancels it. Onboarding's `awaiting_channel` stays in `onboarding_sessions`.
 
 ## 15. Source discovery
 
@@ -457,8 +501,8 @@ Connecting a channel for publishing comes later (v2): the bot must be an admin t
 ## 28. Limits (`src/lib/onboarding/limits.ts`; caps overridable by env)
 
 ```
-HISTORY_TARGET_USABLE_POSTS     300
-HISTORY_MAX_MESSAGES_SCANNED    500
+HISTORY_TARGET_USABLE_POSTS     100
+HISTORY_MAX_MESSAGES_SCANNED    200
 HISTORY_MIN_USEFUL_POSTS         30
 SOURCES_AUTO_ACTIVATED            5
 SOURCES_RESERVE_MAX              10
@@ -507,7 +551,7 @@ Quality signals: share of pushes getting 👍 or «Зробити пост» (ta
 
 1. A new user: `/start` → `@channel` → validated (groups, users, bots and invite links rejected).
 2. The user, the workspace (`bot_push`, `self_service`, `channel_verified_at = null`) and the owner membership are created.
-3. About 300 posts are in `publication_history_items` under `-100<id>`, with an import audit row; nothing is in `processed_posts`.
+3. The latest 100 usable posts (or all of them, if fewer) are in `publication_history_items` under `-100<id>`, with an import audit row; nothing is in `processed_posts`.
 4. The profile and embeddings exist; `editorial_profile` (`auto`) and `language` are set.
 5. 5 validated sources (no X, no Threads) are active with `include_text_only = true`; no backlog; the "Стежу за" message is shown.
 6. ✕ disables a source and offers a reserve; ➕ activates it.
@@ -518,6 +562,8 @@ Quality signals: share of pushes getting 👍 or «Зробити пост» (ta
 11. A crash or 429 mid-crawl resumes from the cursor via the sweeper; no duplicate items.
 12. Two runner calls for one session: only one runs the step.
 13. Operator workspaces behave exactly as before (migration defaults), and existing `add-*` tests pass unchanged.
+14. `/profile` shows the profile. ✏️ replaces it with the next message, 💬 rewrites it from an instruction and saves only on ✅, 🌐 sets the language. Every save sets `editorial_profile_source = 'editor'`, and the next scored post uses the new profile. In `bot_push` the profile cannot be cleared from the bot, Settings, or the API.
+15. Website and Mini App for a `bot_push` workspace: the queue shows 👍/👎/✍️ with no Approve or Schedule; the editor offers «Надіслати мені» and «Копіювати текст»; Settings shows the language and push settings and hides digest, auto-publish, preview channel and threshold. The hidden settings' routes refuse changes. An operator workspace of the same user is unchanged.
 
 ## 32. Layout and order
 
@@ -537,6 +583,9 @@ src/lib/onboarding/
   ranking.ts            §19
   activate-sources.ts   §22, §23
 src/lib/delivery/push.ts              §24 push decision + keyboard + fb: callbacks
+src/lib/profile/bot-profile.ts        §14a /profile screen, replace / refine / language
+src/lib/profile/refine-profile.ts     §14a LLM rewrite from an instruction
+src/lib/telegram/pending-input.ts     §14a bot_pending_inputs
 src/lib/history/store-history.ts      §10
 src/lib/telegram-channel/parser.ts    §12
 src/lib/sources/add-*.ts              §18 resolve / persist
@@ -545,7 +594,8 @@ src/app/api/onboarding/run/route.ts   §8
 src/db/schema.ts + migration          onboarding_sessions, source_suggestions, product_events;
                                       workspaces.delivery_mode, push_min_score, push_daily_limit,
                                       channel_verified_at, created_via, editorial_profile_source;
-                                      processed_posts.pushed_at; post_status += 'liked'
+                                      processed_posts.pushed_at; post_status += 'liked';
+                                      bot_pending_inputs
 ```
 
 Order (each step shippable and tested on its own):
@@ -555,7 +605,33 @@ Order (each step shippable and tested on its own):
 3. Sessions, runner, routing, provisioning (§5a, §7, §8) up to "profile done", + initial profile/language (§14).
 4. Resolve/persist split, site-feed discovery, link signals, web discovery, ranking (§15–§19).
 5. Auto-activation + the "Стежу за" message with ✕/➕ (§20–§23).
-6. `bot_push` delivery, `liked`, feedback callbacks, editor «Надіслати мені» (§24).
-7. Limits, waitlist, analytics (§28–§29).
+6. `bot_push` delivery, `liked`, feedback callbacks (§24).
+7. `/profile` in the bot: replace, refine, language (§14a).
+8. Website and Mini App adapted to `bot_push`: queue buttons, editor's «Надіслати мені» / «Копіювати текст», Settings (§33).
+9. Limits, waitlist, analytics (§28–§29).
+
+## 33. The website and Mini App under the new logic (D10)
+
+There is no separate app for self-service users. Every page already works per workspace (a reviewer of several channels switches between them), so each page reads the workspace's `delivery_mode` and adapts. Operator workspaces (`channel_review`) see no change.
+
+**Access.** The self-service user is the workspace's `owner` member, with their Telegram identity. They sign in to `/console` with Telegram (OIDC) and open the Mini Apps from bot buttons, exactly as reviewers do now. `findWorkspacesByAdminChatId` and `listWorkspacesOf…` (`src/lib/accounts/users.ts`) require `telegram_chat_id`, which is set at provisioning (§7), so no change is needed.
+
+| Page | Today | In `bot_push` |
+|------|-------|---------------|
+| **Review queue**: `/console/queue`, Mini App `/queue` (`review-queue.tsx`) | Cards by Radar score; ✅ Approve (dialog: publish / schedule / send to preview), Reject, Edit, 🕒 Schedule; keys `a r e s o` | Same list and order. Buttons: **👍**, **👎** (same reasons), **✍️ Зробити пост**. No Approve dialog, no 🕒 Schedule. Keys: `a` = 👍, `s` disabled. Pushed cards carry a "📨 надіслано в бот" mark. `liked` cards leave the queue like approved ones. The story line shows "👍 already liked from …" instead of "Already published from …" |
+| Story behaviour on a decision | Approve rejects the rest of the story as `already_covered` | 👍 does **not** reject the rest (a like is a signal, not a publish decision). 👎 on a story card rejects the whole story, as Reject does today |
+| **Single post review**: Mini App `/review`, `/review/reject` | Opened from a post's chat buttons | `/review` shows 👍/👎/✍️; `/review/reject` unchanged (the 👎 reasons) |
+| **Schedule**: Mini App `/review/schedule`, `/console/scheduled` | Schedule a post; list scheduled ones | Hidden: no nav link, no button. The routes refuse with `channel_not_connected` (§25) |
+| **Editor**: `/console/edit/[postId]`, the Mini App editor (`rich-editor/post-editor.tsx`, assistant panel) | Edit text and media, then Approve dialog | Same editor and AI assistant. The finishing actions become **«Надіслати мені»** (sends the finished post to the user's own bot chat via `previewPost`, so they can forward it with sender hidden or copy it) and **«Копіювати текст»** (clipboard; Telegram-formatted text). Opening it marks the post `liked` (§24) |
+| **Sources**: `/console/sources`, Mini App `/source-stats` (`source-stats-panel.tsx`, `add-source-form.tsx`) | List with stats; pause / resume / remove; add any platform | Unchanged. Onboarded sources show a small "знайдено автоматично" tag (from `source_suggestions`). "Approved" counts include `liked` (`src/lib/sources/stats.ts`). Adding X manually stays possible (D4 only keeps X out of suggestions) |
+| **Settings**: `/console/settings`, Mini App `/settings` (`settings-panel.tsx`) | Review link target; digest frequency; auto-publish; editorial profile (save / clear); per-source Radar threshold and text-only; post footer; preview channel; Threads | Shown: review link target; **editorial profile** (save only, no Clear; "auto" badge while `editorial_profile_source = 'auto'`); **new: language**; **new: push settings** ("Скільки постів надсилати": Менше = score 75 / Звичайно = 60 / Більше = 45, and the daily limit 5–30); per-source text-only; post footer (applied to «Надіслати мені»). Hidden: digest frequency (no digest in `bot_push`), auto-publish, per-source Radar threshold (filtering is `push_min_score`), preview channel, Threads (already off: `threads_enabled = false`) |
+| **Stats**: `/console/stats` | Per-source numbers | Unchanged; approvals include `liked` |
+| Bot commands | `/review`, `/scheduled`, `/sourcestats`, `/add*`, `/help` | `/scheduled` answers "У цьому режимі нічого не плануємо — пости надсилаю тобі". `/help` lists `/profile`, `/sourcestats`, `/review`, `/newchannel`. `/add*` unchanged |
+| Queue digest notification | Every N minutes | Off (§24) |
+| `/api/status` | Per-tenant publishability | Reports `bot_push` tenants as monitoring-only, not as "unpublishable" |
+
+**A user with both kinds of workspace** (an operator channel and a self-service one) sees each one's own buttons. Every card, callback and page decides by the post's workspace, never by the user.
+
+**Server side.** The UI hiding things is not the protection. The publish gate in §25 refuses on the server whatever the UI shows. Likewise the routes for settings that are hidden in `bot_push` (auto-publish, digest, preview channel, Radar threshold) refuse those changes for `bot_push` workspaces.
 
 The product principle stays: **never ask for sources before Zmistik has done any work.**
