@@ -47,26 +47,10 @@ import {
 import {
   channelLabelFor,
   destinationFor,
-  findWorkspaceById,
   findWorkspacesByAdminChatId,
   workspaceForPost,
 } from '@/lib/workspace';
 import type { Workspace } from '@/db/schema';
-import {
-  DRAFT_TIME_EXAMPLES,
-  draftTimeZone,
-  findDraft,
-  findDraftByControl,
-  noteDraftEdit,
-  noteDraftProblem,
-  parseDraftCallbackData,
-  publishDraft,
-  rejectDraft,
-  restoreDraft,
-  scheduleDraft,
-  unscheduleDraft,
-} from '@/lib/drafts/drafts';
-import { parseDraftTime } from '@/lib/drafts/time';
 import { XClient } from '@/lib/x/client';
 import type { Logger } from '@/lib/logger';
 import {
@@ -126,20 +110,10 @@ const messageSchema = z.object({
   text: z.string().optional(),
 });
 
-/** A post in a channel the bot is an administrator of: a draft channel's, for one. */
-const channelPostSchema = z.object({
-  message_id: z.number(),
-  chat: z.object({ id: z.number() }),
-  text: z.string().optional(),
-  reply_to_message: z.object({ message_id: z.number() }).optional(),
-});
-
 const updateSchema = z.object({
   update_id: z.number().optional(),
   callback_query: callbackQuerySchema.optional(),
   message: messageSchema.optional(),
-  channel_post: channelPostSchema.optional(),
-  edited_channel_post: channelPostSchema.optional(),
 });
 
 function secretMatches(presented: string | null, expected: string): boolean {
@@ -209,14 +183,6 @@ export async function POST(request: Request): Promise<Response> {
     return ok();
   }
 
-  // A draft channel: a time typed in reply to a draft's control message, or an edit to the post.
-  if (update.channel_post || update.edited_channel_post) {
-    await handleDraftChannelPost(update, { db, client, logger }).catch((error: unknown) => {
-      logger.error('webhook.draft_channel_post_failed', { error: describeError(error) });
-    });
-    return ok();
-  }
-
   const query = update.callback_query;
   if (!query) return ok();
 
@@ -228,13 +194,6 @@ export async function POST(request: Request): Promise<Response> {
     await client
       .answerCallbackQuery(query.id, 'You are not authorised to review posts.')
       .catch(() => {});
-    return ok();
-  }
-
-  // A draft's own buttons, in its draft channel.
-  const draftCallback = parseDraftCallbackData(query.data);
-  if (draftCallback) {
-    await handleDraftCallback(query, draftCallback, { db, env, client, logger, workspaces: reviewerWorkspaces });
     return ok();
   }
 
@@ -477,117 +436,6 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   return ok();
-}
-
-/**
- * A draft's button, pressed in its draft channel. Only a reviewer of the
- * draft's channel may act on it; anyone else gets the same answer as for a
- * draft that does not exist.
- */
-async function handleDraftCallback(
-  query: { id: string; from: { id: number } },
-  callback: NonNullable<ReturnType<typeof parseDraftCallbackData>>,
-  context: { db: Database; env: ReturnType<typeof getEnv>; client: TelegramClient; logger: Logger; workspaces: Workspace[] },
-): Promise<void> {
-  const { db, client } = context;
-  const logger = context.logger.child({ draftId: callback.draftId, action: callback.action });
-  const answer = (text?: string, showAlert = false) => client.answerCallbackQuery(query.id, text, { showAlert }).catch(() => {});
-
-  const draft = await findDraft(db, callback.draftId);
-  if (!draft || !context.workspaces.some((workspace) => workspace.id === draft.workspaceId)) {
-    logger.info('webhook.draft_not_reviewable', { fromId: query.from.id });
-    await answer('This draft is not one of yours.');
-    return;
-  }
-  const drafts = { db, client, logger };
-
-  if (callback.action === 'schedule_hint') {
-    await answer(`Reply to this message with the time to publish it at: ${DRAFT_TIME_EXAMPLES}`, true);
-    return;
-  }
-
-  if (callback.action === 'publish') {
-    const result = await publishDraft({ ...drafts, env: context.env }, { id: draft.id });
-    if (result.ok) await answer('Published to the channel.');
-    else if (result.error) await answer('Publishing failed — try again.');
-    else await answer(draftSettledNotice(result.draft?.status));
-    return;
-  }
-
-  const changed =
-    callback.action === 'unschedule'
-      ? await unscheduleDraft(drafts, draft.id)
-      : callback.action === 'reject'
-        ? await rejectDraft(drafts, draft.id)
-        : await restoreDraft(drafts, draft.id);
-  if (!changed) {
-    await answer(draftSettledNotice(draft.status));
-    return;
-  }
-  logger.info('webhook.draft_changed', { status: changed.status });
-  await answer(callback.action === 'unschedule' ? 'Unscheduled.' : callback.action === 'reject' ? 'Rejected.' : 'Back in the draft.');
-}
-
-function draftSettledNotice(status: string | undefined): string {
-  if (status === 'published') return 'Already published.';
-  if (status === 'rejected') return 'Rejected — restore it first.';
-  if (status === 'publishing') return 'On its way to the channel.';
-  if (status === 'waiting') return 'Not scheduled.';
-  return 'Nothing to do.';
-}
-
-/**
- * A post in a channel the bot administers. In a draft channel, a reply to a
- * draft's control message is a time to publish it at; it is read, the draft
- * scheduled — or told why not — and the reply removed, so the draft channel
- * keeps showing the posts alone. An edit to a draft's post is noted on its
- * control message. Every other channel post is none of this, and ignored.
- *
- * Only a channel's administrators can post in it, so a reply there needs no
- * other check: whoever can write in the draft channel runs it.
- */
-async function handleDraftChannelPost(
-  update: z.infer<typeof updateSchema>,
-  context: { db: Database; client: TelegramClient; logger: Logger },
-): Promise<void> {
-  const { db, client } = context;
-  const drafts = { db, client, logger: context.logger };
-
-  if (update.edited_channel_post) {
-    const edit = update.edited_channel_post;
-    const draft = await noteDraftEdit(drafts, { chatId: String(edit.chat.id), messageId: edit.message_id });
-    if (draft) context.logger.info('webhook.draft_edited', { draftId: draft.id });
-    return;
-  }
-
-  const post = update.channel_post!;
-  if (!post.reply_to_message || !post.text) return;
-  const chatId = String(post.chat.id);
-  const draft = await findDraftByControl(db, chatId, post.reply_to_message.message_id);
-  if (!draft) return;
-  const logger = context.logger.child({ draftId: draft.id });
-
-  if (draft.status === 'waiting' || draft.status === 'scheduled') {
-    const workspace = await findWorkspaceById(db, draft.workspaceId);
-    const timeZone = workspace ? await draftTimeZone(db, workspace) : 'UTC';
-    const parsed = parseDraftTime(post.text, { now: new Date(), timeZone });
-    if (parsed.ok) {
-      await scheduleDraft({ ...drafts, logger }, { id: draft.id, at: parsed.at, timezone: timeZone });
-      logger.info('webhook.draft_scheduled', { scheduledFor: parsed.at.toISOString(), timeZone });
-    } else {
-      const problem =
-        parsed.reason === 'past'
-          ? `“${post.text.slice(0, 40)}” has already passed.`
-          : parsed.reason === 'too_far'
-            ? `“${post.text.slice(0, 40)}” is more than a year ahead.`
-            : `“${post.text.slice(0, 40)}” is not a time I can read.`;
-      await noteDraftProblem({ ...drafts, logger }, draft, problem);
-    }
-  }
-  // Read either way: the reply has done its job, and the draft channel shows the posts alone.
-  await client.deleteMessage(chatId, post.message_id).catch((error: unknown) => {
-    logger.warn('webhook.draft_reply_not_deleted', { error: describeError(error) });
-  });
 }
 
 /**

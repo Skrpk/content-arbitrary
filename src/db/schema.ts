@@ -796,55 +796,6 @@ export const telegramMessages = pgTable(
   (table) => [index('telegram_messages_post_idx').on(table.processedPostId)],
 );
 
-export const DRAFT_STATUSES = ['waiting', 'scheduled', 'publishing', 'published', 'rejected'] as const;
-export type DraftStatus = (typeof DRAFT_STATUSES)[number];
-
-/**
- * An approved post in its channel's former draft channel, on its way to the
- * channel. No new ones are opened; those sent before keep their buttons. What goes out is a copy of its messages there,
- * taken when it goes — edits made in Telegram included. Its control message,
- * a reply under it, carries the buttons and says where it stands.
- */
-export const channelDrafts = pgTable(
-  'channel_drafts',
-  {
-    id: serial('id').primaryKey(),
-    processedPostId: integer('processed_post_id')
-      .notNull()
-      .references(() => processedPosts.id, { onDelete: 'cascade' }),
-    workspaceId: integer('workspace_id')
-      .notNull()
-      .references(() => workspaces.id, { onDelete: 'cascade' }),
-    draftChatId: text('draft_chat_id').notNull(),
-    /** The post's messages in the draft channel, in order: what is copied. */
-    messageIds: bigint('message_ids', { mode: 'number' }).array().notNull(),
-    /** The message with the buttons; null until it is sent. */
-    controlMessageId: bigint('control_message_id', { mode: 'number' }),
-    status: text('status', { enum: DRAFT_STATUSES }).notNull().default('waiting'),
-    scheduledFor: timestamp('scheduled_for', { withTimezone: true }),
-    /** The zone times are read and shown in: the reviewer's. */
-    scheduledTimezone: text('scheduled_timezone'),
-    /** When the post was last edited in the draft channel; null if never. */
-    editedAt: timestamp('edited_at', { withTimezone: true }),
-    /** Failed tries at the scheduled time; reset when it is scheduled again. */
-    attempts: integer('attempts').notNull().default(0),
-    error: text('error'),
-    /** Where it went and as which messages. */
-    publishedChatId: text('published_chat_id'),
-    publishedMessageIds: bigint('published_message_ids', { mode: 'number' }).array(),
-    publishedAt: timestamp('published_at', { withTimezone: true }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [
-    uniqueIndex('channel_drafts_post_key').on(table.processedPostId),
-    index('channel_drafts_status_idx').on(table.status, table.scheduledFor),
-    index('channel_drafts_chat_idx').on(table.draftChatId),
-  ],
-);
-
-export type ChannelDraft = typeof channelDrafts.$inferSelect;
-
 /**
  * A review message in another reviewer's private chat. The post's own copy is
  * `processed_posts.admin_chat_id` / `admin_message_id`; every other reviewer of

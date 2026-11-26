@@ -13,9 +13,6 @@ import { theme } from '@/lib/telegram/webapp-client';
  * review queue. The scheduler reads a post's text and time only when the
  * time comes, so a change here up to that minute is what goes out.
  *
- * A post scheduled from the draft channel is among them: its time moves here
- * as well, but its text is edited in the draft channel, where it waits.
- *
  * Shown as a list, or as a month's calendar: a day picked there shows its
  * posts under it, as the same cards.
  */
@@ -31,8 +28,6 @@ interface ScheduledItem {
   display: string;
   edited: boolean;
   rich: boolean;
-  /** Scheduled from the draft channel, where it waits: edited there, and opened there by its link. */
-  draft?: { id: number; link: string | null };
 }
 
 interface Channel {
@@ -214,17 +209,11 @@ export function ScheduledPosts({ request, confirm, openLink, onEdit }: Scheduled
       try {
         const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
         const body = await readJson<{ scheduledFor: string; display: string }>(
-          item.draft
-            ? await request('/api/telegram/webapp/scheduled', {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ action: 'retime_draft', draftId: item.draft.id, scheduledFor: at.toISOString(), timezone }),
-              })
-            : await request('/api/telegram/webapp/schedule', {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ postId: item.id, scheduledFor: at.toISOString(), timezone }),
-              }),
+          await request('/api/telegram/webapp/schedule', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ postId: item.id, scheduledFor: at.toISOString(), timezone }),
+          }),
         );
         setChannels((all) =>
           (all ?? []).map((channel) => ({
@@ -246,10 +235,7 @@ export function ScheduledPosts({ request, confirm, openLink, onEdit }: Scheduled
 
   const unschedule = useCallback(
     async (item: ScheduledItem) => {
-      const question = item.draft
-        ? 'Take this post off the schedule? It stays in the draft channel, waiting.'
-        : 'Take this post off the schedule and back into the review queue?';
-      if (!(await confirm(question))) return;
+      if (!(await confirm('Take this post off the schedule and back into the review queue?'))) return;
       setCard(item.id, { kind: 'saving' });
       setError(item.id, null);
       try {
@@ -257,7 +243,7 @@ export function ScheduledPosts({ request, confirm, openLink, onEdit }: Scheduled
           await request('/api/telegram/webapp/scheduled', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(item.draft ? { action: 'unschedule_draft', draftId: item.draft.id } : { action: 'unschedule', postId: item.id }),
+            body: JSON.stringify({ action: 'unschedule', postId: item.id }),
           }),
         );
         setCard(item.id, { kind: 'unscheduled' });
@@ -293,7 +279,7 @@ export function ScheduledPosts({ request, confirm, openLink, onEdit }: Scheduled
           fontSize: '0.9rem',
         }}
       >
-        {item.draft ? '📝 Unscheduled — waiting in the draft channel' : '↩️ Back in the review queue'} ·{' '}
+        ↩️ Back in the review queue ·{' '}
         {item.sourceLabel ?? 'unknown source'}
       </section>
       );
@@ -362,12 +348,7 @@ export function ScheduledPosts({ request, confirm, openLink, onEdit }: Scheduled
                 {fullShown ? 'Less' : 'More'}
               </button>
             ) : null}
-            {item.draft ? (
-              <div style={{ color: theme.hint, fontSize: '0.75rem', marginTop: '0.2rem' }}>
-                📝 from the draft channel — goes out as the post is there
-                {item.edited ? '; edited there, so the text above may be older' : ''}
-              </div>
-            ) : item.rich ? (
+            {item.rich ? (
               <div style={{ color: theme.hint, fontSize: '0.75rem', marginTop: '0.2rem' }}>
                 📰 written in the editor — goes out as laid out there
               </div>
@@ -423,17 +404,9 @@ export function ScheduledPosts({ request, confirm, openLink, onEdit }: Scheduled
               </div>
             ) : (
               <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.6rem' }}>
-                {item.draft ? (
-                  item.draft.link ? (
-                    <button type="button" onClick={() => openLink(item.draft!.link!)} style={smallButton}>
-                      📝 Open in the draft ↗
-                    </button>
-                  ) : null
-                ) : (
-                  <button type="button" disabled={busy} onClick={() => onEdit(item.id, workspaceId)} style={smallButton}>
-                    ✏️ Edit
-                  </button>
-                )}
+                <button type="button" disabled={busy} onClick={() => onEdit(item.id, workspaceId)} style={smallButton}>
+                  ✏️ Edit
+                </button>
                 <button
                   type="button"
                   disabled={busy}
@@ -450,7 +423,7 @@ export function ScheduledPosts({ request, confirm, openLink, onEdit }: Scheduled
                   }}
                   style={smallButton}
                 >
-                  {item.draft ? '↩️ Unschedule' : '↩️ Back to review'}
+                  ↩️ Back to review
                 </button>
                 {item.url ? (
                   <button type="button" onClick={() => openLink(item.url)} style={smallButton}>
@@ -728,7 +701,7 @@ function Calendar({
                   key={item.id}
                   type="button"
                   className="z-cal-post"
-                  title={`${localTime(item.scheduledFor)} · ${item.sourceLabel ?? 'unknown source'}${item.draft ? ' · from the draft channel' : ''}`}
+                  title={`${localTime(item.scheduledFor)} · ${item.sourceLabel ?? 'unknown source'}`}
                   onClick={(event) => {
                     event.stopPropagation();
                     onPick(key, item.id);
@@ -737,7 +710,7 @@ function Calendar({
                     display: 'block',
                     width: '100%',
                     padding: '0.1rem 0.25rem',
-                    border: item.draft ? `1px dashed ${theme.hint}` : '1px solid transparent',
+                    border: '1px solid transparent',
                     borderRadius: '4px',
                     background: theme.bg,
                     color: theme.text,
