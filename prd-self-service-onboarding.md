@@ -2,32 +2,76 @@
 
 Product: Zmistik
 Feature: Telegram bot onboarding → channel analysis → automatic sources → best posts pushed to the bot
-Version: v1, revision 5 (checked against the repository on 2026-11-26)
-
-> **Revision 5** removes the `delivery_mode` switch. A workspace now has two
-> independent properties:
->
-> 1. **How the reviewer hears of posts**: the existing `review_digest_minutes`,
->    plus a new option, "only the best, as they come" (§24).
-> 2. **Whether it may publish**: `channel_verified_at` (§25). It decides the
->    buttons (Approve vs 👍/👎/✍️) and which pages show (§33).
->
-> The preview channel is gone everywhere (done on `main` separately): **Send to
-> preview always sends the post to the reviewer's own chat with the bot.**
-
-> **Revision 4** adds editing the editorial profile in the bot (§14a), learning
-> from the latest 100 posts only (§9), and how the website and Mini App work for
-> a workspace that cannot publish (§33).
+Version: v1, revision 6 (checked against the repository on 2026-11-26)
 Primary interface: `@ZmistikBot` private chat
 
-> **Revision 3** replaces the "select sources, then get a digest" loop with a
-> shorter one decided on 2026-11-26:
->
-> **channel → analysis → editorial profile → 5 sources connected automatically
-> (no X) → the best posts arrive in the bot one by one, with 👍 / 👎 /
-> «Зробити пост».**
->
-> v1 never publishes to the channel. All decisions are made (§0).
+## How this fits with what exists (read this first)
+
+There is no second system. Onboarding is only a new way to **create** a
+workspace: by the user, in the bot, instead of by an operator. From then on
+every workspace, old or new, runs the same pipeline:
+
+```
+sources → Radar scores → stories → review queue (website / Mini App)
+```
+
+Workspaces differ in exactly two settings, and the two are independent:
+
+1. **How the reviewer hears of posts.** This is the existing notification
+   setting (`review_digest_minutes`), with one new choice:
+   - each post in the chat, as it arrives (exists);
+   - a digest every N minutes (exists);
+   - **new:** only the best, as they come. Radar's top posts, one by one, at
+     most about 15 a day (§24).
+2. **Whether Zmistik may publish to the channel** (`channel_verified_at`, §25):
+   - **yes:** Approve / Reject, scheduling, auto-publish. As today;
+   - **no:** 👍 / 👎 / ✍️ «Зробити пост». The finished post comes to the user's
+     bot chat through Send to preview, and they forward or copy it to their
+     channel themselves.
+
+| Workspace | Notifications | May publish | What they see |
+|-----------|---------------|-------------|---------------|
+| Existing ones (vector, …) | as set today | yes | **nothing changes** |
+| New, right after onboarding | only the best | no | the best posts in the bot, with 👍/👎/✍️ |
+| The same, once its channel is verified (v2) | unchanged (can be changed) | yes | the same posts, now with Approve; Scheduled appears |
+| An existing one that picks "only the best" | only the best | yes | only the top reaches the chat, with Approve |
+
+Every page of the website and Mini App asks one question of the workspace,
+**may it publish?**, and shows Approve/Schedule or 👍/👎/✍️ accordingly (§33).
+A reviewer of two workspaces of different kinds sees each one's own buttons.
+
+**Already shipped on `main`, and live since 2026-11-26:**
+- Send to preview sends the post to the pressing reviewer's own chat with the
+  bot. The preview channel setting and its column (`workspaces.draft_chat_id`,
+  migration 0047) are gone.
+- The legacy draft channel is gone: its code, its cron step, its buttons, and
+  the `channel_drafts` table (migration 0048). Approve publishes or schedules
+  straight from Zmistik. Scheduled posts wait in Zmistik and the cron publishes
+  them into the channel.
+
+**New in this PRD:** onboarding in the bot (§5–§23), the "only the best"
+notification choice (§24), 👍/👎/✍️ and the `liked` status for workspaces that
+may not publish (§24), the publish gate (§25), `/profile` in the bot (§14a), and
+the website and Mini App adapted by "may publish" (§33).
+
+<details><summary>Revision history</summary>
+
+- **6:** the overview above. Preview to the bot chat (D11) and the draft
+  channel's removal are now shipped, so the gate list in §25 no longer names
+  draft code.
+- **5:** no `delivery_mode` switch; notifications and publishing became two
+  independent settings; preview goes to the bot chat.
+- **4:** editing the editorial profile in the bot (§14a); learning from the
+  latest 100 posts only (§9); the website and Mini App for a workspace that
+  cannot publish (§33).
+- **3:** instead of "select sources, then get a digest": channel → analysis →
+  editorial profile → 5 sources connected automatically (no X) → the best
+  posts arrive in the bot one by one, with 👍 / 👎 / «Зробити пост».
+- **2:** checked against the code; added the publish gate, the step runner,
+  the history key, message routing, forwards as a signal, RSS before
+  sitemaps, YouTube video links, and limits.
+
+</details>
 
 ---
 
@@ -38,7 +82,7 @@ Primary interface: `@ZmistikBot` private chat
 | D1 | What the user gets, and publishing | Discovery-only. The bot connects 5 sources automatically and pushes Radar's best posts into the user's private chat, each with 👍 / 👎 / «Зробити пост». **A self-service workspace cannot publish to the channel in v1** (`channel_verified_at` is null, §25). That holds even for a channel the bot already administers for someone else. There is no mode switch: publishing becomes possible later by verifying the channel, and nothing else changes |
 | D1a | Notification ("only the best, as they come") | A new value of the existing notification setting: each post as its own message, as it arrives, but **only when Radar scores it at or above `push_min_score` (default 60)**. At most **`push_daily_limit` (default 15)** a day, and at most one per story. Everything else stays in the review queue, unannounced. It is the default for self-service workspaces and can be chosen by any workspace |
 | D1b | Buttons | Decided only by whether the workspace may publish. **Can publish:** today's Approve / Reject. **Cannot:** 👍 = a positive decision (new status `liked`, counted as approval by Radar); 👎 = the existing reject-with-reason flow; «Зробити пост» opens the existing editor, whose Send to preview puts the finished post in the user's bot chat, to forward or copy to their channel |
-| D11 | Preview | No preview channel anywhere. Send to preview sends the post, exactly as it would go out, to the pressing reviewer's own chat with the bot. Already done on `main`, independent of this PRD |
+| D11 | Preview | No preview channel anywhere. Send to preview sends the post, exactly as it would go out, to the pressing reviewer's own chat with the bot. **Shipped** (commit e1247a3, migration 0047, live since 2026-11-26) |
 | D1c | Sources | Exactly 5 picked automatically and connected at once (fewer if fewer pass validation). Then a "Стежу за: …" message where each source has ✕ to remove it; after a removal the bot offers the next-best candidate with ➕ |
 | D2 | Where the long steps run | A step runner over `onboarding_sessions`. The webhook kicks it with `after()`, `/api/onboarding/run` runs one step per call (`maxDuration` 800), and the every-minute cron sweeps up stalled or retrying sessions. No external queue |
 | D3 | Language | Set `workspaces.language` automatically (BCP 47) from the history |
@@ -96,7 +140,7 @@ Publishing to the channel (any path); a source-selection step; billing; referral
 | Radar's positive evidence | `APPROVED_STATUSES` in `src/lib/radar/repository.ts` (`published`, `scheduled`) | add `liked` (§26) |
 | Radar needs a profile | `workspaces.editorial_profile`; null = Radar off | hence §14 |
 | Reject with reason | `buildRejectReasonKeyboard`, `rejectWithReason` (`src/lib/sync/approval.ts`, `repository.ts`) | reused for 👎 |
-| Editor, send-to-preview | `src/app/api/telegram/webapp/rich`, `.../preview`, `previewPost` in `src/lib/sync/publish.ts` | Send to preview reused for «Зробити пост»; since D11 it targets the reviewer's bot chat |
+| Editor, Send to preview | `src/app/api/telegram/webapp/rich`, `.../preview`, `previewPost` in `src/lib/sync/publish.ts` | Send to preview reused for «Зробити пост»; it already sends to the reviewer's bot chat (D11, shipped) |
 | Chat checks | `TelegramClient.getChat / getChatMember / getMe` | for §6 and channel verification (v2) |
 | Fetch safety | `isPrivateAddress` (`src/lib/rss/url.ts`), `src/lib/website/http.ts` | every discovery fetch goes through them |
 
@@ -488,7 +532,6 @@ Once a workspace may publish, Approve is the positive signal and `liked` is no l
 `telegram_chat_id` is set at provisioning (sync needs it: `listActiveWorkspaces`), so whether a workspace may publish is its own fact: **`channel_verified_at` is not null.** Gating `destinationFor` would also stop sync, so the check goes at the points that post to the channel:
 
 - `publishDecidedPost` (`src/lib/sync/publish.ts`)
-- `publishDraft` / `publishDueDrafts` (`src/lib/drafts/drafts.ts`)
 - `publishDueScheduledPosts` (`src/lib/sync/publish-scheduled.ts`): skip, do not fail
 - the approve / schedule handlers in `src/app/api/telegram/webapp/queue`, `.../schedule`, the webhook's approve callback, and auto-publish (`auto_publish` cannot be turned on while unverified)
 
