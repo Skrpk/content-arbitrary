@@ -1918,8 +1918,8 @@ five seconds.
 ### Similar approved posts
 
 Most repeats an editor turns down are not of what the channel published long ago but of what they
-approved last week from the same stream of sources — which, while posts go to a draft channel, is
-not in the channel's exported history at all. So `radar-v3-retrieval-approved` also shows Radar
+approved last week from the same stream of sources — which is often not yet in the channel's
+exported history at all. So `radar-v3-retrieval-approved` also shows Radar
 the five posts the editor already approved (published or scheduled) that are nearest to the new
 one, with when they were approved, and tells it that one reporting the same story is the most
 direct sign of a repeat — the more so the more recent.

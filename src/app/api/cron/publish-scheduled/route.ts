@@ -6,7 +6,6 @@ import { logger } from '@/lib/logger';
 import { TelegramClient } from '@/lib/telegram/client';
 import { publishDueScheduledPosts } from '@/lib/sync/publish-scheduled';
 import { runThreadsDeliveries } from '@/lib/threads/publisher';
-import { publishDueDrafts } from '@/lib/drafts/drafts';
 
 /**
  * GET /api/cron/publish-scheduled — publish scheduled posts that are due.
@@ -38,15 +37,6 @@ export async function GET(request: Request): Promise<Response> {
     const summary = await publishDueScheduledPosts({ db, env, client, logger: runLogger });
     if (summary.due > 0) runLogger.info('scheduled.run', { ...summary });
 
-    // Drafts scheduled from their draft channel, on to their channels.
-    const drafts = await publishDueDrafts({ db, env, client, logger: runLogger.child({ surface: 'drafts' }) }).catch(
-      (error: unknown) => {
-        runLogger.error('drafts.run_failed', { error: describeError(error) });
-        return null;
-      },
-    );
-    if (drafts && (drafts.due > 0 || drafts.controlsSent > 0)) runLogger.info('drafts.run', { ...drafts });
-
     // After the scheduled posts, so a post scheduled for Threads goes on in the same run.
     const threads = await runThreadsDeliveries({ db, env, client, logger: runLogger.child({ surface: 'threads' }) }).catch(
       (error: unknown) => {
@@ -57,7 +47,7 @@ export async function GET(request: Request): Promise<Response> {
     const threadsActive = threads !== null && Object.values(threads).some((count) => count > 0);
     if (threadsActive) runLogger.info('threads.run', { ...threads });
 
-    return Response.json({ ...summary, ...(drafts && drafts.due > 0 ? { drafts } : {}), ...(threadsActive ? { threads } : {}) }, { headers: { 'cache-control': 'no-store' } });
+    return Response.json({ ...summary, ...(threadsActive ? { threads } : {}) }, { headers: { 'cache-control': 'no-store' } });
   } catch (error) {
     const message = describeError(error);
     runLogger.error('scheduled.fatal', { error: message });
