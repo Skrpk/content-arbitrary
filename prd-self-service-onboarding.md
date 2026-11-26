@@ -2,11 +2,22 @@
 
 Product: Zmistik
 Feature: Telegram bot onboarding → channel analysis → automatic sources → best posts pushed to the bot
-Version: v1, revision 4 (checked against the repository on 2026-11-26)
+Version: v1, revision 5 (checked against the repository on 2026-11-26)
+
+> **Revision 5** removes the `delivery_mode` switch. A workspace now has two
+> independent properties:
+>
+> 1. **How the reviewer hears of posts**: the existing `review_digest_minutes`,
+>    plus a new option, "only the best, as they come" (§24).
+> 2. **Whether it may publish**: `channel_verified_at` (§25). It decides the
+>    buttons (Approve vs 👍/👎/✍️) and which pages show (§33).
+>
+> The preview channel is gone everywhere (done on `main` separately): **Send to
+> preview always sends the post to the reviewer's own chat with the bot.**
 
 > **Revision 4** adds editing the editorial profile in the bot (§14a), learning
 > from the latest 100 posts only (§9), and how the website and Mini App work for
-> a `bot_push` workspace (§33).
+> a workspace that cannot publish (§33).
 Primary interface: `@ZmistikBot` private chat
 
 > **Revision 3** replaces the "select sources, then get a digest" loop with a
@@ -24,9 +35,10 @@ Primary interface: `@ZmistikBot` private chat
 
 | # | Decision | Resolution |
 |---|----------|------------|
-| D1 | What the user gets, and publishing | Discovery-only. The bot connects 5 sources automatically and pushes Radar's best posts into the user's private chat, each with 👍 / 👎 / «Зробити пост». **Nothing is published to the channel in v1.** Publishing stays hard-gated (§25) so a self-service workspace can never post to a channel, including one the bot already administers for someone else |
-| D1a | Delivery | Each post is its own message, sent as it arrives, but **only when Radar scores it at or above `push_min_score` (default 60)**. At most **`push_daily_limit` (default 15)** messages a day, and at most one per story. Everything else stays in the review queue |
-| D1b | Buttons | 👍 = a positive decision (new status `liked`, counted as approval by Radar); 👎 = the existing reject-with-reason flow; «Зробити пост» opens the existing editor with a ready text, and «Надіслати мені» sends the finished post into the bot chat, where the user forwards or copies it to their channel |
+| D1 | What the user gets, and publishing | Discovery-only. The bot connects 5 sources automatically and pushes Radar's best posts into the user's private chat, each with 👍 / 👎 / «Зробити пост». **A self-service workspace cannot publish to the channel in v1** (`channel_verified_at` is null, §25). That holds even for a channel the bot already administers for someone else. There is no mode switch: publishing becomes possible later by verifying the channel, and nothing else changes |
+| D1a | Notification ("only the best, as they come") | A new value of the existing notification setting: each post as its own message, as it arrives, but **only when Radar scores it at or above `push_min_score` (default 60)**. At most **`push_daily_limit` (default 15)** a day, and at most one per story. Everything else stays in the review queue, unannounced. It is the default for self-service workspaces and can be chosen by any workspace |
+| D1b | Buttons | Decided only by whether the workspace may publish. **Can publish:** today's Approve / Reject. **Cannot:** 👍 = a positive decision (new status `liked`, counted as approval by Radar); 👎 = the existing reject-with-reason flow; «Зробити пост» opens the existing editor, whose Send to preview puts the finished post in the user's bot chat, to forward or copy to their channel |
+| D11 | Preview | No preview channel anywhere. Send to preview sends the post, exactly as it would go out, to the pressing reviewer's own chat with the bot. Already done on `main`, independent of this PRD |
 | D1c | Sources | Exactly 5 picked automatically and connected at once (fewer if fewer pass validation). Then a "Стежу за: …" message where each source has ✕ to remove it; after a removal the bot offers the next-best candidate with ➕ |
 | D2 | Where the long steps run | A step runner over `onboarding_sessions`. The webhook kicks it with `after()`, `/api/onboarding/run` runs one step per call (`maxDuration` 800), and the every-minute cron sweeps up stalled or retrying sessions. No external queue |
 | D3 | Language | Set `workspaces.language` automatically (BCP 47) from the history |
@@ -36,7 +48,7 @@ Primary interface: `@ZmistikBot` private chat
 | D7 | Analytics | New `product_events` table |
 | D8 | Editing the editorial profile | Also **in the bot chat**: `/profile` shows it, with buttons to replace it with their own text or to refine it with an instruction (the LLM rewrites, the user confirms). See §14a. Settings (website / Mini App) keeps its editor |
 | D9 | How much history is learned from | **Only the latest 100 usable posts** (scan at most 200 messages) |
-| D10 | Website and Mini App | The same pages, adapted per workspace by `delivery_mode`: no publishing or scheduling in `bot_push`, 👍/👎/✍️ instead of Approve. See §33 |
+| D10 | Website and Mini App | The same pages, adapted per workspace by **whether it may publish**: without publishing there is no Approve, scheduling or auto-publish, and 👍/👎/✍️ take their place. See §33 |
 
 **Spike before §6:** confirm that Bot API `getChat("@username")` returns `id`, `type` and `title` for a public channel the bot is **not** in. Fallback if it doesn't: validate and take the title from the t.me page, and key history by `tg:<username>` (§10).
 
@@ -84,8 +96,8 @@ Publishing to the channel (any path); a source-selection step; billing; referral
 | Radar's positive evidence | `APPROVED_STATUSES` in `src/lib/radar/repository.ts` (`published`, `scheduled`) | add `liked` (§26) |
 | Radar needs a profile | `workspaces.editorial_profile`; null = Radar off | hence §14 |
 | Reject with reason | `buildRejectReasonKeyboard`, `rejectWithReason` (`src/lib/sync/approval.ts`, `repository.ts`) | reused for 👎 |
-| Editor, send-to-preview | `src/app/api/telegram/webapp/rich`, `.../preview`, `previewPost` in `src/lib/sync/publish.ts` | reused for «Зробити пост» / «Надіслати мені» |
-| Chat checks | `TelegramClient.getChat / getChatMember / getMe`; `src/lib/review/preview-channel.ts` | |
+| Editor, send-to-preview | `src/app/api/telegram/webapp/rich`, `.../preview`, `previewPost` in `src/lib/sync/publish.ts` | Send to preview reused for «Зробити пост»; since D11 it targets the reviewer's bot chat |
+| Chat checks | `TelegramClient.getChat / getChatMember / getMe` | for §6 and channel verification (v2) |
 | Fetch safety | `isPrivateAddress` (`src/lib/rss/url.ts`), `src/lib/website/http.ts` | every discovery fetch goes through them |
 
 Principle: **onboarding discovers and orchestrates; existing systems stay authoritative.** No second monitor, scorer or source store.
@@ -167,16 +179,16 @@ telegram_chat_id        = -100<id>              (as operator workspaces store it
 telegram_admin_chat_id  = user's Telegram id     (where pushed posts go)
 workspace_members       = (workspace, user, 'owner')
 auto_publish            = false
-delivery_mode           = 'bot_push'            NEW (§24)
-push_min_score          = 60                    NEW
+review_digest_minutes   = null                  (each post as it arrives …)
+push_min_score          = 60                    NEW (… but only the best: §24)
 push_daily_limit        = 15                    NEW
-channel_verified_at     = null                  NEW (§25; publishing impossible)
+channel_verified_at     = null                  NEW (§25; cannot publish)
 created_via             = 'self_service'        NEW
 ```
 
 Several users may onboard the same public channel. It is public data, and none of them can publish.
 
-Migration for existing workspaces: `delivery_mode = 'channel_review'`, `channel_verified_at = now()`, `created_via = 'operator'`. Their behaviour does not change.
+Migration for existing workspaces: `channel_verified_at = now()`, `created_via = 'operator'`, `push_min_score = null`. Their behaviour does not change.
 
 ## 8. Sessions and the step runner (D2)
 
@@ -295,7 +307,7 @@ The profile is what Radar scores against, so it decides what gets pushed. The us
 
 Saving, from the bot or from Settings, goes through `setEditorialProfile` and sets `editorial_profile_source = 'editor'`. Radar uses the new profile from the next post it scores (its `editorialProfileHash` changes). Posts already scored are not re-scored. The confirmation says so: "Збережено. Нові пости оцінюватиму за оновленим профілем."
 
-In `bot_push` the profile **cannot be cleared**. An empty profile turns Radar off, and then nothing would be pushed. Settings' "Clear" button is hidden there (§33).
+While `push_min_score` is set, the profile **cannot be cleared**: an empty profile turns Radar off, and then nothing would be sent. Settings' "Clear" button is hidden then (§33).
 
 **Waiting for the next message.** A new table:
 
@@ -407,7 +419,7 @@ For each picked suggestion:
 
 1. Run the platform's `add*Source` (it re-resolves).
 2. Create or reuse the `sources` row (upsert).
-3. Set `include_text_only = true` and `radar_threshold = null`. **Extend `addSource`** with optional `{ includeTextOnly, radarThreshold }`, applied on insert only. In `bot_push` mode filtering is done by `push_min_score` (§24), never by `radar_threshold`, so nothing is dropped before it reaches the queue.
+3. Set `include_text_only = true` and `radar_threshold = null`. **Extend `addSource`** with optional `{ includeTextOnly, radarThreshold }`, applied on insert only. What reaches the chat is decided by `push_min_score` (§24), not `radar_threshold`, so nothing is dropped before it reaches the queue.
 4. A failure promotes the next reserve candidate, until 5 are active or the reserve runs out.
 
 `following_since = now()`, so no backlog.
@@ -424,63 +436,67 @@ The message from §5, step 4. Each line has a reason drawn from the evidence ("�
 
 Never mention embeddings, RAG or Radar.
 
-## 24. Delivery: best posts pushed to the bot (D1a)
+## 24. Notification: "only the best, as they come" (D1a)
 
-New workspace columns:
+No mode switch. This is one more value of the notification setting each workspace already has (`review_digest_minutes`: null = each post in the chat as it arrives, N = a digest every N minutes). New workspace columns:
 
 ```
-delivery_mode     text  'channel_review' (default; today's behaviour) | 'bot_push'
-push_min_score    int   1–100, default 60
+push_min_score    int   1–100, null = off (default for existing workspaces)
 push_daily_limit  int   1–100, default 15
 ```
 
-In `bot_push`:
+Settings shows three choices:
 
-- Every candidate goes through `processCandidate()` as today: Radar scores it, it is placed in its story, and it enters the review queue (`awaiting_approval`). Nothing is dropped by a threshold.
-- **Push decision**, made right after Radar in `process-candidate.ts` (where `findReviewScore` already runs). Push when **all** of these hold:
-  - the Radar score is at or above `push_min_score` (no score → no push);
-  - no post of the same story was pushed in the last 48 h (story from `story_posts`);
-  - fewer than `push_daily_limit` posts were pushed in the last 24 h (count of `pushed_at`).
-- A pushed post is sent to `telegram_admin_chat_id` as today's per-post review message (`formatReviewControlText`, media, source mark, Radar note), **with the `bot_push` keyboard instead of Approve/Reject**:
+| Choice | `review_digest_minutes` | `push_min_score` |
+|--------|-------------------------|------------------|
+| Each post in the chat, as it arrives (today) | null | null |
+| **Only the best, as they come** (new; the self-service default) | null | 60 (Менше = 75 / Звичайно = 60 / Більше = 45) |
+| A digest every N minutes (today) | N | null |
 
-  ```
-  [👍] [👎] [✍️ Зробити пост]
-  ```
+With `push_min_score` set:
 
-  It records `processed_posts.pushed_at` (**new column**) and the message in `review_copies`, as today.
-- The queue's periodic digest notification is **off** in `bot_push`: the push is the notification. The queue stays reachable from 📋 and from each pushed post.
-- Not pushed = stays in the queue, unannounced.
-- Quiet hours are not in v1.
+- Every candidate goes through `processCandidate()` as today: Radar scores it, places it in its story, and it enters the review queue (`awaiting_approval`). Nothing is dropped.
+- The **send decision** is made right after Radar in `process-candidate.ts` (where `findReviewScore` already runs). Send to the chat when **all** of these hold:
+  - the Radar score is at or above `push_min_score` (no score → not sent);
+  - no post of the same story was sent in the last 48 h (`story_posts`);
+  - fewer than `push_daily_limit` were sent in the last 24 h (`processed_posts.pushed_at`, **new column**).
+- Sent: today's per-post review message (media, text, source mark, Radar note) to the workspace's reviewers, with `pushed_at` recorded. Not sent: it stays in the queue, unannounced.
 
-Callbacks (`fb:` prefix, authorised as workspace members, scoped to the post's workspace like the existing callbacks):
+**Which buttons** a sent post carries depends only on whether the workspace may publish (§25), never on the notification setting:
+
+| Workspace | Buttons |
+|-----------|---------|
+| May publish (`channel_verified_at` set) | today's Approve / Reject (+ Schedule via the Mini App) |
+| May not | **[👍] [👎] [✍️ Зробити пост]** |
+
+The "may not" buttons (`fb:` callbacks, authorised as workspace members and scoped to the post's workspace like the existing callbacks):
 
 | Button | Effect |
 |--------|--------|
 | 👍 `fb:up:<postId>` | `awaiting_approval` → **`liked`** (new status); the keyboard becomes `[✓ 👍] [✍️ Зробити пост]` |
 | 👎 `fb:down:<postId>` | the existing reject-reason keyboard (`buildRejectReasonKeyboard`), then `rejectWithReason` |
-| ✍️ `fb:edit:<postId>` | open the existing rich editor Mini App for the post (web_app button, so it opens in place). The Approve dialog's publish and schedule actions are hidden in `bot_push`; **«Надіслати мені»** sends the finished post (media + text, the workspace's footer) to the user's own chat through `previewPost`, so they can forward it (hide sender) or copy it. Opening the editor marks the post `liked` if it is still awaiting |
+| ✍️ `fb:edit:<postId>` | open the existing rich editor Mini App for the post (a web_app button). Its **Send to preview** sends the finished post (media, text, footer) to the user's own bot chat (D11), so they can forward it (sender hidden) or copy it. Opening the editor marks the post `liked` if it is still awaiting |
 
-`liked` (new `post_status` value, migration `ALTER TYPE … ADD VALUE`) is:
+`liked` (new `post_status` value, migration `ALTER TYPE … ADD VALUE`):
+- is added to `APPROVED_STATUSES` (`src/lib/radar/repository.ts`), so Radar learns from it like an approval;
+- is treated as decided wherever statuses are switched on: queue views, stats (`src/lib/sources/stats.ts`), `alreadySettledNotice`. Grep for `'scheduled'` / `'published'`.
 
-- added to `APPROVED_STATUSES` in `src/lib/radar/repository.ts`, so Radar learns from it exactly like an approval;
-- treated as decided everywhere statuses are switched on: queue views, stats (`src/lib/sources/stats.ts`), `alreadySettledNotice`. Grep for `'scheduled'` / `'published'` to find them.
+Once a workspace may publish, Approve is the positive signal and `liked` is no longer produced. Existing `liked` posts stay as they are.
 
-Queue view in `bot_push`: show 👍 / 👎 / edit instead of Approve / Schedule.
+## 25. Publishing requires a verified channel
 
-## 25. Publishing is impossible in v1
-
-`telegram_chat_id` is set (sync needs it: `listActiveWorkspaces`), so the gate must be explicit. A workspace with `channel_verified_at = null` may not send anything to its channel. Gating `destinationFor` would also stop sync, so the gate goes at the points that post to the channel:
+`telegram_chat_id` is set at provisioning (sync needs it: `listActiveWorkspaces`), so whether a workspace may publish is its own fact: **`channel_verified_at` is not null.** Gating `destinationFor` would also stop sync, so the check goes at the points that post to the channel:
 
 - `publishDecidedPost` (`src/lib/sync/publish.ts`)
 - `publishDraft` / `publishDueDrafts` (`src/lib/drafts/drafts.ts`)
 - `publishDueScheduledPosts` (`src/lib/sync/publish-scheduled.ts`): skip, do not fail
-- the approve / schedule handlers in `src/app/api/telegram/webapp/queue`, `.../schedule`, and the webhook's approve callback
+- the approve / schedule handlers in `src/app/api/telegram/webapp/queue`, `.../schedule`, the webhook's approve callback, and auto-publish (`auto_publish` cannot be turned on while unverified)
 
 They refuse with `channel_not_connected`.
 
-The preview channel: in `bot_push`, Settings hides it, and the preview route refuses any target other than the user's own chat. That closes the same hole for `checkPreviewChannel`, which checks only the bot.
+Preview is safe as it is: since D11 it only ever sends to the pressing reviewer's own bot chat.
 
-Connecting a channel for publishing comes later (v2): the bot must be an admin that can post, **and the user must be the creator or an admin who can post** (`getChatMember` on both), and only then is `channel_verified_at` set.
+Verifying a channel comes later (v2): the bot must be an admin that can post, **and the user must be the creator or an admin who can post** (`getChatMember` on both). Only then is `channel_verified_at` set. Nothing else changes for the workspace: its buttons and pages switch to the publishing ones (§33), and its notification setting stays as chosen.
 
 ## 26. Learning
 
@@ -550,20 +566,21 @@ Quality signals: share of pushes getting 👍 or «Зробити пост» (ta
 ## 31. Acceptance criteria
 
 1. A new user: `/start` → `@channel` → validated (groups, users, bots and invite links rejected).
-2. The user, the workspace (`bot_push`, `self_service`, `channel_verified_at = null`) and the owner membership are created.
+2. The user, the workspace (`self_service`, `channel_verified_at = null`, `review_digest_minutes = null`, `push_min_score = 60`) and the owner membership are created.
 3. The latest 100 usable posts (or all of them, if fewer) are in `publication_history_items` under `-100<id>`, with an import audit row; nothing is in `processed_posts`.
 4. The profile and embeddings exist; `editorial_profile` (`auto`) and `language` are set.
 5. 5 validated sources (no X, no Threads) are active with `include_text_only = true`; no backlog; the "Стежу за" message is shown.
 6. ✕ disables a source and offers a reserve; ➕ activates it.
 7. New items go through `processCandidate()`, are scored and clustered, and enter the queue.
 8. Only posts at or above `push_min_score` are pushed; at most 15 a day; at most one per story in 48 h; no queue digest is sent.
-9. 👍 → `liked`, which Radar's evidence query returns as approved; 👎 → a rejection with reason; ✍️ opens the editor; «Надіслати мені» delivers the post to the user's chat.
-10. **No path publishes to the channel**: approve, schedule, draft, scheduler, webhook, and the preview to a foreign chat are all refused for `channel_verified_at = null`. Tested, including a channel where the bot already is an admin.
+9. 👍 → `liked`, which Radar's evidence query returns as approved; 👎 → a rejection with reason; ✍️ opens the editor; its Send to preview delivers the post to the user's bot chat.
+10. **No path publishes to the channel**: approve, schedule, draft, scheduler, webhook and auto-publish are all refused for `channel_verified_at = null`. Tested, including a channel where the bot already is an admin.
 11. A crash or 429 mid-crawl resumes from the cursor via the sweeper; no duplicate items.
 12. Two runner calls for one session: only one runs the step.
 13. Operator workspaces behave exactly as before (migration defaults), and existing `add-*` tests pass unchanged.
-14. `/profile` shows the profile. ✏️ replaces it with the next message, 💬 rewrites it from an instruction and saves only on ✅, 🌐 sets the language. Every save sets `editorial_profile_source = 'editor'`, and the next scored post uses the new profile. In `bot_push` the profile cannot be cleared from the bot, Settings, or the API.
-15. Website and Mini App for a `bot_push` workspace: the queue shows 👍/👎/✍️ with no Approve or Schedule; the editor offers «Надіслати мені» and «Копіювати текст»; Settings shows the language and push settings and hides digest, auto-publish, preview channel and threshold. The hidden settings' routes refuse changes. An operator workspace of the same user is unchanged.
+14. `/profile` shows the profile. ✏️ replaces it with the next message, 💬 rewrites it from an instruction and saves only on ✅, 🌐 sets the language. Every save sets `editorial_profile_source = 'editor'`, and the next scored post uses the new profile. While `push_min_score` is set, the profile cannot be cleared from the bot, Settings, or the API.
+15. Website and Mini App for a workspace that may not publish: the queue shows 👍/👎/✍️ with no Approve or Schedule; the editor offers Send to preview (bot chat) and «Копіювати текст»; Settings hides auto-publish, threshold and Threads, and their routes refuse changes. Every workspace's Settings has the new notification choice and language. An operator workspace of the same user is unchanged.
+16. Verifying a channel (when built) only sets `channel_verified_at`. The same workspace then shows Approve, Schedule and auto-publish, and keeps its notification setting.
 
 ## 32. Layout and order
 
@@ -592,7 +609,7 @@ src/lib/sources/add-*.ts              §18 resolve / persist
 src/lib/sources/repository.ts         §22 addSource options
 src/app/api/onboarding/run/route.ts   §8
 src/db/schema.ts + migration          onboarding_sessions, source_suggestions, product_events;
-                                      workspaces.delivery_mode, push_min_score, push_daily_limit,
+                                      workspaces.push_min_score, push_daily_limit,
                                       channel_verified_at, created_via, editorial_profile_source;
                                       processed_posts.pushed_at; post_status += 'liked';
                                       bot_pending_inputs
@@ -605,33 +622,37 @@ Order (each step shippable and tested on its own):
 3. Sessions, runner, routing, provisioning (§5a, §7, §8) up to "profile done", + initial profile/language (§14).
 4. Resolve/persist split, site-feed discovery, link signals, web discovery, ranking (§15–§19).
 5. Auto-activation + the "Стежу за" message with ✕/➕ (§20–§23).
-6. `bot_push` delivery, `liked`, feedback callbacks (§24).
+6. "Only the best, as they come", `liked`, feedback buttons for workspaces that may not publish (§24).
 7. `/profile` in the bot: replace, refine, language (§14a).
-8. Website and Mini App adapted to `bot_push`: queue buttons, editor's «Надіслати мені» / «Копіювати текст», Settings (§33).
+8. Website and Mini App adapted by "may publish": queue buttons, editor's copy action, Settings (notification choice, language) (§33).
 9. Limits, waitlist, analytics (§28–§29).
 
 ## 33. The website and Mini App under the new logic (D10)
 
-There is no separate app for self-service users. Every page already works per workspace (a reviewer of several channels switches between them), so each page reads the workspace's `delivery_mode` and adapts. Operator workspaces (`channel_review`) see no change.
+There is no separate app and no mode. Every page already works per workspace (a reviewer of several channels switches between them). Each page asks one question of the workspace: **may it publish?** (`channel_verified_at`, §25). Operator workspaces may, so they see no change.
 
-**Access.** The self-service user is the workspace's `owner` member, with their Telegram identity. They sign in to `/console` with Telegram (OIDC) and open the Mini Apps from bot buttons, exactly as reviewers do now. `findWorkspacesByAdminChatId` and `listWorkspacesOf…` (`src/lib/accounts/users.ts`) require `telegram_chat_id`, which is set at provisioning (§7), so no change is needed.
+**Access.** The self-service user is the workspace's `owner` member, with their Telegram identity. They sign in to `/console` with Telegram (OIDC) and open the Mini Apps from bot buttons, as reviewers do now. `findWorkspacesByAdminChatId` and `workspacesForUser` require `telegram_chat_id`, which is set at provisioning (§7).
 
-| Page | Today | In `bot_push` |
-|------|-------|---------------|
-| **Review queue**: `/console/queue`, Mini App `/queue` (`review-queue.tsx`) | Cards by Radar score; ✅ Approve (dialog: publish / schedule / send to preview), Reject, Edit, 🕒 Schedule; keys `a r e s o` | Same list and order. Buttons: **👍**, **👎** (same reasons), **✍️ Зробити пост**. No Approve dialog, no 🕒 Schedule. Keys: `a` = 👍, `s` disabled. Pushed cards carry a "📨 надіслано в бот" mark. `liked` cards leave the queue like approved ones. The story line shows "👍 already liked from …" instead of "Already published from …" |
-| Story behaviour on a decision | Approve rejects the rest of the story as `already_covered` | 👍 does **not** reject the rest (a like is a signal, not a publish decision). 👎 on a story card rejects the whole story, as Reject does today |
-| **Single post review**: Mini App `/review`, `/review/reject` | Opened from a post's chat buttons | `/review` shows 👍/👎/✍️; `/review/reject` unchanged (the 👎 reasons) |
-| **Schedule**: Mini App `/review/schedule`, `/console/scheduled` | Schedule a post; list scheduled ones | Hidden: no nav link, no button. The routes refuse with `channel_not_connected` (§25) |
-| **Editor**: `/console/edit/[postId]`, the Mini App editor (`rich-editor/post-editor.tsx`, assistant panel) | Edit text and media, then Approve dialog | Same editor and AI assistant. The finishing actions become **«Надіслати мені»** (sends the finished post to the user's own bot chat via `previewPost`, so they can forward it with sender hidden or copy it) and **«Копіювати текст»** (clipboard; Telegram-formatted text). Opening it marks the post `liked` (§24) |
-| **Sources**: `/console/sources`, Mini App `/source-stats` (`source-stats-panel.tsx`, `add-source-form.tsx`) | List with stats; pause / resume / remove; add any platform | Unchanged. Onboarded sources show a small "знайдено автоматично" tag (from `source_suggestions`). "Approved" counts include `liked` (`src/lib/sources/stats.ts`). Adding X manually stays possible (D4 only keeps X out of suggestions) |
-| **Settings**: `/console/settings`, Mini App `/settings` (`settings-panel.tsx`) | Review link target; digest frequency; auto-publish; editorial profile (save / clear); per-source Radar threshold and text-only; post footer; preview channel; Threads | Shown: review link target; **editorial profile** (save only, no Clear; "auto" badge while `editorial_profile_source = 'auto'`); **new: language**; **new: push settings** ("Скільки постів надсилати": Менше = score 75 / Звичайно = 60 / Більше = 45, and the daily limit 5–30); per-source text-only; post footer (applied to «Надіслати мені»). Hidden: digest frequency (no digest in `bot_push`), auto-publish, per-source Radar threshold (filtering is `push_min_score`), preview channel, Threads (already off: `threads_enabled = false`) |
-| **Stats**: `/console/stats` | Per-source numbers | Unchanged; approvals include `liked` |
-| Bot commands | `/review`, `/scheduled`, `/sourcestats`, `/add*`, `/help` | `/scheduled` answers "У цьому режимі нічого не плануємо — пости надсилаю тобі". `/help` lists `/profile`, `/sourcestats`, `/review`, `/newchannel`. `/add*` unchanged |
-| Queue digest notification | Every N minutes | Off (§24) |
-| `/api/status` | Per-tenant publishability | Reports `bot_push` tenants as monitoring-only, not as "unpublishable" |
+| Page | May publish (today, unchanged) | May not publish |
+|------|--------------------------------|-----------------|
+| **Review queue**: `/console/queue`, Mini App `/queue` (`review-queue.tsx`) | Cards by Radar score; ✅ Approve (dialog: publish / schedule / Send to preview), Reject, Edit, 🕒 Schedule; keys `a r e s o` | Same list and order. Buttons: **👍**, **👎** (same reasons), **✍️ Зробити пост**. No Approve dialog, no 🕒 Schedule. Keys: `a` = 👍, `s` disabled. Cards sent to the chat show "📨 надіслано в бот". `liked` cards leave the queue like approved ones; the story line reads "👍 already liked from …" |
+| Story behaviour | Approve rejects the rest of the story as `already_covered` | 👍 does **not** reject the rest (a signal, not a publish). 👎 on a story card rejects the whole story, as Reject does |
+| **Single post review**: Mini App `/review`, `/review/reject` | Approve / Reject | 👍/👎/✍️; `/review/reject` unchanged |
+| **Schedule**: Mini App `/review/schedule`, `/console/scheduled` | As today | Hidden (no nav link, no button); the routes refuse (§25) |
+| **Editor**: `/console/edit/[postId]`, Mini App editor (`rich-editor/post-editor.tsx`, assistant) | Edit, then the Approve dialog | Same editor and assistant. Finishing actions: **Send to preview** (to the user's bot chat, D11) and **Копіювати текст**. Opening it marks the post `liked` |
+| **Sources**: `/console/sources`, Mini App `/source-stats` | As today | As today. Onboarded sources carry "знайдено автоматично" (from `source_suggestions`). "Approved" counts include `liked`. X can be added manually (D4 only keeps X out of suggestions) |
+| **Settings**: `/console/settings`, Mini App `/settings` (`settings-panel.tsx`) | Review link target; notifications; auto-publish; editorial profile; per-source Radar threshold and text-only; post footer; Threads | Review link target; **notifications** (the same three choices, §24); **editorial profile**; per-source text-only; post footer (applied to Send to preview). Hidden: auto-publish, per-source Radar threshold, Threads (already off: `threads_enabled = false`) |
+| **Stats**: `/console/stats` | As today | As today; approvals include `liked` |
+| Bot commands | `/review`, `/scheduled`, `/sourcestats`, `/add*`, `/help` | `/scheduled`: "Поки канал не підключено, нічого не плануємо." `/help` lists `/profile`, `/sourcestats`, `/review`, `/newchannel` |
+| `/api/status` | Per-tenant publishability | Reports them as monitoring-only, not "unpublishable" |
 
-**A user with both kinds of workspace** (an operator channel and a self-service one) sees each one's own buttons. Every card, callback and page decides by the post's workspace, never by the user.
+**For every workspace, whether or not it may publish:**
+- **Notifications** gets the new "Only the best, as they come" choice (§24), with its sensitivity (Менше / Звичайно / Більше) and daily limit.
+- **Language** is a new Settings field. Today it can be set nowhere in the UI.
+- The editorial profile shows an "auto" badge while `editorial_profile_source = 'auto'`. It **cannot be cleared while `push_min_score` is set**: no profile → no Radar → nothing sent. Clearing it is refused by the API too.
 
-**Server side.** The UI hiding things is not the protection. The publish gate in §25 refuses on the server whatever the UI shows. Likewise the routes for settings that are hidden in `bot_push` (auto-publish, digest, preview channel, Radar threshold) refuse those changes for `bot_push` workspaces.
+**A user with both kinds of workspace** sees each one's own buttons. Every card, callback and page decides by the post's workspace, never by the user.
+
+**Server side.** Hiding things in the UI is not the protection. The publish gate (§25) refuses on the server, and the routes for hidden settings (auto-publish, Radar threshold) refuse those changes for a workspace that may not publish.
 
 The product principle stays: **never ask for sources before Zmistik has done any work.**
