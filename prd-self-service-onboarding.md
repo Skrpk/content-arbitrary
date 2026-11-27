@@ -526,7 +526,7 @@ Preview is safe as it is: since D11 it only ever sends to the pressing reviewer'
   > [Open Settings] [Not now]
   > Or send yourself a preview and post it by hand.
 
-- **Open Settings** goes to Settings' "Publishing channel" block (`/settings#publishing-channel` in the Mini App, `/console/settings#publishing-channel` on the website);
+- **Open Settings** goes to Settings' "Publishing channel" block (`/settings?section=publishing-channel` in the Mini App, `/console/settings?section=publishing-channel` on the website — a query, since Telegram passes a Mini App its sign-in in the `#hash`);
 - a 409 `channel_not_connected` from the server (a stale page, another tab) opens the same popup instead of the red error line.
 
 The copy follows the UI's language (English today, Ukrainian once the UI is translated).
@@ -678,7 +678,7 @@ Order (each step shippable and tested on its own):
 2. Parser extensions + `storeParsedPublicationHistory` + crawl (§9–§12), runnable from a script.
 3. Sessions, runner, routing, provisioning (§5a, §7, §8) up to "profile done", + initial profile/language (§14).
 4. Resolve/persist split, site-feed discovery, link signals, web discovery, ranking (§15–§19). **Built**: `src/lib/onboarding/{candidates,link-signals,site-feed,source-discovery,discover-sources}.ts`; `npm run onboarding:discover -- --workspace N --channel @name [--no-search]` prints what would be connected. The web search uses `ASSISTANT_MODEL`.
-5. Auto-activation + the "Стежу за" message with ✕/➕ (§20–§23).
+5. Auto-activation + the "Стежу за" message with ✕/➕ (§20–§23). **Built**: `source_suggestions` (migration 0051), `src/lib/onboarding/{activate-sources,following}.ts`; the runner's `discovering_sources` and `activating_sources` steps; `ob:rm` / `ob:add` callbacks in the webhook. Fewer than 3 connected: the message points to the existing `/addtelegram`, `/addyoutube`, `/addrss`, `/addwebsite` (the person is the workspace's reviewer by then), rather than a separate manual-source input. A live run on @playstationua took 50 s from history to the message.
 6. `/profile` in the bot: replace, refine, language (§14a); the language field in Settings (§33).
 7. Limits, waitlist, analytics (§28–§29).
 

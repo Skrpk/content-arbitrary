@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { PlatformBadge } from '@/app/(app)/platform-badge';
 import { isRefusal, readJson, type PanelTools } from '@/components/panel-tools';
-import { CHANNEL_NOT_CONNECTED, PUBLISHING_CHANNEL_ANCHOR } from '@/lib/publishing/codes';
+import { CHANNEL_NOT_CONNECTED, publishingChannelPath } from '@/lib/publishing/codes';
 import { DEFAULT_PUBLISH_TARGETS, PUBLISH_TARGETS, publishedLine, type PublishTarget } from '@/lib/publish/targets';
 import { PublishTargetsChoice } from '@/components/publish-targets-choice';
 import { fromQueue, theme } from '@/lib/telegram/webapp-client';
@@ -932,7 +932,7 @@ export function ReviewQueue({
       {needsChannel !== null ? (
         <ChannelSetupDialog
           channelName={needsChannel}
-          settingsUrl={`${website ? '/console/settings' : '/settings'}#${PUBLISHING_CHANNEL_ANCHOR}`}
+          settingsUrl={publishingChannelPath(website ? '/console/settings' : '/settings')}
           onClose={() => setNeedsChannel(null)}
         />
       ) : null}

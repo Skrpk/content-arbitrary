@@ -8,3 +8,11 @@ export const CHANNEL_NOT_CONNECTED = 'channel_not_connected';
 
 /** Where Settings shows the channel to connect, on each surface. */
 export const PUBLISHING_CHANNEL_ANCHOR = 'publishing-channel';
+
+/**
+ * Settings opened at that block: `?section=publishing-channel`. A query, not
+ * a `#hash` — Telegram hands a Mini App its sign-in in the hash.
+ */
+export function publishingChannelPath(settingsPath: string): string {
+  return `${settingsPath}${settingsPath.includes('?') ? '&' : '?'}section=${PUBLISHING_CHANNEL_ANCHOR}`;
+}

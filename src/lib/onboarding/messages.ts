@@ -27,8 +27,7 @@ const COPY = {
     profiled: (title: string, usable: number, topics: string[]) =>
       `✅ <b>${escapeHtml(title)}</b>: проаналізував останні ${usable} ${plural(usable, ['пост', 'пости', 'постів'])}.` +
       (topics.length > 0 ? `\n\nКанал переважно про:\n${topics.map((topic) => `• ${escapeHtml(topic)}`).join('\n')}` : ''),
-    profileReady:
-      '📝 Профіль каналу готовий — за ним я оцінюватиму новини. Його можна змінити в Налаштуваннях.\n\nДжерела для каналу підключу на наступному етапі — він ще в роботі.',
+    findingSources: '🔎 Шукаю джерела — це ще хвилина-дві.',
     retrying: 'Telegram обмежує запити — продовжу автоматично.',
     failed: 'Щось пішло не так під час аналізу каналу. Спробуй ще раз: /newchannel',
     busy: 'Я ще аналізую попередній канал. Напишу, щойно закінчу.',
@@ -51,8 +50,7 @@ const COPY = {
     profiled: (title: string, usable: number, topics: string[]) =>
       `✅ <b>${escapeHtml(title)}</b>: analysed its latest ${usable} ${usable === 1 ? 'post' : 'posts'}.` +
       (topics.length > 0 ? `\n\nIt’s mostly about:\n${topics.map((topic) => `• ${escapeHtml(topic)}`).join('\n')}` : ''),
-    profileReady:
-      '📝 The channel’s profile is ready — news will be scored against it. You can change it in Settings.\n\nConnecting sources for it comes next — that part is still being built.',
+    findingSources: '🔎 Looking for sources — another minute or two.',
     retrying: 'Telegram is limiting requests — I’ll carry on automatically.',
     failed: 'Something went wrong analysing the channel. Try again: /newchannel',
     busy: 'I’m still analysing your previous channel. I’ll write as soon as I’m done.',

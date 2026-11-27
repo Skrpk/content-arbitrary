@@ -1620,3 +1620,53 @@ export const onboardingSessions = pgTable(
 );
 
 export type OnboardingSession = typeof onboardingSessions.$inferSelect;
+
+/**
+ * The sources onboarding found for a channel (§20): the ones it connected,
+ * the ones kept in reserve to offer when one is removed, and what became of
+ * each — kept after onboarding, to see which kinds of find people keep.
+ */
+export const SOURCE_SUGGESTION_ORIGINS = ['history_link', 'history_forward', 'discovery', 'manual'] as const;
+export const SOURCE_SUGGESTION_STATES = ['picked', 'active', 'reserve', 'removed', 'failed'] as const;
+export type SourceSuggestionState = (typeof SOURCE_SUGGESTION_STATES)[number];
+
+export const sourceSuggestions = pgTable(
+  'source_suggestions',
+  {
+    id: serial('id').primaryKey(),
+    sessionId: integer('session_id').references(() => onboardingSessions.id, { onDelete: 'set null' }),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    /** The source as it would be stored: `sources.platform`, `external_id`, `username`. */
+    platform: sourcePlatformEnum('platform').notNull(),
+    externalId: text('external_id').notNull(),
+    displayName: text('display_name').notNull(),
+    /** What it was found as: a channel's username, a site's home page. */
+    target: text('target').notNull(),
+    origin: text('origin', { enum: SOURCE_SUGGESTION_ORIGINS }).notNull(),
+    links: integer('links').notNull().default(0),
+    forwards: integer('forwards').notNull().default(0),
+    /** The search's one line on why it fits. */
+    reason: text('reason'),
+    kind: text('kind'),
+    organization: text('organization'),
+    /** For a website: followed by its feed, a news sitemap, or a sitemap. */
+    via: text('via'),
+    score: integer('score').notNull().default(0),
+    /** Its place: the picked first, best first, then the reserve. */
+    rank: integer('rank').notNull(),
+    state: text('state', { enum: SOURCE_SUGGESTION_STATES }).notNull(),
+    activatedSourceId: integer('activated_source_id').references(() => sources.id, { onDelete: 'set null' }),
+    activationError: text('activation_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('source_suggestions_workspace_idx').on(table.workspaceId, table.state, table.rank),
+    check('source_suggestions_origin_check', sql`${table.origin} IN ('history_link', 'history_forward', 'discovery', 'manual')`),
+    check('source_suggestions_state_check', sql`${table.state} IN ('picked', 'active', 'reserve', 'removed', 'failed')`),
+  ],
+);
+
+export type SourceSuggestion = typeof sourceSuggestions.$inferSelect;

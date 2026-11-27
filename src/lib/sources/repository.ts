@@ -120,7 +120,16 @@ export interface AddSourceResult {
  */
 export async function addSource(
   db: Database,
-  input: { platform: SourcePlatform; externalId: string; username: string; workspaceId?: number },
+  input: {
+    platform: SourcePlatform;
+    externalId: string;
+    username: string;
+    workspaceId?: number;
+    /** For a new source only: mirror text-only posts too. An existing one keeps its setting. */
+    includeTextOnly?: boolean;
+    /** For a new source only: Radar's lowest score to reach review. An existing one keeps its own. */
+    radarThreshold?: number | null;
+  },
 ): Promise<AddSourceResult> {
   const workspaceId = input.workspaceId ?? DEFAULT_WORKSPACE_ID;
   const existing = await findSourceByExternalId(db, { ...input, workspaceId });
@@ -132,6 +141,8 @@ export async function addSource(
       platform: input.platform,
       externalId: input.externalId,
       username: input.username,
+      ...(input.includeTextOnly !== undefined ? { includeTextOnly: input.includeTextOnly } : {}),
+      ...(input.radarThreshold !== undefined ? { radarThreshold: input.radarThreshold } : {}),
     })
     .onConflictDoUpdate({
       target: [sources.workspaceId, sources.platform, sources.externalId],

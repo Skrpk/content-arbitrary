@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { eq } from 'drizzle-orm';
-import { workspaces, type OnboardingSession, type OnboardingStatus } from '@/db/schema';
+import { and, eq } from 'drizzle-orm';
+import { sourceSuggestions, workspaces, type OnboardingSession, type OnboardingStatus } from '@/db/schema';
 import type { Database } from '@/lib/db';
 import type { Env } from '@/lib/env';
 import { AppError, describeError } from '@/lib/errors';
@@ -22,7 +22,12 @@ import { crawlChannelHistory, TELEGRAM_PUBLIC_ADAPTER } from '@/lib/onboarding/t
 import { createRadarProvider } from '@/lib/radar/providers';
 import type { RadarProvider } from '@/lib/radar/providers/types';
 import { TelegramClient } from '@/lib/telegram/client';
-import { buildSettingsUrl } from '@/lib/telegram/commands';
+import { YouTubeClient } from '@/lib/youtube/client';
+import { activatePicked, storeSuggestions } from '@/lib/onboarding/activate-sources';
+import { discoverSources } from '@/lib/onboarding/discover-sources';
+import { followingView } from '@/lib/onboarding/following';
+import { loadHistorySignals } from '@/lib/onboarding/link-signals';
+import { createDiscoverer, type SourceDiscoverer } from '@/lib/onboarding/source-discovery';
 import { TELEGRAM_PARSE_MODE } from '@/lib/telegram/format-caption';
 
 /**
@@ -36,8 +41,8 @@ import { TELEGRAM_PARSE_MODE } from '@/lib/telegram/format-caption';
  * ONBOARDING_MAX_ATTEMPTS times; one that cannot succeed fails the session
  * at once. Either way the person is told.
  *
- * Steps so far: the channel's history, then its profile. Finding and
- * connecting sources comes next; until then onboarding ends with the profile.
+ * Steps: the channel's history, its profile, finding its sources, and
+ * connecting the best five — then the "Стежу за" message, and it is done.
  */
 
 export interface RunnerDeps {
@@ -47,9 +52,14 @@ export interface RunnerDeps {
   /** The model that profiles the channel; without it the profiling step cannot run. */
   provider: RadarProvider | null;
   embeddings: EmbeddingProvider | null;
+  /** Finds YouTube channels; without it, YouTube candidates are dropped. */
+  youtube: YouTubeClient | null;
+  /** The web search for sources; without it, the history's alone. */
+  discoverer: SourceDiscoverer | null;
   logger: Logger;
-  /** t.me pages; injected by tests. */
+  /** t.me pages and candidate sites; injected by tests. */
   fetchImpl?: typeof fetch;
+  lookup?: (hostname: string) => Promise<string[]>;
   sleep?: (ms: number) => Promise<void>;
   now?: () => Date;
 }
@@ -75,6 +85,8 @@ type Step = (session: OnboardingSession, deps: RunnerDeps) => Promise<StepResult
 const STEPS: Partial<Record<OnboardingStatus, Step>> = {
   analyzing_history: readHistory,
   profiling: profile,
+  discovering_sources: findSources,
+  activating_sources: connectSources,
 };
 
 export type StepOutcome = 'ran' | 'retrying' | 'failed' | 'not_runnable';
@@ -228,11 +240,10 @@ async function profile(session: OnboardingSession, deps: RunnerDeps): Promise<St
   const topics = initial.topics.length > 0 ? initial.topics : built.profile.coreTopics.slice(0, 4).map((topic) => topic.name);
   const words = copy(session.language as OnboardingLanguage);
   const usable = typeof session.progress.usable === 'number' ? session.progress.usable : built.facts.items;
-  await showStatus(deps, session, words.profiled(session.channelTitle ?? workspace.name, usable, topics));
-  await say(deps, session.chatId, words.profileReady, settingsButton(deps, words.settings));
+  await showStatus(deps, session, `${words.profiled(session.channelTitle ?? workspace.name, usable, topics)}\n\n${words.findingSources}`);
 
   return {
-    next: 'active',
+    next: 'discovering_sources',
     progress: {
       topics,
       publicationProfileId: built.profileId,
@@ -242,8 +253,53 @@ async function profile(session: OnboardingSession, deps: RunnerDeps): Promise<St
   };
 }
 
-function settingsButton(deps: RunnerDeps, text: string) {
-  return deps.env.APP_BASE_URL ? { inline_keyboard: [[{ text, web_app: { url: buildSettingsUrl(deps.env.APP_BASE_URL) } }]] } : undefined;
+/** §15–§19: what the history points at and the search finds, checked and ranked; stored, not yet connected. */
+async function findSources(session: OnboardingSession, deps: RunnerDeps): Promise<StepResult> {
+  if (!session.workspaceId || !session.channelUsername || !session.channelChatId) {
+    throw new OnboardingStopped('no_channel', 'the session has no channel');
+  }
+  const [workspace] = await deps.db.select().from(workspaces).where(eq(workspaces.id, session.workspaceId));
+  if (!workspace) throw new OnboardingStopped('no_workspace', 'the workspace is gone');
+
+  // A retry starts afresh: what an earlier, failed try stored goes.
+  await deps.db
+    .delete(sourceSuggestions)
+    .where(and(eq(sourceSuggestions.workspaceId, workspace.id), eq(sourceSuggestions.sessionId, session.id)));
+
+  const history = await loadHistorySignals(deps.db, { workspaceId: workspace.id, publicationKey: session.channelChatId });
+  const topics = Array.isArray(session.progress.topics) ? (session.progress.topics as string[]) : [];
+  const result = await discoverSources(
+    {
+      channel: {
+        username: session.channelUsername,
+        title: session.channelTitle ?? workspace.name,
+        language: workspace.language,
+        editorialProfile: workspace.editorialProfile,
+        topics,
+      },
+      history,
+    },
+    { youtube: deps.youtube, discoverer: deps.discoverer, logger: deps.logger, fetchImpl: deps.fetchImpl, lookup: deps.lookup },
+  );
+  await storeSuggestions(deps.db, { sessionId: session.id, workspaceId: workspace.id, result });
+  return {
+    next: 'activating_sources',
+    progress: { discovery: { ...result.stats, picked: result.picked.length, reserve: result.reserve.length, failed: result.failed.length } },
+  };
+}
+
+/** §22–§23: the picked connected (a reserve one for any that cannot be), and the person told. */
+async function connectSources(session: OnboardingSession, deps: RunnerDeps): Promise<StepResult> {
+  if (!session.workspaceId) throw new OnboardingStopped('no_workspace', 'the session has no workspace');
+  const [workspace] = await deps.db.select().from(workspaces).where(eq(workspaces.id, session.workspaceId));
+  if (!workspace) throw new OnboardingStopped('no_workspace', 'the workspace is gone');
+
+  const active = await activatePicked(deps.db, { workspaceId: workspace.id, logger: deps.logger });
+  const language = session.language as OnboardingLanguage;
+  const view = await followingView(deps.db, workspace, language, { appBaseUrl: deps.env.APP_BASE_URL });
+  const messageId = await say(deps, session.chatId, view.text, view.keyboard);
+  deps.logger.info('onboarding.sources_activated', { workspaceId: workspace.id, count: active.length });
+  return { next: 'active', progress: { sourcesActive: active.length, followingMessageId: messageId } };
 }
 
 /** The progress message, edited in place; sent anew when there is none or it cannot be edited. */
@@ -298,6 +354,8 @@ export function runnerDeps(
     client: new TelegramClient({ logger }),
     provider: createRadarProvider(env),
     embeddings: createEmbeddingProvider(env),
+    youtube: env.YOUTUBE_API_KEY ? new YouTubeClient({ apiKey: env.YOUTUBE_API_KEY, logger }) : null,
+    discoverer: createDiscoverer(env),
     logger,
   };
 }

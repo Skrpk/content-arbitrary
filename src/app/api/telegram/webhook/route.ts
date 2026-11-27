@@ -23,6 +23,7 @@ import {
 import { publishDecidedPost } from '@/lib/sync/publish';
 import { CHANNEL_NOT_CONNECTED_MESSAGE, connectOnBotPromotion } from '@/lib/publishing/channel';
 import { handleOnboardingMessage } from '@/lib/onboarding/routing';
+import { handleOnboardingCallback, onboardingCallbackSchema } from '@/lib/onboarding/following';
 import { publishedLine, publishedNotice } from '@/lib/publish/targets';
 import { hasThreadsAccount } from '@/lib/threads/accounts';
 import { publishToThreadsSoon } from '@/lib/threads/kick';
@@ -95,7 +96,7 @@ export const maxDuration = 60;
 
 const callbackQuerySchema = z.object({
   id: z.string(),
-  from: z.object({ id: z.number(), username: z.string().optional() }),
+  from: z.object({ id: z.number(), username: z.string().optional(), language_code: z.string().optional() }),
   data: z.string().optional(),
   message: z
     .object({
@@ -228,6 +229,17 @@ export async function POST(request: Request): Promise<Response> {
 
   const query = update.callback_query;
   if (!query) return ok();
+
+  // ✕ and ➕ under onboarding's "Стежу за" message: checked against the suggestion's own workspace.
+  if (query.data?.startsWith('ob:')) {
+    const parsed = onboardingCallbackSchema.safeParse(query);
+    if (parsed.success) {
+      await handleOnboardingCallback(parsed.data, { db, client, logger, appBaseUrl: env.APP_BASE_URL }).catch((error: unknown) =>
+        logger.error('webhook.onboarding_callback_failed', { error: describeError(error) }),
+      );
+    }
+    return ok();
+  }
 
   // Anyone can be forwarded the message; only a reviewer may act on it, and
   // only on the posts of channels they review.

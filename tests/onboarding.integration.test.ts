@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from '@/db/schema';
@@ -19,6 +19,9 @@ import { handleOnboardingMessage, type OnboardingMessage } from '@/lib/onboardin
 import { runOnboarding, runOnboardingStep, type RunnerDeps } from '@/lib/onboarding/runner';
 import { ONBOARDING_MAX_ATTEMPTS } from '@/lib/onboarding/limits';
 import type { RadarProvider } from '@/lib/radar/providers/types';
+import type { SourceDiscoverer } from '@/lib/onboarding/source-discovery';
+import { handleOnboardingCallback } from '@/lib/onboarding/following';
+import { sourceSuggestions, sources } from '@/db/schema';
 import { TelegramClient } from '@/lib/telegram/client';
 import { setEditorialProfile } from '@/lib/workspace';
 import { addWorkspaceMember } from '@/lib/accounts/users';
@@ -71,11 +74,20 @@ beforeEach(async () => {
   if (!connectionString) return;
   sent = [];
   chats = { '@spacenews': { id: CHANNEL_ID, type: 'channel', title: 'Космос UA' }, '@somegroup': { id: -100777, type: 'supergroup', title: 'A group' } };
-  pages = { spacenews: 60 };
+  pages = { spacenews: 60, vgc_news: 3, gematsu_tg: 3, eurogamer_tg: 3 };
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: unknown, init?: RequestInit) => {
       const url = new URL(String(input));
+      if (url.hostname === 'blog.example') {
+        if (url.pathname === '/') return new Response('<link rel="alternate" type="application/rss+xml" href="/feed">', { headers: { 'content-type': 'text/html' } });
+        if (url.pathname === '/feed')
+          return new Response(
+            '<?xml version="1.0"?><rss version="2.0"><channel><title>Space Blog</title><item><title>One</title><link>https://blog.example/1</link><guid>1</guid></item></channel></rss>',
+            { headers: { 'content-type': 'application/rss+xml' } },
+          );
+        return new Response('', { status: 404 });
+      }
       if (url.hostname === 't.me') {
         const name = url.pathname.split('/').pop()!.toLowerCase();
         const page = pages[name];
@@ -84,7 +96,18 @@ beforeEach(async () => {
         const before = Number(url.searchParams.get('before') ?? page + 1);
         const ids = Array.from({ length: page }, (_, index) => index + 1).filter((id) => id < before).slice(-20);
         return new Response(
-          channelPage(ids.map((id) => ({ id, text: `Новина ${id} про космос`, date: new Date(Date.UTC(2026, 10, 1) + id * 60_000).toISOString() })), 'Космос UA', name),
+          channelPage(
+            ids.map((id) => ({
+              id,
+              text: `Новина ${id} про космос`,
+              date: new Date(Date.UTC(2026, 10, 1) + id * 60_000).toISOString(),
+              // The channel forwards VGC six times, and links Gematsu's and Eurogamer's channels twice.
+              ...(name === 'spacenews' && id % 10 === 0 ? { forwarded: true, forwardedFromHref: `https://t.me/vgc_news/${id}` } : {}),
+              ...(name === 'spacenews' && id % 20 === 1 ? { text: '<a href="https://t.me/gematsu_tg">Gematsu</a> <a href="https://t.me/eurogamer_tg">EG</a>' } : {}),
+            })),
+            name === 'spacenews' ? 'Космос UA' : name,
+            name,
+          ),
         );
       }
       const method = url.pathname.split('/').pop()!;
@@ -98,6 +121,7 @@ beforeEach(async () => {
       return telegramOk(true);
     }),
   );
+  await db.delete(sourceSuggestions);
   await db.delete(onboardingSessions);
   await db.delete(publicationHistoryProfiles);
   await db.delete(publicationHistoryItems);
@@ -145,14 +169,30 @@ function fakeModel(options: { fail?: () => boolean } = {}): RadarProvider & { ca
   } as unknown as RadarProvider & { calls: string[] };
 }
 
+/** A web search that finds one site with a feed, and one that has neither. */
+const discoverer: SourceDiscoverer = {
+  model: 'fake',
+  discover: async () => ({
+    suggestions: [
+      { name: 'Space Blog', platform: 'website', url: 'https://blog.example', organization: 'Space Blog', kind: 'official', reason: 'Офіційні новини місій.' },
+      { name: 'Nowhere', platform: 'website', url: 'https://nowhere.example', organization: 'Nowhere', kind: 'specialist', reason: 'x' },
+    ],
+    webSearches: 1,
+    usage: { inputTokens: 1, outputTokens: 1 },
+  }),
+};
+
 const deps = (provider: RadarProvider | null = fakeModel()): RunnerDeps => ({
   db,
   env,
   client: new TelegramClient({ logger }),
   provider,
   embeddings: null,
+  youtube: null,
+  discoverer,
   logger,
   sleep: async () => {},
+  lookup: async () => ['93.184.216.34'],
 });
 
 describeIfDb('onboarding in the bot', () => {
@@ -226,15 +266,37 @@ describeIfDb('onboarding in the bot', () => {
     expect(sent.filter((call) => call.method === 'editMessageText').at(-1)?.body.text).toMatch(/прочитав останні 60 постів/);
 
     expect(await runOnboardingStep(id, deps(model))).toBe('ran');
-    const done = await session();
-    expect(done).toMatchObject({ status: 'active', progress: { topics: ['запуски ракет', 'місії до Марса'], editorialProfileWritten: true, languageWritten: 'uk' } });
-    expect(done.completedAt).not.toBeNull();
+    expect(await session()).toMatchObject({
+      status: 'discovering_sources',
+      progress: { topics: ['запуски ракет', 'місії до Марса'], editorialProfileWritten: true, languageWritten: 'uk' },
+    });
     expect(model.calls).toContain('initial_editorial_profile');
 
     const [workspace] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId!));
     expect(workspace).toMatchObject({ editorialProfile: 'Канал про космос: запуски, місії, відкриття.', editorialProfileSource: 'auto', language: 'uk' });
-    expect(lastText()).toMatch(/Профіль каналу готовий/);
-    expect(sent.filter((call) => call.method === 'editMessageText').at(-1)?.body.text).toMatch(/• запуски ракет\n• місії до Марса/);
+    expect(sent.filter((call) => call.method === 'editMessageText').at(-1)?.body.text).toMatch(/• запуски ракет\n• місії до Марса[\s\S]*Шукаю джерела/);
+
+    // The sources: found, then connected, and the person told.
+    expect(await runOnboardingStep(id, deps(model))).toBe('ran');
+    expect(await session()).toMatchObject({ status: 'activating_sources', progress: { discovery: { picked: 4, failed: 1 } } });
+    expect(await runOnboardingStep(id, deps(model))).toBe('ran');
+    const done = await session();
+    expect(done).toMatchObject({ status: 'active', progress: { sourcesActive: 4 } });
+    expect(done.completedAt).not.toBeNull();
+
+    const connected = await db.select().from(sources).where(eq(sources.workspaceId, workspaceId!));
+    expect(connected.map((source) => [source.platform, source.externalId, source.includeTextOnly, source.radarThreshold]).sort()).toEqual([
+      ['rss', 'https://blog.example/feed', true, null],
+      ['telegram', 'eurogamer_tg', true, null],
+      ['telegram', 'gematsu_tg', true, null],
+      ['telegram', 'vgc_news', true, null],
+    ]);
+    const following = sent.filter((call) => call.method === 'sendMessage').at(-1)!.body;
+    expect(String(following.text)).toMatch(/Стежу за 4 джерелами для <b>Космос UA<\/b>/);
+    expect(String(following.text)).toMatch(/@vgc_news — Telegram · канал пересилав його 6 разів/);
+    expect(String(following.text)).toMatch(/Space Blog — сайт \(RSS\) · Офіційні новини місій\./);
+    expect(String(following.text)).toMatch(/Щоранку о 9:00/);
+    expect(JSON.stringify(following.reply_markup)).toMatch(/ob:rm:/);
 
     // Over: nothing more to run, and a new /start is no longer "waiting".
     expect(await runOnboardingStep(id, deps(model))).toBe('not_runnable');
@@ -284,7 +346,7 @@ describeIfDb('onboarding in the bot', () => {
     await send('/start');
     await send('@spacenews');
     const tally = await runOnboarding(deps(), { budgetMs: 60_000, stepTimeMs: 1 });
-    expect(tally).toEqual({ ran: 2, failed: 0, retrying: 0 });
+    expect(tally).toEqual({ ran: 4, failed: 0, retrying: 0 });
     expect(await session()).toMatchObject({ status: 'active' });
   });
 
@@ -333,5 +395,61 @@ describeIfDb('the editorial profile’s author', () => {
     expect((await db.select().from(workspaces))[0]).toMatchObject({ editorialProfileSource: 'editor' });
     await setEditorialProfile(db, { workspaceId: DEFAULT_WORKSPACE_ID, reviewerWorkspaceIds: [DEFAULT_WORKSPACE_ID], editorialProfile: '  ' });
     expect((await db.select().from(workspaces))[0]).toMatchObject({ editorialProfile: null, editorialProfileSource: null });
+  });
+});
+
+describeIfDb('the sources onboarding connected', () => {
+  async function onboarded() {
+    await send('/start');
+    await send('@spacenews');
+    const { id, workspaceId } = await session();
+    await runOnboarding(deps(), { sessionId: id, budgetMs: 60_000, stepTimeMs: 1 });
+    // One more in reserve, to offer when one is removed.
+    await db.update(sourceSuggestions).set({ state: 'reserve' }).where(eq(sourceSuggestions.externalId, 'eurogamer_tg'));
+    await db.update(sources).set({ enabled: false }).where(eq(sources.externalId, 'eurogamer_tg'));
+    return workspaceId!;
+  }
+  const press = (data: string, from = ME) =>
+    handleOnboardingCallback(
+      { id: 'cb', from: { id: from, language_code: 'uk' }, data, message: { message_id: 77, chat: { id: from } } },
+      { db, client: new TelegramClient({ logger }), logger, appBaseUrl: env.APP_BASE_URL },
+    );
+  let workspaceId: number;
+  const suggestion = async (externalId: string) =>
+    (await db.select().from(sourceSuggestions).where(and(eq(sourceSuggestions.workspaceId, workspaceId), eq(sourceSuggestions.externalId, externalId))))[0]!;
+  const source = async (externalId: string) =>
+    (await db.select().from(sources).where(and(eq(sources.workspaceId, workspaceId), eq(sources.externalId, externalId))))[0]!;
+
+  it('pauses one on ✕, offers the reserve in its place, and connects it on ➕', async () => {
+    workspaceId = await onboarded();
+    const gematsu = await suggestion('gematsu_tg');
+    await press(`ob:rm:${gematsu.id}`);
+
+    expect(await suggestion('gematsu_tg')).toMatchObject({ state: 'removed' });
+    expect(await source('gematsu_tg')).toMatchObject({ enabled: false });
+    const edited = sent.filter((call) => call.method === 'editMessageText').at(-1)!.body;
+    expect(edited.message_id).toBe(77);
+    expect(String(edited.text)).toMatch(/Стежу за 2 джерелами/);
+    expect(String(edited.text)).not.toMatch(/gematsu_tg/);
+    expect(String(edited.text)).toMatch(/Замість нього можу стежити за <b>@eurogamer_tg<\/b>/);
+    const eurogamer = await suggestion('eurogamer_tg');
+    expect(JSON.stringify(edited.reply_markup)).toContain(`ob:add:${eurogamer.id}`);
+
+    await press(`ob:add:${eurogamer.id}`);
+    expect(await suggestion('eurogamer_tg')).toMatchObject({ state: 'active' });
+    expect(await source('eurogamer_tg')).toMatchObject({ enabled: true });
+    expect(String(sent.filter((call) => call.method === 'editMessageText').at(-1)!.body.text)).toMatch(/Стежу за 3 джерелами/);
+
+    // Pressed twice: nothing more happens.
+    await press(`ob:add:${eurogamer.id}`);
+    expect(sent.filter((call) => call.method === 'answerCallbackQuery').at(-1)!.body.text).toMatch(/вже немає/);
+  });
+
+  it('lets nobody but the channel’s reviewers press them', async () => {
+    workspaceId = await onboarded();
+    const vgc = await suggestion('vgc_news');
+    await press(`ob:rm:${vgc.id}`, STRANGER);
+    expect(await suggestion('vgc_news')).toMatchObject({ state: 'active' });
+    expect(sent.filter((call) => call.method === 'answerCallbackQuery').at(-1)!.body.text).toMatch(/не твій канал/);
   });
 });

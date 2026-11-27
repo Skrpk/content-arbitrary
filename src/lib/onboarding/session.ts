@@ -4,7 +4,7 @@ import type { Database } from '@/lib/db';
 import type { OnboardingLanguage } from '@/lib/onboarding/messages';
 
 /** The statuses a runner works on; the rest wait for the person, or are over. */
-export const RUNNABLE_STATUSES: OnboardingStatus[] = ['analyzing_history', 'profiling'];
+export const RUNNABLE_STATUSES: OnboardingStatus[] = ['analyzing_history', 'profiling', 'discovering_sources', 'activating_sources'];
 const CLOSED: OnboardingStatus[] = ['active', 'failed'];
 
 /** This person's onboarding still in progress, if any. */

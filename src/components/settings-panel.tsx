@@ -177,7 +177,10 @@ export function SettingsPanel({ request, confirm, openLink }: PanelTools) {
 
   // Opened at the channel to connect — from the queue's popup — once there is a page to scroll.
   useEffect(() => {
-    if (phase !== 'ready' || window.location.hash !== `#${PUBLISHING_CHANNEL_ANCHOR}`) return;
+    const asked =
+      window.location.hash === `#${PUBLISHING_CHANNEL_ANCHOR}` ||
+      new URLSearchParams(window.location.search).get('section') === PUBLISHING_CHANNEL_ANCHOR;
+    if (phase !== 'ready' || !asked) return;
     document.getElementById(PUBLISHING_CHANNEL_ANCHOR)?.scrollIntoView({ block: 'start' });
   }, [phase]);
 
