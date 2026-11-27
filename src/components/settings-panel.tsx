@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { PlatformBadge } from '@/app/(app)/platform-badge';
 import { readJson, type PanelTools } from '@/components/panel-tools';
 import { ThreadsConnection } from '@/components/threads-connection';
+import { PUBLISHING_CHANNEL_ANCHOR } from '@/lib/publishing/codes';
 import { EDITORIAL_PROFILE_MAX_LENGTH, editorialProfileLength } from '@/lib/radar/editorial-profile';
 import { RADAR_THRESHOLD_MAX, RADAR_THRESHOLD_MIN } from '@/lib/radar/threshold';
 import { theme } from '@/lib/telegram/webapp-client';
@@ -46,6 +47,8 @@ interface ChannelView {
   reviewDigestTimezone: string | null;
   /** Every post goes straight to the channel, with no review. */
   autoPublish: boolean;
+  /** Zmistik may post to the channel; until it is connected, nothing is published there. */
+  channelConnected: boolean;
   /** What Radar scores posts against, in the editor's words; null leaves Radar off. */
   editorialProfile: string | null;
   sources: SourceView[];
@@ -135,6 +138,10 @@ export function SettingsPanel({ request, confirm, openLink }: PanelTools) {
   const [savingProfile, setSavingProfile] = useState<Set<number>>(new Set());
   const [profileMessage, setProfileMessage] = useState<{ text: string; error: boolean } | null>(null);
 
+  /** Channels whose connection is being checked, and what the last check said, per channel. */
+  const [checkingChannel, setCheckingChannel] = useState<Set<number>>(new Set());
+  const [channelChecks, setChannelChecks] = useState<Record<number, { text: string; error: boolean }>>({});
+
   useEffect(() => {
     let cancelled = false;
     request('/api/account')
@@ -166,6 +173,43 @@ export function SettingsPanel({ request, confirm, openLink }: PanelTools) {
     return () => {
       cancelled = true;
     };
+  }, [request]);
+
+  // Opened at the channel to connect — from the queue's popup — once there is a page to scroll.
+  useEffect(() => {
+    if (phase !== 'ready' || window.location.hash !== `#${PUBLISHING_CHANNEL_ANCHOR}`) return;
+    document.getElementById(PUBLISHING_CHANNEL_ANCHOR)?.scrollIntoView({ block: 'start' });
+  }, [phase]);
+
+  /** Check: connect the channel, if the bot and this person can both post there. */
+  const checkChannel = useCallback(async (channel: ChannelView) => {
+    setCheckingChannel((current) => new Set(current).add(channel.id));
+    setChannelChecks(({ [channel.id]: _previous, ...rest }) => rest);
+    try {
+      await readJson<{ connected: true }>(
+        await request('/api/telegram/webapp/channels/verify', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ workspaceId: channel.id }),
+        }),
+      );
+      setChannels((all) => all.map((item) => (item.id === channel.id ? { ...item, channelConnected: true } : item)));
+      setChannelChecks((all) => ({
+        ...all,
+        [channel.id]: { text: '✅ Connected. Posts can now be published and scheduled.', error: false },
+      }));
+    } catch (error: unknown) {
+      setChannelChecks((all) => ({
+        ...all,
+        [channel.id]: { text: error instanceof Error ? error.message : 'Could not check.', error: true },
+      }));
+    } finally {
+      setCheckingChannel((current) => {
+        const next = new Set(current);
+        next.delete(channel.id);
+        return next;
+      });
+    }
   }, [request]);
 
   /** Set or clear a source's Radar threshold: shown at once, put back if the server refuses. */
@@ -402,6 +446,17 @@ export function SettingsPanel({ request, confirm, openLink }: PanelTools) {
 
       {phase === 'ready' ? (
         <>
+          {channels.some((channel) => !channel.channelConnected || channelChecks[channel.id]) ? (
+            <PublishingChannel
+              channels={channels.filter((channel) => !channel.channelConnected || channelChecks[channel.id])}
+              checking={checkingChannel}
+              checks={channelChecks}
+              onCheck={(channel) => {
+                void checkChannel(channel);
+              }}
+            />
+          ) : null}
+
           <h1 style={{ fontSize: '1.05rem', fontWeight: 600, margin: '0 0 0.75rem' }}>Review</h1>
 
           <section
@@ -442,7 +497,7 @@ export function SettingsPanel({ request, confirm, openLink }: PanelTools) {
                     <input
                       type="checkbox"
                       checked={channel.autoPublish}
-                      disabled={busy}
+                      disabled={busy || (!channel.channelConnected && !channel.autoPublish)}
                       onChange={(event) => {
                         void saveAutoPublish(channel, event.target.checked);
                       }}
@@ -451,8 +506,9 @@ export function SettingsPanel({ request, confirm, openLink }: PanelTools) {
                     <span>
                       <span style={{ display: 'block' }}>Publish without review</span>
                       <span style={{ display: 'block', color: theme.hint, fontSize: '0.8rem' }}>
-                        Every post goes straight to the channel as it comes in — for a channel that reposts everything.
-                        Radar does not score them.
+                        {channel.channelConnected
+                          ? 'Every post goes straight to the channel as it comes in — for a channel that reposts everything. Radar does not score them.'
+                          : 'Connect the channel first (Publishing channel, above).'}
                       </span>
                     </span>
                   </label>
@@ -881,5 +937,80 @@ function ThresholdField({
         }}
       />
     </label>
+  );
+}
+
+/**
+ * The channels Zmistik may not post to yet, and how to connect each: the bot
+ * made an admin that can post, then Check — which also needs the person
+ * pressing it to be an admin who can post there.
+ */
+function PublishingChannel({
+  channels,
+  checking,
+  checks,
+  onCheck,
+}: {
+  channels: ChannelView[];
+  checking: Set<number>;
+  checks: Record<number, { text: string; error: boolean }>;
+  onCheck: (channel: ChannelView) => void;
+}) {
+  return (
+    <section
+      id={PUBLISHING_CHANNEL_ANCHOR}
+      style={{ background: theme.secondaryBg, borderRadius: '0.6rem', padding: '0.75rem 0.9rem', marginBottom: '1.25rem', scrollMarginTop: '4.5rem' }}
+    >
+      <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>📢 Publishing channel</div>
+      <div style={{ color: theme.hint, fontSize: '0.8rem', marginBottom: '0.5rem' }}>
+        Until the channel is connected, posts are reviewed and previewed here, and nothing is published to it.
+      </div>
+      <ol style={{ margin: '0 0 0.6rem', paddingLeft: '1.2rem', fontSize: '0.9rem' }}>
+        <li>
+          In Telegram, open the channel → Administrators → Add Admin, and add the bot that sends you digests. Leave{' '}
+          <b>Post messages</b> on (and Edit and Delete messages).
+        </li>
+        <li>Press Check below.</li>
+      </ol>
+      {channels.map((channel) => {
+        const busy = checking.has(channel.id);
+        const check = checks[channel.id];
+        return (
+          <div key={channel.id} style={{ marginTop: '0.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+              <span style={{ flex: 1, minWidth: '8rem' }}>
+                {channel.name}
+                <span style={{ color: theme.hint, fontSize: '0.8rem' }}>
+                  {' · '}
+                  {channel.channelConnected ? 'connected' : 'not connected'}
+                </span>
+              </span>
+              {channel.channelConnected ? null : (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => onCheck(channel)}
+                  style={{
+                    padding: '0.45rem 0.9rem',
+                    borderRadius: '0.5rem',
+                    border: 'none',
+                    background: theme.button,
+                    color: theme.buttonText,
+                    fontSize: '0.9rem',
+                    cursor: busy ? 'default' : 'pointer',
+                    opacity: busy ? 0.6 : 1,
+                  }}
+                >
+                  {busy ? 'Checking…' : 'Check'}
+                </button>
+              )}
+            </div>
+            {check ? (
+              <p style={{ color: check.error ? '#e53935' : theme.hint, fontSize: '0.85rem', margin: '0.35rem 0 0' }}>{check.text}</p>
+            ) : null}
+          </div>
+        );
+      })}
+    </section>
   );
 }

@@ -16,6 +16,7 @@ import {
   reviewLinks,
 } from '@/lib/sync/approval';
 import { findPostAwaitingReview, schedulePost } from '@/lib/sync/repository';
+import { CHANNEL_NOT_CONNECTED, CHANNEL_NOT_CONNECTED_MESSAGE, channelConnected } from '@/lib/publishing/channel';
 import { channelLabelFor } from '@/lib/workspace';
 import { reviewCopiesOf } from '@/lib/review/copies';
 import { rejectRestOfStory, SAME_STORY_MAX } from '@/lib/review/same-story';
@@ -107,6 +108,11 @@ export async function POST(request: Request): Promise<Response> {
 
   const workspace = await reviewerWorkspaceForPost(auth, body.postId);
   if (!workspace) return json({ error: 'This post is no longer awaiting review.' }, 409);
+  // Scheduled is as good as published: it goes out on its own later.
+  if (!channelConnected(workspace)) {
+    auth.logger.info('webapp.schedule_channel_not_connected', { postId: body.postId, workspaceId: workspace.id });
+    return json({ error: CHANNEL_NOT_CONNECTED_MESSAGE, code: CHANNEL_NOT_CONNECTED }, 409);
+  }
 
   const scheduledFor = new Date(body.scheduledFor);
   if (Number.isNaN(scheduledFor.getTime())) {

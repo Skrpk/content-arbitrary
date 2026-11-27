@@ -20,6 +20,9 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 
+export const WORKSPACE_ORIGINS = ['operator', 'self_service'] as const;
+export type WorkspaceOrigin = (typeof WORKSPACE_ORIGINS)[number];
+
 /**
  * One tenant: a destination channel and the person who reviews for it. The
  * row is the authority on both; one person may review several workspaces.
@@ -109,9 +112,22 @@ export const workspaces = pgTable('workspaces', {
    * tenant without it works as if Threads did not exist, whatever is stored.
    */
   threadsEnabled: boolean('threads_enabled').notNull().default(false),
+  /**
+   * When it was confirmed that Zmistik may post to `telegram_chat_id`: the
+   * bot is an admin there that can post, and so is the person who connected
+   * it. Null — a channel someone onboarded themselves and has not connected
+   * yet — and nothing is published to it, however it is approved: the posts
+   * are reviewed and previewed only (src/lib/publishing/channel.ts). A
+   * workspace an operator creates is trusted from the start, hence the
+   * default; self-service onboarding sets null explicitly.
+   */
+  channelVerifiedAt: timestamp('channel_verified_at', { withTimezone: true }).defaultNow(),
+  /** Who made it: an operator, or its owner through onboarding in the bot. */
+  createdVia: text('created_via', { enum: WORKSPACE_ORIGINS }).notNull().default('operator'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
+  check('workspaces_created_via_check', sql`${table.createdVia} IN ('operator', 'self_service')`),
   check('workspaces_language_check', sql`${table.language} IS NULL OR ${table.language} ~ '^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$'`),
   check(
     'workspaces_editorial_profile_check',

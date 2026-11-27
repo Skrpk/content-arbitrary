@@ -110,6 +110,8 @@ export async function ensureTestWorkspace(db: Database): Promise<void> {
         reviewDigestMessageId: null,
         threadsTopicTag: null,
         threadsEnabled: false,
+        channelVerifiedAt: new Date(),
+        createdVia: 'operator',
       },
     });
 }
@@ -138,6 +140,7 @@ export function testDestination(
     chatId: env.TELEGRAM_CHAT_ID ?? '',
     adminChatId: env.TELEGRAM_ADMIN_CHAT_ID ?? null,
     disableNotification: env.TELEGRAM_DISABLE_NOTIFICATION,
+    channelConnected: true,
     ...overrides,
   };
 }

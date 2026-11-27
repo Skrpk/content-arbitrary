@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { describeError } from '@/lib/errors';
+import { CHANNEL_NOT_CONNECTED, CHANNEL_NOT_CONNECTED_MESSAGE, channelConnected } from '@/lib/publishing/channel';
 import { isKnownTimeZone } from '@/lib/sync/approval';
 import { authorizeReviewer, json } from '@/lib/telegram/webapp-request';
 import { EDITORIAL_PROFILE_MAX_LENGTH, editorialProfileLength } from '@/lib/radar/editorial-profile';
@@ -97,6 +98,13 @@ export async function POST(request: Request): Promise<Response> {
       length: updated.editorialProfile === null ? null : editorialProfileLength(updated.editorialProfile),
     });
     return json({ id: updated.id, editorialProfile: updated.editorialProfile });
+  }
+
+  if (body.autoPublish === true) {
+    const workspace = auth.workspaces.find((candidate) => candidate.id === body.workspaceId);
+    if (workspace && !channelConnected(workspace)) {
+      return json({ error: CHANNEL_NOT_CONNECTED_MESSAGE, code: CHANNEL_NOT_CONNECTED }, 409);
+    }
   }
 
   if (body.autoPublish !== undefined) {

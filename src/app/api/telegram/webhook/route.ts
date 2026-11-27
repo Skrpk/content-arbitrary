@@ -21,12 +21,13 @@ import {
   reviewLinks,
 } from '@/lib/sync/approval';
 import { publishDecidedPost } from '@/lib/sync/publish';
+import { CHANNEL_NOT_CONNECTED_MESSAGE, connectOnBotPromotion } from '@/lib/publishing/channel';
 import { publishedLine, publishedNotice } from '@/lib/publish/targets';
 import { hasThreadsAccount } from '@/lib/threads/accounts';
 import { publishToThreadsSoon } from '@/lib/threads/kick';
 import { reviewQueueButton } from '@/lib/review/queue';
 import { YouTubeClient } from '@/lib/youtube/client';
-import { reviewLinkFor } from '@/lib/accounts/users';
+import { reviewLinkFor, telegramIdsOfMembers } from '@/lib/accounts/users';
 import {
   reviewCopiesOf,
   settleAllReviewMessages,
@@ -110,10 +111,18 @@ const messageSchema = z.object({
   text: z.string().optional(),
 });
 
+/** The bot's own rights in a chat changed — made an admin of a channel, say. */
+const myChatMemberSchema = z.object({
+  chat: z.object({ id: z.number(), type: z.string().optional() }),
+  from: z.object({ id: z.number() }),
+  new_chat_member: z.object({ status: z.string(), can_post_messages: z.boolean().optional() }),
+});
+
 const updateSchema = z.object({
   update_id: z.number().optional(),
   callback_query: callbackQuerySchema.optional(),
   message: messageSchema.optional(),
+  my_chat_member: myChatMemberSchema.optional(),
 });
 
 function secretMatches(presented: string | null, expected: string): boolean {
@@ -179,6 +188,21 @@ export async function POST(request: Request): Promise<Response> {
       logger,
       appBaseUrl: env.APP_BASE_URL,
       webAppUrl: env.WEB_APP_URL,
+    });
+    return ok();
+  }
+
+  // Made an admin of a channel someone onboarded: connect it for them, if they did it.
+  if (update.my_chat_member) {
+    await connectOnBotPromotion({
+      db,
+      client,
+      change: update.my_chat_member,
+      reviewersOf: async (workspace) => [
+        ...(workspace.telegramAdminChatId ? [workspace.telegramAdminChatId] : []),
+        ...(await telegramIdsOfMembers(db, workspace.id)),
+      ],
+      logger,
     });
     return ok();
   }
@@ -357,6 +381,13 @@ export async function POST(request: Request): Promise<Response> {
    * match.
    */
   const fromSchedule = parsed.action === 'publish_now';
+  if (!resolved.destination.channelConnected) {
+    postLogger.info('webhook.channel_not_connected', {});
+    await client
+      .answerCallbackQuery(query.id, CHANNEL_NOT_CONNECTED_MESSAGE, { showAlert: true })
+      .catch(() => {});
+    return ok();
+  }
   // Chosen with the button; a scheduled post goes where it was scheduled for.
   const targets = targetsOfApproval(parsed.action);
   if (targets?.includes('threads') && !(await hasThreadsAccount(db, workspace.id))) {

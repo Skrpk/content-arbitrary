@@ -16,6 +16,7 @@ import {
 } from '@/lib/sync/approval';
 import { reviewCopiesOf, settleAllReviewMessages } from '@/lib/review/copies';
 import { publishDecidedPost } from '@/lib/sync/publish';
+import { CHANNEL_NOT_CONNECTED, CHANNEL_NOT_CONNECTED_MESSAGE, channelConnected } from '@/lib/publishing/channel';
 import { claimForDecision, rejectWithReason, releaseToApproval } from '@/lib/sync/repository';
 import { destinationFor } from '@/lib/workspace';
 import { rejectRestOfStory, SAME_STORY_MAX } from '@/lib/review/same-story';
@@ -79,6 +80,8 @@ export async function GET(request: Request): Promise<Response> {
         name: workspace.name,
         /** Approve asks where to. */
         threads: await hasThreadsAccount(auth.db, workspace.id),
+        /** Publish and Schedule go to the channel; until it is connected they open the set-up popup instead. */
+        canPublish: channelConnected(workspace),
         waiting: queue.waiting,
         items: queue.items,
       };
@@ -161,6 +164,10 @@ export async function POST(request: Request): Promise<Response> {
   if (!resolved.ok) {
     logger.error('webapp.queue_workspace_unpublishable', { reason: resolved.reason });
     return json({ error: 'This channel is not configured.' }, 500);
+  }
+  if (!resolved.destination.channelConnected) {
+    logger.info('webapp.queue_channel_not_connected', {});
+    return json({ error: CHANNEL_NOT_CONNECTED_MESSAGE, code: CHANNEL_NOT_CONNECTED }, 409);
   }
 
   const targets = body.targets ? allowedTargets(body.targets, await hasThreadsAccount(auth.db, workspace.id)) : null;
