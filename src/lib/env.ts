@@ -342,8 +342,9 @@ const schema = z
 
     /**
      * Who may onboard a channel in the bot themselves: Telegram user ids,
-     * comma-separated. Unset or empty, nobody — the bot answers strangers as
-     * before. A gate while onboarding is in alpha (prd-self-service-onboarding.md).
+     * comma-separated, or `*` for anyone. Unset or empty, nobody — the bot
+     * answers strangers as before. With a list, anyone else who asks goes on
+     * the waitlist (prd-self-service-onboarding.md §28).
      */
     ONBOARDING_ALLOWLIST: z
       .string()
@@ -352,8 +353,14 @@ const schema = z
         (value ?? '')
           .split(',')
           .map((id) => id.trim())
-          .filter((id) => /^\d{1,15}$/.test(id)),
+          .filter((id) => id === '*' || /^\d{1,15}$/.test(id)),
       ),
+    /** Self-service channels in all, past which onboarding waitlists people (§28). */
+    ONBOARDING_MAX_WORKSPACES: intInRange(0, 100_000, 50),
+    /** Channels onboarded in any 24 hours: a ceiling on what onboarding costs. */
+    ONBOARDING_MAX_RUNS_PER_DAY: intInRange(0, 10_000, 30),
+    /** Self-service channels one person may onboard. */
+    ONBOARDING_WORKSPACES_PER_USER: intInRange(1, 100, 3),
 
     CRON_SECRET: z.string().min(16, 'CRON_SECRET must be at least 16 characters'),
     ADMIN_SECRET: z.string().min(16).optional().or(z.literal('').transform(() => undefined)),

@@ -1,3 +1,4 @@
+import { track } from '@/lib/analytics/track';
 import { threadsReading } from '@/lib/threads/reader';
 import { loadRadarNote } from '@/lib/radar/review-note';
 import { sourceLabelOfPost } from '@/lib/sources/display';
@@ -391,6 +392,7 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     postLogger.info('webhook.rejected', { externalId: result.row.externalId, reason: parsed.reason });
+    await track(db, 'post.rejected', { telegramUserId: query.from.id, workspaceId: workspace.id, props: { reason: parsed.reason, via: 'chat' } }, postLogger);
     await client.answerCallbackQuery(query.id, 'Rejected — not published.').catch(() => {});
     await settleAllReviewMessages(
       client,
@@ -510,6 +512,9 @@ export async function POST(request: Request): Promise<Response> {
       externalId: claim.row.externalId,
       telegramMessageIds: result.messages.map((message) => message.messageId),
     });
+    if (!fromSchedule) {
+      await track(db, 'post.approved', { telegramUserId: query.from.id, workspaceId: workspace.id, props: { action: 'publish', targets: result.targets, via: 'chat' } }, postLogger);
+    }
 
     await client.answerCallbackQuery(query.id, publishedNotice(result.targets)).catch(() => {});
     await settleAllReviewMessages(
@@ -615,6 +620,7 @@ async function handleCommandMessage(
           appBaseUrl: context.appBaseUrl,
           webAppUrl: context.webAppUrl,
           target: await reviewLinkFor(db, message.from?.id ?? null),
+          from: 'command',
         })
       : null;
     const markup = replyMarkupFor(reply, context.appBaseUrl, queueButton);

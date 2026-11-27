@@ -1,3 +1,4 @@
+import { track } from '@/lib/analytics/track';
 import { allowedTargets, PUBLISH_TARGETS, publishedLine, type PublishTarget } from '@/lib/publish/targets';
 import { hasThreadsAccount } from '@/lib/threads/accounts';
 import { publishToThreadsSoon } from '@/lib/threads/kick';
@@ -140,6 +141,7 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     logger.info('webapp.queue_rejected', { reason: body.reason, noteLength: note.length });
+    await track(auth.db, 'post.rejected', { userId: auth.user.id, workspaceId: workspace.id, props: { reason: body.reason, via: 'queue' } }, logger);
     await settleAllReviewMessages(
       client,
       await reviewCopiesOf(auth.db, result.row),
@@ -207,6 +209,7 @@ export async function POST(request: Request): Promise<Response> {
       externalId: row.externalId,
       telegramMessageIds: result.messages.map((message) => message.messageId),
     });
+    await track(auth.db, 'post.approved', { userId: auth.user.id, workspaceId: workspace.id, props: { action: 'publish', targets: result.targets, via: 'queue' } }, logger);
   } catch (error) {
     // Back in the queue, so it can simply be approved again.
     const message = describeError(error);

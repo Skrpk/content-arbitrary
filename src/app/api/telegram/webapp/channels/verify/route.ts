@@ -1,3 +1,4 @@
+import { track } from '@/lib/analytics/track';
 import { z } from 'zod';
 import { telegramIdOfUser } from '@/lib/accounts/users';
 import { describeError } from '@/lib/errors';
@@ -58,6 +59,7 @@ export async function POST(request: Request): Promise<Response> {
     });
     if (!check.ok) {
       logger.info('webapp.channel_check_failed', { reason: check.reason });
+      await track(auth.db, 'channel.check', { userId: auth.user.id, workspaceId: workspace.id, props: { result: check.reason } }, logger);
       return json({ error: CHANNEL_CHECK_MESSAGES[check.reason], reason: check.reason }, 422);
     }
   } catch (error) {
@@ -67,5 +69,7 @@ export async function POST(request: Request): Promise<Response> {
 
   await markChannelConnected(auth.db, workspace.id);
   logger.info('webapp.channel_connected', { via: 'check' });
+  await track(auth.db, 'channel.check', { userId: auth.user.id, workspaceId: workspace.id, props: { result: 'connected' } }, logger);
+  await track(auth.db, 'channel.connected', { userId: auth.user.id, workspaceId: workspace.id, props: { via: 'check' } }, logger);
   return json({ connected: true });
 }

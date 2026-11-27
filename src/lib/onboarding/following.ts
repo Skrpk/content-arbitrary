@@ -4,6 +4,7 @@ import type { Database } from '@/lib/db';
 import { describeError } from '@/lib/errors';
 import type { Logger } from '@/lib/logger';
 import { telegramIdsOfMembers } from '@/lib/accounts/users';
+import { track } from '@/lib/analytics/track';
 import { activate, findSuggestion, removeSuggestion, suggestionsIn } from '@/lib/onboarding/activate-sources';
 import { DIGEST_HOUR_DEFAULT } from '@/lib/onboarding/limits';
 import type { OnboardingLanguage } from '@/lib/onboarding/messages';
@@ -115,7 +116,7 @@ export function followingKeyboard(
   rows.push([{ text: words.profile, callback_data: `pf:s:${input.workspaceId}` }]);
   if (input.appBaseUrl) {
     rows.push([
-      { text: words.queue, web_app: { url: buildReviewQueueUrl(input.appBaseUrl, input.workspaceId) } },
+      { text: words.queue, web_app: { url: buildReviewQueueUrl(input.appBaseUrl, input.workspaceId, undefined, 'sources') } },
       ...(input.connected
         ? []
         : [{ text: words.connectButton, web_app: { url: publishingChannelPath(buildSettingsUrl(input.appBaseUrl)) } }]),
@@ -182,6 +183,7 @@ export async function handleOnboardingCallback(
     offer = removed.offer;
     notice = words.removed(nameOf(removed.removed));
     logger.info('onboarding.source_removed', { workspaceId: workspace.id, suggestionId: suggestion.id, origin: suggestion.origin });
+    await track(db, 'source.removed', { telegramUserId: query.from.id, workspaceId: workspace.id, props: { origin: suggestion.origin, platform: suggestion.platform, offered: offer !== null } }, logger);
   } else {
     if (suggestion.state !== 'reserve') {
       await client.answerCallbackQuery(query.id, words.gone).catch(() => {});
@@ -190,6 +192,7 @@ export async function handleOnboardingCallback(
     const added = await activate(db, suggestion, logger);
     notice = words.added(nameOf(added));
     logger.info('onboarding.source_replaced', { workspaceId: workspace.id, suggestionId: suggestion.id, origin: suggestion.origin });
+    await track(db, 'source.replaced', { telegramUserId: query.from.id, workspaceId: workspace.id, props: { origin: suggestion.origin, platform: suggestion.platform, ok: added.state === 'active' } }, logger);
   }
 
   await client.answerCallbackQuery(query.id, notice).catch(() => {});

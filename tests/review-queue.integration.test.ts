@@ -1,3 +1,4 @@
+import { desc } from 'drizzle-orm';
 import { createHmac } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
@@ -18,6 +19,7 @@ import {
   users,
   workspaces,
   type ApprovalPayload,
+  productEvents,
 } from '@/db/schema';
 import { GET as loadQueueRoute, POST as decideRoute } from '@/app/api/telegram/webapp/queue/route';
 import { POST as channelsRoute } from '@/app/api/telegram/webapp/channels/route';
@@ -356,7 +358,7 @@ describeIfDb('a sync run with the review queue on', () => {
     expect(notice.text).toContain('1 new post · 1 story · 0 recommended');
     expect(notice.reply_markup).toEqual({
       inline_keyboard: [
-        [{ text: '📋 Open review queue', web_app: { url: 'https://example.vercel.app/queue?workspace=1' } }],
+        [{ text: '📋 Open review queue', web_app: { url: 'https://example.vercel.app/queue?workspace=1&from=digest' } }],
       ],
     });
 
@@ -392,7 +394,7 @@ describeIfDb('a sync run with the review queue on', () => {
     });
 
     expect(stack.calls[0]!.body.reply_markup).toEqual({
-      inline_keyboard: [[{ text: '📋 Open review queue', url: 'https://app.example.com/queue?workspace=1' }]],
+      inline_keyboard: [[{ text: '📋 Open review queue', url: 'https://app.example.com/queue?workspace=1&from=digest' }]],
     });
   });
 
@@ -516,14 +518,16 @@ describeIfDb('the queue digest', () => {
     expect(calls[0]!.body.reply_markup).toEqual({
       inline_keyboard: [
         [
-          { text: '1', web_app: { url: `https://example.vercel.app/queue?workspace=1&post=${strong.id}` } },
-          { text: '2', web_app: { url: `https://example.vercel.app/queue?workspace=1&post=${middling.id}` } },
+          { text: '1', web_app: { url: `https://example.vercel.app/queue?workspace=1&post=${strong.id}&from=digest` } },
+          { text: '2', web_app: { url: `https://example.vercel.app/queue?workspace=1&post=${middling.id}&from=digest` } },
         ],
-        [{ text: '📋 Open review queue', web_app: { url: 'https://example.vercel.app/queue?workspace=1' } }],
+        [{ text: '📋 Open review queue', web_app: { url: 'https://example.vercel.app/queue?workspace=1&from=digest' } }],
       ],
     });
     expect((await reload(strong.id)).digestSentAt).toBeInstanceOf(Date);
     expect((await reload(sameStory.id)).digestSentAt).toBeNull();
+    const [sentEvent] = (await db.select().from(productEvents).orderBy(desc(productEvents.id)).limit(5)).filter((row) => row.name === 'digest.sent');
+    expect(sentEvent).toMatchObject({ workspaceId: DEFAULT_WORKSPACE_ID, props: { shown: 2, selfService: false } });
   });
 
   it('never recommends a story twice, even when a new post of it comes in, and shows at most five', async () => {
@@ -564,7 +568,7 @@ describeIfDb('the queue digest', () => {
     expect(calls[0]!.body.text).toContain('2 нові пости · 2 історії · 0 рекомендованих');
     expect(calls[0]!.body.text).toContain('Сильних історій за цей період немає');
     expect(calls[0]!.body.reply_markup).toEqual({
-      inline_keyboard: [[{ text: '📋 Відкрити чергу', web_app: { url: 'https://example.vercel.app/queue?workspace=1' } }]],
+      inline_keyboard: [[{ text: '📋 Відкрити чергу', web_app: { url: 'https://example.vercel.app/queue?workspace=1&from=digest' } }]],
     });
   });
 

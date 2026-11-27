@@ -1,3 +1,4 @@
+import { track } from '@/lib/analytics/track';
 import { after } from 'next/server';
 import { z } from 'zod';
 import type { Workspace } from '@/db/schema';
@@ -347,6 +348,7 @@ export async function handleProfileCallback(query: z.infer<typeof profileCallbac
       const updated = await setEditorialProfile(db, { workspaceId: workspace.id, reviewerWorkspaceIds, editorialProfile: draft });
       await clearPendingInput(db, telegramUserId);
       logger.info('profile.saved', { workspaceId: workspace.id, via: 'refine', length: editorialProfileLength(draft) });
+      await track(db, 'profile.saved', { telegramUserId, workspaceId: workspace.id, props: { via: 'refine' } }, logger);
       await answer(words.saved);
       await showScreen(updated ?? workspace, `✅ ${words.saved}`);
       return;
@@ -377,6 +379,7 @@ export async function handleProfileCallback(query: z.infer<typeof profileCallbac
       }
       const updated = await setWorkspaceLanguage(db, { workspaceId: workspace.id, reviewerWorkspaceIds, language: chosen });
       logger.info('profile.language_set', { workspaceId: workspace.id, language: chosen });
+      await track(db, 'profile.language_set', { telegramUserId, workspaceId: workspace.id, props: { language: chosen } }, logger);
       const label = postsLanguageLabel(chosen, language);
       await answer(words.languageSet(label));
       await showScreen(updated ?? workspace, `✅ ${escapeHtml(words.languageSet(label))}`);
@@ -437,6 +440,7 @@ export async function handlePendingInputMessage(message: PendingInputMessage, co
     const updated = await setEditorialProfile(db, { workspaceId: workspace.id, reviewerWorkspaceIds, editorialProfile: text });
     await clearPendingInput(db, telegramUserId);
     logger.info('profile.saved', { workspaceId: workspace.id, via: 'replace', length: editorialProfileLength(text) });
+    await track(db, 'profile.saved', { telegramUserId, workspaceId: workspace.id, props: { via: 'replace' } }, logger);
     const current = updated ?? workspace;
     await send(context, chatId, profileScreenText(current, language, `✅ ${words.saved}`), profileScreenKeyboard(current, language, context.settingsUrl));
     return true;
@@ -451,6 +455,7 @@ export async function handlePendingInputMessage(message: PendingInputMessage, co
     const updated = await setWorkspaceLanguage(db, { workspaceId: workspace.id, reviewerWorkspaceIds, language: code });
     await clearPendingInput(db, telegramUserId);
     logger.info('profile.language_set', { workspaceId: workspace.id, language: code });
+    await track(db, 'profile.language_set', { telegramUserId, workspaceId: workspace.id, props: { language: code } }, logger);
     const current = updated ?? workspace;
     const notice = `✅ ${escapeHtml(words.languageSet(postsLanguageLabel(code, language)))}`;
     await send(context, chatId, profileScreenText(current, language, notice), profileScreenKeyboard(current, language, context.settingsUrl));

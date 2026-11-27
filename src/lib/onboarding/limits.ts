@@ -14,8 +14,9 @@ export const HISTORY_PAGE_DELAY_MS = 300;
 /** A rate limit this short is waited out in place; a longer one fails the crawl as transient, to be retried. */
 export const HISTORY_MAX_WAIT_MS = 30_000;
 
-/** Self-service channels one person may onboard. */
-export const WORKSPACES_PER_USER = 3;
+// The caps — channels per person, self-service channels in all, runs a day —
+// are env, so they move without a deploy: ONBOARDING_WORKSPACES_PER_USER,
+// ONBOARDING_MAX_WORKSPACES, ONBOARDING_MAX_RUNS_PER_DAY (src/lib/env.ts).
 /** Tries of one step before the session fails. */
 export const ONBOARDING_MAX_ATTEMPTS = 5;
 /** How long a runner holds a step: longer than the step can take, so a crashed run is retried after. */

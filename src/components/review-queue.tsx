@@ -337,6 +337,35 @@ export function ReviewQueue({
   const [needsChannel, setNeedsChannel] = useState<string | null>(null);
   const website = surface === 'website';
 
+  /** A funnel event (§29) the page alone sees; lost quietly when it cannot be sent. */
+  const report = useCallback(
+    (name: 'queue.opened' | 'publish.blocked' | 'publish.popup_settings', workspaceId: number | null, props: Record<string, string> = {}) => {
+      void request('/api/telegram/webapp/events', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name, ...(workspaceId === null ? {} : { workspaceId }), props }),
+      }).catch(() => {});
+    },
+    [request],
+  );
+  /** The popup for a channel Zmistik may not post to yet, after Publish or Schedule. */
+  const needChannel = useCallback(
+    (target: { id: number; name: string } | undefined, action: 'publish' | 'schedule') => {
+      setNeedsChannel(target?.name ?? '');
+      report('publish.blocked', target?.id ?? null, { action });
+    },
+    [report],
+  );
+
+  // Opened from a bot message: which one, for the funnel. Once per page load, even when React runs effects twice.
+  const openReported = useRef(false);
+  useEffect(() => {
+    if (openReported.current) return;
+    openReported.current = true;
+    const from = new URLSearchParams(window.location.search).get('from');
+    if (from === 'digest' || from === 'sources' || from === 'command') report('queue.opened', initialWorkspaceId ?? null, { from });
+  }, [report, initialWorkspaceId]);
+
   useEffect(() => {
     let cancelled = false;
     request('/api/telegram/webapp/queue')
@@ -427,13 +456,16 @@ export function ReviewQueue({
         setCard(card.id, { kind: 'open' });
         // Not connected after all (a page loaded before the server said so): the popup, not an error.
         if (isRefusal(error, CHANNEL_NOT_CONNECTED)) {
-          setNeedsChannel(data?.channels.find((candidate) => candidate.items.some((item) => item.id === card.id))?.name ?? '');
+          needChannel(
+            data?.channels.find((candidate) => candidate.items.some((item) => item.id === card.id)),
+            'publish',
+          );
           return;
         }
         setError(card.id, error instanceof Error ? error.message : 'Something went wrong.');
       }
     },
-    [data, request, setCard, setError, shown],
+    [data, needChannel, request, setCard, setError, shown],
   );
 
   const channel = data?.channels.find((candidate) => candidate.id === channelId) ?? null;
@@ -495,11 +527,11 @@ export function ReviewQueue({
   );
   const schedule = useCallback(
     (card: QueueItem) => {
-      if (channel?.canPublish === false) setNeedsChannel(channel.name);
+      if (channel?.canPublish === false) needChannel(channel, 'schedule');
       else if (website) setCard(card.id, { kind: 'scheduling' });
       else if (channel) window.location.assign(fromQueue(`/review/schedule?post=${shown(card).item.id}`, channel.id));
     },
-    [channel, setCard, shown, website],
+    [channel, needChannel, setCard, shown, website],
   );
 
   // The website's keyboard: j / k to move, a to approve, r then 1–6 to reject,
@@ -904,7 +936,7 @@ export function ReviewQueue({
           channelName={channel.name}
           threads={channel.threads ?? false}
           canPublish={channel.canPublish !== false}
-          onNeedChannel={() => setNeedsChannel(channel.name)}
+          onNeedChannel={(action) => needChannel(channel, action)}
           others={shown(approving).others.map((post) => post.id)}
           threadsText={shown(approving).item.threads ?? null}
           request={request}
@@ -934,6 +966,7 @@ export function ReviewQueue({
           channelName={needsChannel}
           settingsUrl={publishingChannelPath(website ? '/console/settings' : '/settings')}
           onClose={() => setNeedsChannel(null)}
+          onOpenSettings={() => report('publish.popup_settings', channel?.id ?? null)}
         />
       ) : null}
     </>
@@ -950,10 +983,12 @@ function ChannelSetupDialog({
   channelName,
   settingsUrl,
   onClose,
+  onOpenSettings,
 }: {
   channelName: string;
   settingsUrl: string;
   onClose: () => void;
+  onOpenSettings: () => void;
 }) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -998,7 +1033,10 @@ function ChannelSetupDialog({
           <button
             type="button"
             autoFocus
-            onClick={() => window.location.assign(settingsUrl)}
+            onClick={() => {
+              onOpenSettings();
+              window.location.assign(settingsUrl);
+            }}
             style={{ ...button, flex: 1, background: theme.button, color: theme.buttonText }}
           >
             Open Settings
@@ -1395,7 +1433,7 @@ function ApproveDialog({
   threads: boolean;
   /** Zmistik may post to the channel; when not, Publish and Schedule open the set-up popup. */
   canPublish: boolean;
-  onNeedChannel: () => void;
+  onNeedChannel: (action: 'publish' | 'schedule') => void;
   /** The rest of its story's card, rejected as already covered once it goes. */
   others: number[];
   threadsText: QueueItem['threads'] | null;
@@ -1440,7 +1478,7 @@ function ApproveDialog({
   };
 
   const submit = async () => {
-    if (!canPublish) return onNeedChannel();
+    if (!canPublish) return onNeedChannel(schedule ? 'schedule' : 'publish');
     if (!schedule) return onPublish(targets);
     const at = new Date(when);
     if (Number.isNaN(at.getTime())) return setError('Pick a date and time.');
@@ -1464,7 +1502,7 @@ function ApproveDialog({
       onScheduled(body.display, body.alsoRejected?.length ?? 0);
     } catch (reason: unknown) {
       setSaving(false);
-      if (isRefusal(reason, CHANNEL_NOT_CONNECTED)) return onNeedChannel();
+      if (isRefusal(reason, CHANNEL_NOT_CONNECTED)) return onNeedChannel('schedule');
       setError(reason instanceof Error ? reason.message : 'Could not schedule.');
     }
   };

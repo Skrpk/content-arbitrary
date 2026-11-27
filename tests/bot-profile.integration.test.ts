@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from '@/db/schema';
-import { botPendingInputs, DEFAULT_WORKSPACE_ID, workspaces } from '@/db/schema';
+import { botPendingInputs, DEFAULT_WORKSPACE_ID, users, workspaces } from '@/db/schema';
 import { POST as channelsRoute } from '@/app/api/telegram/webapp/channels/route';
 import { GET as sourcesRoute } from '@/app/api/telegram/webapp/sources/route';
 import { POST as webhookRoute } from '@/app/api/telegram/webhook/route';
@@ -27,7 +27,7 @@ const describeIfDb = connectionString ? describe : describe.skip;
 
 const BOT_TOKEN = '123456:AAHfakeTokenForTestsOnly';
 const ME = 555001;
-const STRANGER = 777003;
+const STRANGER = 777313;
 const SECRET = 'b'.repeat(64);
 const PROFILE = 'Новини PlayStation: релізи, оновлення, State of Play.';
 
@@ -69,6 +69,8 @@ beforeEach(async () => {
       return telegramOk(true);
     }),
   );
+  // Members left by other files would make the stranger a reviewer.
+  await db.delete(users);
   await ensureTestWorkspace(db);
   await db
     .update(workspaces)

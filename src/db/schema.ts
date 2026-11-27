@@ -3,6 +3,7 @@ import type { NormalizedMedia } from '../types';
 import type { RichDocument } from '../lib/rich/document';
 import {
   bigint,
+  bigserial,
   boolean,
   check,
   customType,
@@ -1699,3 +1700,60 @@ export const botPendingInputs = pgTable(
 );
 
 export type BotPendingInput = typeof botPendingInputs.$inferSelect;
+
+/**
+ * What people do in the product, for the onboarding funnel and its quality
+ * signals (prd-self-service-onboarding.md §29–§30). Written by `track`, which
+ * never fails what it records; names are `area.what`, props small and free of
+ * people's own words.
+ */
+export const productEvents = pgTable(
+  'product_events',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+    name: text('name').notNull(),
+    userId: integer('user_id').references(() => users.id, { onDelete: 'set null' }),
+    /** For someone with no user yet: a waitlisted /start. */
+    telegramUserId: text('telegram_user_id'),
+    workspaceId: integer('workspace_id').references(() => workspaces.id, { onDelete: 'set null' }),
+    sessionId: integer('session_id').references(() => onboardingSessions.id, { onDelete: 'set null' }),
+    props: jsonb('props').$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  },
+  (table) => [
+    index('product_events_name_idx').on(table.name, table.occurredAt),
+    index('product_events_workspace_idx').on(table.workspaceId, table.occurredAt),
+  ],
+);
+
+export type ProductEvent = typeof productEvents.$inferSelect;
+
+/**
+ * People who asked to onboard a channel while they could not (§27, D5): not
+ * on the alpha's allowlist, or past a cap. `admitted_at` lets one in past the
+ * allowlist (`npm run onboarding:waitlist -- --admit <id>`), never past a cap.
+ */
+export const ONBOARDING_WAITLIST_REASONS = ['not_listed', 'workspaces_cap', 'runs_cap'] as const;
+
+export const onboardingWaitlist = pgTable(
+  'onboarding_waitlist',
+  {
+    telegramUserId: text('telegram_user_id').primaryKey(),
+    /** Their private chat with the bot, to tell them when they are let in. */
+    chatId: text('chat_id').notNull(),
+    language: text('language').notNull().default('en'),
+    username: text('username'),
+    name: text('name'),
+    reason: text('reason', { enum: ONBOARDING_WAITLIST_REASONS }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    /** The last time they asked. */
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    admittedAt: timestamp('admitted_at', { withTimezone: true }),
+  },
+  (table) => [
+    check('onboarding_waitlist_reason_check', sql`${table.reason} IN ('not_listed', 'workspaces_cap', 'runs_cap')`),
+    check('onboarding_waitlist_language_check', sql`${table.language} IN ('uk', 'en')`),
+  ],
+);
+
+export type OnboardingWaitlistEntry = typeof onboardingWaitlist.$inferSelect;

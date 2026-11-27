@@ -23,7 +23,8 @@ import { createRadarProvider } from '@/lib/radar/providers';
 import type { RadarProvider } from '@/lib/radar/providers/types';
 import { TelegramClient } from '@/lib/telegram/client';
 import { YouTubeClient } from '@/lib/youtube/client';
-import { activatePicked, storeSuggestions } from '@/lib/onboarding/activate-sources';
+import { activatePicked, storeSuggestions, suggestionsIn } from '@/lib/onboarding/activate-sources';
+import { track, type ProductEventName } from '@/lib/analytics/track';
 import { discoverSources } from '@/lib/onboarding/discover-sources';
 import { followingView } from '@/lib/onboarding/following';
 import { loadHistorySignals } from '@/lib/onboarding/link-signals';
@@ -118,6 +119,11 @@ export async function runOnboardingStep(sessionId: number, deps: RunnerDeps): Pr
       ...(done ? { completedAt: new Date() } : {}),
     });
     logger.info('onboarding.step_completed', { next: result.next });
+    if (done) {
+      await event(deps, session, 'onboarding.completed', {
+        minutes: Math.round(((deps.now?.() ?? new Date()).getTime() - session.startedAt.getTime()) / 60_000),
+      });
+    }
     return 'ran';
   } catch (error) {
     const message = describeError(error);
@@ -127,6 +133,7 @@ export async function runOnboardingStep(sessionId: number, deps: RunnerDeps): Pr
 
     if (permanent || session.attempts >= ONBOARDING_MAX_ATTEMPTS) {
       logger.error('onboarding.failed', { code, error: message });
+      await event(deps, session, 'onboarding.failed', { step: session.status, code, attempts: session.attempts });
       await updateSession(deps.db, session.id, {
         status: 'failed',
         lockedUntil: null,
@@ -213,6 +220,7 @@ async function readHistory(session: OnboardingSession, deps: RunnerDeps): Promis
     session,
     words.readHistory(title, crawl.usable) + (crawl.usable < HISTORY_MIN_USEFUL_POSTS ? `\n\n${words.fewPosts}` : ''),
   );
+  await event(deps, session, 'onboarding.history_completed', { usable: crawl.usable, inspected: crawl.inspected });
   return { next: 'profiling', progress: { usable: crawl.usable, inspected: crawl.inspected } };
 }
 
@@ -242,6 +250,11 @@ async function profile(session: OnboardingSession, deps: RunnerDeps): Promise<St
   const usable = typeof session.progress.usable === 'number' ? session.progress.usable : built.facts.items;
   await showStatus(deps, session, `${words.profiled(session.channelTitle ?? workspace.name, usable, topics)}\n\n${words.findingSources}`);
 
+  await event(deps, session, 'onboarding.profile_completed', {
+    profileWritten: initial.written.profile,
+    language: initial.written.language ? initial.language : null,
+    topics: topics.length,
+  });
   return {
     next: 'discovering_sources',
     progress: {
@@ -282,6 +295,13 @@ async function findSources(session: OnboardingSession, deps: RunnerDeps): Promis
     { youtube: deps.youtube, discoverer: deps.discoverer, logger: deps.logger, fetchImpl: deps.fetchImpl, lookup: deps.lookup },
   );
   await storeSuggestions(deps.db, { sessionId: session.id, workspaceId: workspace.id, result });
+  await event(deps, session, 'onboarding.discovery_completed', {
+    by_origin: countBy([...result.picked, ...result.reserve].map((candidate) => candidate.origin)),
+    picked: result.picked.length,
+    reserve: result.reserve.length,
+    failed: result.failed.length,
+    search_failed: result.stats.searchError !== null,
+  });
   return {
     next: 'activating_sources',
     progress: { discovery: { ...result.stats, picked: result.picked.length, reserve: result.reserve.length, failed: result.failed.length } },
@@ -299,6 +319,17 @@ async function connectSources(session: OnboardingSession, deps: RunnerDeps): Pro
   const view = await followingView(deps.db, workspace, language, { appBaseUrl: deps.env.APP_BASE_URL });
   const messageId = await say(deps, session.chatId, view.text, view.keyboard);
   deps.logger.info('onboarding.sources_activated', { workspaceId: workspace.id, count: active.length });
+  await event(deps, session, 'onboarding.sources_activated', {
+    count: active.length,
+    by_origin: countBy(active.map((suggestion) => suggestion.origin)),
+  });
+  for (const failed of await suggestionsIn(deps.db, workspace.id, ['failed'])) {
+    await event(deps, session, 'onboarding.source_failed', {
+      platform: failed.platform,
+      origin: failed.origin,
+      reason: failed.activationError?.slice(0, 120) ?? null,
+    });
+  }
   return { next: 'active', progress: { sourcesActive: active.length, followingMessageId: messageId } };
 }
 
@@ -358,4 +389,25 @@ export function runnerDeps(
     discoverer: createDiscoverer(env),
     logger,
   };
+}
+
+/** A funnel event for this session, its person and channel (§29). */
+async function event(
+  deps: Pick<RunnerDeps, 'db' | 'logger'>,
+  session: OnboardingSession,
+  name: ProductEventName,
+  props: Record<string, unknown>,
+): Promise<void> {
+  await track(
+    deps.db,
+    name,
+    { userId: session.userId, telegramUserId: session.telegramUserId, workspaceId: session.workspaceId, sessionId: session.id, props },
+    deps.logger,
+  );
+}
+
+function countBy(values: string[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const value of values) counts[value] = (counts[value] ?? 0) + 1;
+  return counts;
 }

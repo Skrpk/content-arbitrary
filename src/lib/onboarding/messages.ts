@@ -34,6 +34,8 @@ const COPY = {
     tooMany: (max: number) => `Можна підключити до ${max} каналів. Цей ліміт поки не змінюється.`,
     alreadyYours: (title: string) => `<b>${escapeHtml(title)}</b> уже підключено — оновлю його аналіз.`,
     settings: '⚙️ Налаштування',
+    waitlisted: 'Змістик зараз у закритій альфі — ти в списку. Напишу, щойно зможу підключити твій канал.',
+    admitted: '🎉 Можна починати! Надішли /start, і я підключу твій канал.',
   },
   en: {
     welcome:
@@ -57,6 +59,8 @@ const COPY = {
     tooMany: (max: number) => `You can connect up to ${max} channels for now.`,
     alreadyYours: (title: string) => `<b>${escapeHtml(title)}</b> is already connected — I’ll refresh its analysis.`,
     settings: '⚙️ Settings',
+    waitlisted: 'Zmistik is in a closed alpha right now — you’re on the list. I’ll write as soon as I can connect your channel.',
+    admitted: '🎉 You’re in! Send /start and I’ll connect your channel.',
   },
 } as const;
 

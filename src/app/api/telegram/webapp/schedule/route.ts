@@ -1,3 +1,4 @@
+import { track } from '@/lib/analytics/track';
 import { allowedTargets, DEFAULT_PUBLISH_TARGETS, normalizeTargets, PUBLISH_TARGETS } from '@/lib/publish/targets';
 import { hasThreadsAccount } from '@/lib/threads/accounts';
 import { loadRadarNote } from '@/lib/radar/review-note';
@@ -153,6 +154,7 @@ export async function POST(request: Request): Promise<Response> {
     scheduledFor: scheduledFor.toISOString(),
     timezone,
   });
+  await track(auth.db, 'post.approved', { userId: auth.user.id, workspaceId: row.workspaceId, props: { action: 'schedule' } }, auth.logger);
 
   // The decision is recorded; showing it in the chats is best effort.
   const noticeText = formatScheduledNotice({

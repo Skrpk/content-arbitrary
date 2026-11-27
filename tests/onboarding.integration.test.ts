@@ -21,7 +21,8 @@ import { ONBOARDING_MAX_ATTEMPTS } from '@/lib/onboarding/limits';
 import type { RadarProvider } from '@/lib/radar/providers/types';
 import type { SourceDiscoverer } from '@/lib/onboarding/source-discovery';
 import { handleOnboardingCallback } from '@/lib/onboarding/following';
-import { sourceSuggestions, sources } from '@/db/schema';
+import { onboardingWaitlist, productEvents, sourceSuggestions, sources } from '@/db/schema';
+import { admitFromWaitlist } from '@/lib/onboarding/access';
 import { TelegramClient } from '@/lib/telegram/client';
 import { setEditorialProfile } from '@/lib/workspace';
 import { addWorkspaceMember } from '@/lib/accounts/users';
@@ -122,6 +123,8 @@ beforeEach(async () => {
     }),
   );
   await db.delete(sourceSuggestions);
+  await db.delete(productEvents);
+  await db.delete(onboardingWaitlist);
   await db.delete(onboardingSessions);
   await db.delete(publicationHistoryProfiles);
   await db.delete(publicationHistoryItems);
@@ -145,6 +148,7 @@ const send = (text: string, from = ME, languageCode = 'uk') =>
 
 const lastText = () => String(sent.filter((call) => call.method === 'sendMessage').at(-1)?.body.text ?? '');
 const session = async () => (await db.select().from(onboardingSessions))[0]!;
+const events = async (name: string) => (await db.select().from(productEvents).orderBy(productEvents.id)).filter((row) => row.name === name);
 
 /** A model that answers each of the profiler's requests, and the initial profile's. */
 function fakeModel(options: { fail?: () => boolean } = {}): RadarProvider & { calls: string[] } {
@@ -195,13 +199,78 @@ const deps = (provider: RadarProvider | null = fakeModel()): RunnerDeps => ({
   lookup: async () => ['93.184.216.34'],
 });
 
-describeIfDb('onboarding in the bot', () => {
-  it('is not offered to someone the allowlist does not name', async () => {
-    expect(await send('/start', STRANGER)).toBe(false);
+describeIfDb('who may onboard', () => {
+  it('puts someone the allowlist does not name on the waitlist, and tells them', async () => {
+    expect(await send('/start', STRANGER)).toBe(true);
+    expect(lastText()).toMatch(/закритій альфі — ти в списку/);
     expect(await db.select().from(onboardingSessions)).toEqual([]);
-    expect(sent).toEqual([]);
+    expect(await db.select().from(onboardingWaitlist)).toMatchObject([
+      { telegramUserId: String(STRANGER), reason: 'not_listed', language: 'uk', name: 'Vita', admittedAt: null },
+    ]);
+    expect(await events('onboarding.waitlisted')).toMatchObject([{ telegramUserId: String(STRANGER), props: { reason: 'not_listed' } }]);
+
+    // Asking again keeps one entry.
+    await send('/start', STRANGER);
+    expect(await db.select().from(onboardingWaitlist)).toHaveLength(1);
   });
 
+  it('lets someone admitted from the waitlist in', async () => {
+    await send('/start', STRANGER);
+    expect(await admitFromWaitlist(db, String(STRANGER))).not.toBeNull();
+    expect(await admitFromWaitlist(db, String(STRANGER))).toBeNull();
+    await send('/start', STRANGER);
+    expect(lastText()).toMatch(/Надішли мені публічний Telegram-канал/);
+  });
+
+  it('is off — the bot answers as before — with no allowlist at all', async () => {
+    const off = { ...env, ONBOARDING_ALLOWLIST: [] };
+    const handled = await handleOnboardingMessage(
+      { chat: { id: STRANGER, type: 'private' }, from: { id: STRANGER, language_code: 'uk' }, text: '/start' },
+      { db, env: off, client: new TelegramClient({ logger }), logger, kick: () => {} },
+    );
+    expect(handled).toBe(false);
+    expect(sent).toEqual([]);
+    expect(await db.select().from(onboardingWaitlist)).toEqual([]);
+  });
+
+  it('lets anyone in with “*”', async () => {
+    const open = { ...env, ONBOARDING_ALLOWLIST: ['*'] };
+    await handleOnboardingMessage(
+      { chat: { id: STRANGER, type: 'private' }, from: { id: STRANGER, language_code: 'en' }, text: '/start' },
+      { db, env: open, client: new TelegramClient({ logger }), logger, kick: () => {} },
+    );
+    expect(lastText()).toMatch(/Send me the public Telegram channel/);
+  });
+
+  it('waitlists everyone past the cap on self-service channels', async () => {
+    await db.update(workspaces).set({ createdVia: 'self_service' }).where(eq(workspaces.id, DEFAULT_WORKSPACE_ID));
+    const capped = { ...env, ONBOARDING_MAX_WORKSPACES: 1 };
+    await handleOnboardingMessage(
+      { chat: { id: ME, type: 'private' }, from: { id: ME, language_code: 'uk' }, text: '/newchannel' },
+      { db, env: capped, client: new TelegramClient({ logger }), logger, kick: () => {} },
+    );
+    expect(lastText()).toMatch(/ти в списку/);
+    expect(await db.select().from(onboardingWaitlist)).toMatchObject([{ reason: 'workspaces_cap' }]);
+  });
+
+  it('checks the daily cap again when the channel arrives, and makes nothing past it', async () => {
+    await send('/start');
+    // Someone else's run, made after this one's /start.
+    await db.insert(onboardingSessions).values({ telegramUserId: '111', chatId: '111', channelChatId: '-100555', status: 'active' });
+    const capped = { ...env, ONBOARDING_MAX_RUNS_PER_DAY: 1 };
+    await handleOnboardingMessage(
+      { chat: { id: ME, type: 'private' }, from: { id: ME, language_code: 'uk' }, text: '@spacenews' },
+      { db, env: capped, client: new TelegramClient({ logger }), logger, kick: () => {} },
+    );
+    expect(lastText()).toMatch(/ти в списку/);
+    expect(await db.select().from(workspaces)).toHaveLength(1);
+    const mine = (await db.select().from(onboardingSessions)).find((row) => row.telegramUserId === String(ME));
+    expect(mine).toMatchObject({ status: 'failed', errorCode: 'waitlisted' });
+    expect(await db.select().from(onboardingWaitlist)).toMatchObject([{ reason: 'runs_cap' }]);
+  });
+});
+
+describeIfDb('onboarding in the bot', () => {
   it('asks for the channel on /start, and again while it waits', async () => {
     expect(await send('/start')).toBe(true);
     expect(lastText()).toMatch(/Надішли мені публічний Telegram-канал/);
@@ -283,6 +352,24 @@ describeIfDb('onboarding in the bot', () => {
     const done = await session();
     expect(done).toMatchObject({ status: 'active', progress: { sourcesActive: 4 } });
     expect(done.completedAt).not.toBeNull();
+
+    // The funnel (§29), in order, all tied to this session and channel.
+    const funnel = (await db.select().from(productEvents).orderBy(productEvents.id)).filter((row) => row.sessionId === id);
+    expect(funnel.map((row) => row.name)).toEqual([
+      'onboarding.started',
+      'onboarding.channel_submitted',
+      'onboarding.channel_validated',
+      'onboarding.history_completed',
+      'onboarding.profile_completed',
+      'onboarding.discovery_completed',
+      'onboarding.sources_activated',
+      'onboarding.completed',
+    ]);
+    expect(funnel.find((row) => row.name === 'onboarding.history_completed')?.props).toEqual({ usable: 60, inspected: 60 });
+    expect(funnel.find((row) => row.name === 'onboarding.sources_activated')).toMatchObject({
+      workspaceId,
+      props: { count: 4 },
+    });
 
     const connected = await db.select().from(sources).where(eq(sources.workspaceId, workspaceId!));
     expect(connected.map((source) => [source.platform, source.externalId, source.includeTextOnly, source.radarThreshold]).sort()).toEqual([
@@ -437,6 +524,8 @@ describeIfDb('the sources onboarding connected', () => {
 
     await press(`ob:add:${eurogamer.id}`);
     expect(await suggestion('eurogamer_tg')).toMatchObject({ state: 'active' });
+    expect((await events('source.removed'))[0]?.props).toMatchObject({ origin: 'history_link', offered: true });
+    expect((await events('source.replaced'))[0]?.props).toMatchObject({ ok: true });
     expect(await source('eurogamer_tg')).toMatchObject({ enabled: true });
     expect(String(sent.filter((call) => call.method === 'editMessageText').at(-1)!.body.text)).toMatch(/Стежу за 3 джерелами/);
 

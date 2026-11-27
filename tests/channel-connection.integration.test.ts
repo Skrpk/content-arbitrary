@@ -4,9 +4,10 @@ import { eq } from 'drizzle-orm';
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from '@/db/schema';
-import { DEFAULT_WORKSPACE_ID, processedPosts, telegramMessages, users, workspaces, type ApprovalPayload } from '@/db/schema';
+import { DEFAULT_WORKSPACE_ID, processedPosts, productEvents, telegramMessages, users, workspaces, type ApprovalPayload } from '@/db/schema';
 import { POST as channelsRoute } from '@/app/api/telegram/webapp/channels/route';
 import { POST as verifyRoute } from '@/app/api/telegram/webapp/channels/verify/route';
+import { POST as eventsRoute } from '@/app/api/telegram/webapp/events/route';
 import { POST as previewRoute } from '@/app/api/telegram/webapp/preview/route';
 import { GET as queueRoute, POST as decideRoute } from '@/app/api/telegram/webapp/queue/route';
 import { POST as scheduleRoute } from '@/app/api/telegram/webapp/schedule/route';
@@ -91,6 +92,7 @@ beforeEach(async () => {
       return telegramOk(true);
     }),
   );
+  await db.delete(productEvents);
   await db.delete(telegramMessages);
   await db.delete(processedPosts);
   await db.delete(users);
@@ -173,6 +175,7 @@ async function post(status: 'awaiting_approval' | 'scheduled' = 'awaiting_approv
 
 const reload = async (id: number) => (await db.select().from(processedPosts).where(eq(processedPosts.id, id)))[0]!;
 const workspace = async () => (await db.select().from(workspaces).where(eq(workspaces.id, DEFAULT_WORKSPACE_ID)))[0]!;
+const eventNames = async () => (await db.select().from(productEvents).orderBy(productEvents.id)).map((row) => row.name);
 const sentToChannel = () => calls.filter((entry) => entry.body.chat_id === CHANNEL_CHAT && entry.method.startsWith('send'));
 
 describeIfDb('a channel not connected yet', () => {
@@ -294,6 +297,12 @@ describeIfDb('connecting the channel with Check', () => {
     expect(approved.status).toBe(200);
     expect(sentToChannel().map((entry) => entry.method)).toEqual(['sendPhoto']);
     expect((await reload(row.id)).status).toBe('published');
+
+    expect(await eventNames()).toEqual(['channel.check', 'channel.connected', 'post.approved']);
+    const [check, connected, approval] = await db.select().from(productEvents).orderBy(productEvents.id);
+    expect(check).toMatchObject({ workspaceId: DEFAULT_WORKSPACE_ID, props: { result: 'connected' } });
+    expect(connected?.props).toEqual({ via: 'check' });
+    expect(approval?.props).toMatchObject({ action: 'publish', via: 'queue' });
   });
 
   it.each([
@@ -312,6 +321,7 @@ describeIfDb('connecting the channel with Check', () => {
     expect(body.reason).toBe(reason);
     expect(body.error.length).toBeGreaterThan(0);
     expect((await workspace()).channelVerifiedAt).toBeNull();
+    expect((await db.select().from(productEvents))[0]?.props).toEqual({ result: reason });
   });
 
   it('refuses a channel that is not the reviewer’s', async () => {
@@ -355,5 +365,40 @@ describeIfDb('connecting the channel by making the bot an admin', () => {
     await webhook(promotion(REVIEWER_ID, false));
     expect((await workspace()).channelVerifiedAt).toBeNull();
     expect(calls.some((entry) => entry.method === 'getChatMember')).toBe(false);
+  });
+});
+
+describeIfDb('events a page reports', () => {
+  it('records the popup, Open Settings and the queue opened from a digest, for the reviewer’s channel', async () => {
+    for (const body of [
+      { name: 'publish.blocked', workspaceId: DEFAULT_WORKSPACE_ID, props: { action: 'schedule' } },
+      { name: 'publish.popup_settings', workspaceId: DEFAULT_WORKSPACE_ID },
+      { name: 'queue.opened', workspaceId: DEFAULT_WORKSPACE_ID, props: { from: 'digest' } },
+    ]) {
+      expect((await call(eventsRoute, '/api/telegram/webapp/events', body)).status).toBe(204);
+    }
+    const rows = await db.select().from(productEvents).orderBy(productEvents.id);
+    expect(rows.map((row) => [row.name, row.workspaceId, row.props])).toEqual([
+      ['publish.blocked', DEFAULT_WORKSPACE_ID, { action: 'schedule' }],
+      ['publish.popup_settings', DEFAULT_WORKSPACE_ID, {}],
+      ['queue.opened', DEFAULT_WORKSPACE_ID, { from: 'digest' }],
+    ]);
+    expect(rows[0]?.userId).not.toBeNull();
+  });
+
+  it('refuses any other event or prop, and records another channel as none', async () => {
+    expect((await call(eventsRoute, '/api/telegram/webapp/events', { name: 'post.approved', props: {} })).status).toBe(400);
+    expect((await call(eventsRoute, '/api/telegram/webapp/events', { name: 'queue.opened', props: { from: 'elsewhere' } })).status).toBe(400);
+    expect(
+      (await call(eventsRoute, '/api/telegram/webapp/events', { name: 'queue.opened', props: { from: 'digest', note: 'x' } })).status,
+    ).toBe(400);
+    await call(eventsRoute, '/api/telegram/webapp/events', { name: 'queue.opened', workspaceId: 999_999, props: { from: 'command' } });
+    expect(await db.select().from(productEvents)).toMatchObject([{ name: 'queue.opened', workspaceId: null }]);
+  });
+
+  it('is refused to someone who reviews nothing', async () => {
+    const response = await call(eventsRoute, '/api/telegram/webapp/events', { name: 'publish.popup_settings' }, { userId: STRANGER_ID });
+    expect(response.status).toBe(401);
+    expect(await db.select().from(productEvents)).toEqual([]);
   });
 });

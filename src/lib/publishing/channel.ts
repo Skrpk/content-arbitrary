@@ -1,3 +1,4 @@
+import { track } from '@/lib/analytics/track';
 import { and, eq, isNull } from 'drizzle-orm';
 import { workspaces, type Workspace } from '@/db/schema';
 import type { Database } from '@/lib/db';
@@ -147,6 +148,7 @@ export async function connectOnBotPromotion(input: {
       if (!(await markChannelConnected(db, workspace.id))) continue;
       connected.push(workspace.id);
       logger.info('webapp.channel_connected', { workspaceId: workspace.id, via: 'my_chat_member' });
+      await track(db, 'channel.connected', { telegramUserId: userTelegramId, workspaceId: workspace.id, props: { via: 'my_chat_member' } }, logger);
       await client
         .call(
           'sendMessage',

@@ -580,10 +580,10 @@ SOURCES_RESERVE_MAX              10
 DIGEST_MINUTES_DEFAULT         1440   (self-service)
 DIGEST_HOUR_DEFAULT               9
 ONBOARDING_ACTIVE_PER_USER        1
-WORKSPACES_PER_USER               3   (self-service)
+ONBOARDING_WORKSPACES_PER_USER    3   (self-service)
 ONBOARDING_MAX_WORKSPACES        50   (global)
 ONBOARDING_MAX_RUNS_PER_DAY      30   (global)
-ONBOARDING_ALLOWLIST             optional, comma-separated Telegram ids
+ONBOARDING_ALLOWLIST             unset: off; comma-separated Telegram ids; or * for anyone
 ONBOARDING_MAX_ATTEMPTS           5
 DISCOVERY_VALIDATION_BUDGET_MS 60000
 ```
@@ -680,7 +680,7 @@ Order (each step shippable and tested on its own):
 4. Resolve/persist split, site-feed discovery, link signals, web discovery, ranking (§15–§19). **Built**: `src/lib/onboarding/{candidates,link-signals,site-feed,source-discovery,discover-sources}.ts`; `npm run onboarding:discover -- --workspace N --channel @name [--no-search]` prints what would be connected. The web search uses `ASSISTANT_MODEL`.
 5. Auto-activation + the "Стежу за" message with ✕/➕ (§20–§23). **Built**: `source_suggestions` (migration 0051), `src/lib/onboarding/{activate-sources,following}.ts`; the runner's `discovering_sources` and `activating_sources` steps; `ob:rm` / `ob:add` callbacks in the webhook. Fewer than 3 connected: the message points to the existing `/addtelegram`, `/addyoutube`, `/addrss`, `/addwebsite` (the person is the workspace's reviewer by then), rather than a separate manual-source input. A live run on @playstationua took 50 s from history to the message.
 6. `/profile` in the bot: replace, refine, language (§14a); the language field in Settings (§33). **Built**: `bot_pending_inputs` (migration 0052; kinds `profile_replace`, `profile_refine`, `language_custom` — `manual_source` was not needed, see step 5), `src/lib/telegram/pending-input.ts`, `src/lib/profile/{bot-profile,refine-profile}.ts`, `src/lib/workspace-language.ts`; `pf:` callbacks and a `[📝 Профіль каналу]` button on the "Стежу за" message. A pending input is checked **before** onboarding's routing, not after: it exists only because the person pressed a button in the last 15 minutes. After a draft, a plain message refines the draft further (💬 Ще уточнити only prompts for it). The rewrite runs after the webhook answers. Settings: a 🌐 Language section (Ukrainian, English, as is, Other → a code checked with `Intl`), an `auto` badge on the profile, no Clear for a self-service channel, and the API refuses to clear it (422).
-7. Limits, waitlist, analytics (§28–§29).
+7. Limits, waitlist, analytics (§28–§29). **Built**: migration 0053 (`product_events`, `onboarding_waitlist`); `src/lib/onboarding/access.ts`, `src/lib/analytics/track.ts`, `POST /api/telegram/webapp/events` (only `queue.opened`, `publish.blocked`, `publish.popup_settings`, each with its own props), `npm run onboarding:waitlist [-- --all | --admit <id>]`, `npm run events:funnel [-- --days N]`. The caps are env: `ONBOARDING_MAX_WORKSPACES` (50), `ONBOARDING_MAX_RUNS_PER_DAY` (30), `ONBOARDING_WORKSPACES_PER_USER` (3). `ONBOARDING_ALLOWLIST`: unset — onboarding off, the bot answers strangers as before; a list — those people, and anyone else's /start is waitlisted; `*` — anyone, up to the caps. Admitting from the waitlist lets a person past the allowlist, never past a cap, and the bot tells them. A run is a session that got a channel; the caps are checked at /start and again when the channel arrives. Queue links carry `from=digest|sources|command` for `queue.opened`. Also recorded: `profile.saved`, `profile.language_set`.
 
 The digest (§24) needs no step: provisioning sets its columns.
 
