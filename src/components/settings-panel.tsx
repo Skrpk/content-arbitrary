@@ -8,6 +8,7 @@ import { PUBLISHING_CHANNEL_ANCHOR } from '@/lib/publishing/codes';
 import { EDITORIAL_PROFILE_MAX_LENGTH, editorialProfileLength } from '@/lib/radar/editorial-profile';
 import { RADAR_THRESHOLD_MAX, RADAR_THRESHOLD_MIN } from '@/lib/radar/threshold';
 import { theme } from '@/lib/telegram/webapp-client';
+import { languageLabel, normaliseLanguageCode } from '@/lib/workspace-language';
 
 /**
  * Settings, for the Mini App and the website alike.
@@ -51,6 +52,12 @@ interface ChannelView {
   channelConnected: boolean;
   /** What Radar scores posts against, in the editor's words; null leaves Radar off. */
   editorialProfile: string | null;
+  /** The profile onboarding wrote, which no one has edited yet. */
+  editorialProfileAuto: boolean;
+  /** False for a channel onboarded in the bot: its digest needs Radar, so its profile stays. */
+  profileClearable: boolean;
+  /** The language posts go out in (BCP 47); null leaves them in their own. */
+  language: string | null;
   sources: SourceView[];
 }
 
@@ -373,7 +380,7 @@ export function SettingsPanel({ request, confirm, openLink }: PanelTools) {
     setSavingProfile((current) => new Set(current).add(channel.id));
     setProfileMessage(null);
     try {
-      const body = await readJson<{ editorialProfile: string | null }>(
+      const body = await readJson<{ editorialProfile: string | null; editorialProfileAuto?: boolean }>(
         await request('/api/telegram/webapp/channels', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -381,7 +388,11 @@ export function SettingsPanel({ request, confirm, openLink }: PanelTools) {
         }),
       );
       setChannels((all) =>
-        all.map((item) => (item.id === channel.id ? { ...item, editorialProfile: body.editorialProfile } : item)),
+        all.map((item) =>
+          item.id === channel.id
+            ? { ...item, editorialProfile: body.editorialProfile, editorialProfileAuto: body.editorialProfileAuto ?? false }
+            : item,
+        ),
       );
       setProfileDrafts((all) => {
         const next = { ...all };
@@ -642,8 +653,25 @@ export function SettingsPanel({ request, confirm, openLink }: PanelTools) {
 
               return (
                 <div key={channel.id} style={{ marginTop: '0.5rem', opacity: busy ? 0.6 : 1 }}>
-                  {channels.length > 1 ? (
-                    <div style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>📢 {channel.name}</div>
+                  {channels.length > 1 || channel.editorialProfileAuto ? (
+                    <div style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>
+                      {channels.length > 1 ? `📢 ${channel.name}` : null}
+                      {channel.editorialProfileAuto ? (
+                        <span
+                          title="Written from the channel's history when it was set up. Edit it to make it yours."
+                          style={{
+                            marginLeft: channels.length > 1 ? '0.4rem' : 0,
+                            padding: '0.05rem 0.4rem',
+                            borderRadius: '0.3rem',
+                            border: `1px solid ${theme.hint}`,
+                            color: theme.hint,
+                            fontSize: '0.7rem',
+                          }}
+                        >
+                          auto
+                        </span>
+                      ) : null}
+                    </div>
                   ) : null}
                   <textarea
                     value={draft}
@@ -685,7 +713,7 @@ export function SettingsPanel({ request, confirm, openLink }: PanelTools) {
                         Cancel
                       </button>
                     ) : null}
-                    {channel.editorialProfile !== null && !changed ? (
+                    {channel.editorialProfile !== null && channel.profileClearable && !changed ? (
                       <button
                         type="button"
                         disabled={busy}
@@ -717,6 +745,14 @@ export function SettingsPanel({ request, confirm, openLink }: PanelTools) {
               </p>
             ) : null}
           </section>
+
+          <LanguageSection
+            channels={channels}
+            request={request}
+            onSaved={(id, language) =>
+              setChannels((all) => all.map((item) => (item.id === id ? { ...item, language } : item)))
+            }
+          />
 
           <ThreadsConnection channels={channels} request={request} confirm={confirm} openLink={openLink} />
 
@@ -1014,6 +1050,182 @@ function PublishingChannel({
           </div>
         );
       })}
+    </section>
+  );
+}
+
+/** The languages offered by name; any other is typed as its code. */
+const LANGUAGE_CHOICES = ['uk', 'en'] as const;
+
+/**
+ * The language each channel's posts go out in: a post in another one is
+ * rewritten in it, in the channel's style, before it comes to review. Saved
+ * as soon as it is picked; a typed code with its own button.
+ */
+function LanguageSection({
+  channels,
+  request,
+  onSaved,
+}: {
+  channels: ChannelView[];
+  request: PanelTools['request'];
+  onSaved: (workspaceId: number, language: string | null) => void;
+}) {
+  const [other, setOther] = useState<Record<number, string>>({});
+  const [busy, setBusy] = useState<Set<number>>(new Set());
+  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
+
+  const save = async (channel: ChannelView, language: string | null) => {
+    setBusy((current) => new Set(current).add(channel.id));
+    setMessage(null);
+    try {
+      const body = await readJson<{ language: string | null }>(
+        await request('/api/telegram/webapp/channels', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ workspaceId: channel.id, language }),
+        }),
+      );
+      onSaved(channel.id, body.language);
+      setOther((all) => {
+        const next = { ...all };
+        delete next[channel.id];
+        return next;
+      });
+      setMessage({
+        text: `${channel.name}: ${body.language === null ? 'posts stay in their own language' : `new posts go out in ${languageLabel(body.language, 'en')}`}.`,
+        error: false,
+      });
+    } catch (error: unknown) {
+      setMessage({ text: `${channel.name}: ${error instanceof Error ? error.message : 'could not save'}`, error: true });
+    } finally {
+      setBusy((current) => {
+        const next = new Set(current);
+        next.delete(channel.id);
+        return next;
+      });
+    }
+  };
+
+  return (
+    <section
+      style={{ background: theme.secondaryBg, borderRadius: '0.6rem', padding: '0.75rem 0.9rem', marginBottom: '1.25rem' }}
+    >
+      <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>🌐 Language</div>
+      <div style={{ color: theme.hint, fontSize: '0.8rem', marginBottom: '0.5rem' }}>
+        The language the channel publishes in. A post in another one is rewritten in it, in the channel&apos;s style,
+        before it comes to review.
+      </div>
+      {channels.map((channel) => {
+        const typed = other[channel.id];
+        const choice =
+          typed !== undefined
+            ? 'other'
+            : channel.language === null
+              ? 'none'
+              : (LANGUAGE_CHOICES as readonly string[]).includes(channel.language)
+                ? channel.language
+                : 'other';
+        const saving = busy.has(channel.id);
+        const code = typed ?? (choice === 'other' ? channel.language ?? '' : '');
+        const valid = normaliseLanguageCode(code);
+        return (
+          <div key={channel.id} style={{ marginTop: '0.5rem', opacity: saving ? 0.6 : 1 }}>
+            {channels.length > 1 ? <div style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>📢 {channel.name}</div> : null}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+              <select
+                aria-label={`Language of ${channel.name}`}
+                value={choice}
+                disabled={saving}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (value === 'other') {
+                    setOther((all) => ({ ...all, [channel.id]: channel.language ?? '' }));
+                    return;
+                  }
+                  void save(channel, value === 'none' ? null : value);
+                }}
+                style={{ ...inputStyle, width: 'auto', flex: '1 1 12rem' }}
+              >
+                <option value="none">As the sources write — no translation</option>
+                {LANGUAGE_CHOICES.map((value) => (
+                  <option key={value} value={value}>
+                    {languageLabel(value, 'en')}
+                  </option>
+                ))}
+                <option value="other">
+                  {choice === 'other' && channel.language && typed === undefined
+                    ? `${languageLabel(channel.language, 'en')} (${channel.language})`
+                    : 'Other…'}
+                </option>
+              </select>
+              {typed !== undefined ? (
+                <>
+                  <input
+                    aria-label="Language code"
+                    value={typed}
+                    disabled={saving}
+                    placeholder="de, pl, pt-BR…"
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setOther((all) => ({ ...all, [channel.id]: value }));
+                    }}
+                    style={{ ...inputStyle, width: '7rem', flex: '0 0 auto' }}
+                  />
+                  <button
+                    type="button"
+                    disabled={saving || valid === null}
+                    onClick={() => {
+                      if (valid) void save(channel, valid);
+                    }}
+                    style={{
+                      padding: '0.5rem 0.9rem',
+                      border: 'none',
+                      borderRadius: '0.5rem',
+                      background: theme.button,
+                      color: theme.buttonText,
+                      fontWeight: 600,
+                      opacity: saving || valid === null ? 0.6 : 1,
+                    }}
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() =>
+                      setOther((all) => {
+                        const next = { ...all };
+                        delete next[channel.id];
+                        return next;
+                      })
+                    }
+                    style={{
+                      padding: '0.5rem 0.9rem',
+                      border: `1px solid ${theme.hint}`,
+                      borderRadius: '0.5rem',
+                      background: 'transparent',
+                      color: theme.text,
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  {code.trim() !== '' ? (
+                    <span style={{ fontSize: '0.75rem', color: valid ? theme.hint : '#e53935' }}>
+                      {valid ? languageLabel(valid, 'en') : 'unknown code'}
+                    </span>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          </div>
+        );
+      })}
+      {message ? (
+        <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: message.error ? '#e53935' : theme.hint }}>
+          {message.text}
+        </p>
+      ) : null}
     </section>
   );
 }

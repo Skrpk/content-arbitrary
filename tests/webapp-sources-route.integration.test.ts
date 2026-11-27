@@ -190,6 +190,9 @@ describeIfDb('GET /api/telegram/webapp/sources', () => {
           autoPublish: false,
           channelConnected: true,
           editorialProfile: null,
+          editorialProfileAuto: false,
+          profileClearable: true,
+          language: null,
           sources: [
             {
               id: mine.id,

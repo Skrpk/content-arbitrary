@@ -24,6 +24,8 @@ import { publishDecidedPost } from '@/lib/sync/publish';
 import { CHANNEL_NOT_CONNECTED_MESSAGE, connectOnBotPromotion } from '@/lib/publishing/channel';
 import { handleOnboardingMessage } from '@/lib/onboarding/routing';
 import { handleOnboardingCallback, onboardingCallbackSchema } from '@/lib/onboarding/following';
+import { handlePendingInputMessage, handleProfileCallback, profileCallbackSchema, type ProfileContext } from '@/lib/profile/bot-profile';
+import { createRadarProvider } from '@/lib/radar/providers';
 import { publishedLine, publishedNotice } from '@/lib/publish/targets';
 import { hasThreadsAccount } from '@/lib/threads/accounts';
 import { publishToThreadsSoon } from '@/lib/threads/kick';
@@ -189,6 +191,23 @@ export async function POST(request: Request): Promise<Response> {
 
   const client = new TelegramClient({ logger });
   const db = getDb();
+  const profileContext = (): ProfileContext => ({
+    db,
+    client,
+    logger,
+    settingsUrl: env.APP_BASE_URL ? buildSettingsUrl(env.APP_BASE_URL) : undefined,
+    provider: createRadarProvider(env),
+  });
+
+  // A message the bot asked for — a new profile, an instruction, a language (src/lib/profile/bot-profile.ts).
+  // Before onboarding: it exists only because they pressed a button in the last 15 minutes.
+  if (update.message) {
+    const answered = await handlePendingInputMessage(update.message, profileContext()).catch((error: unknown) => {
+      logger.error('webhook.pending_input_failed', { error: describeError(error) });
+      return true;
+    });
+    if (answered) return ok();
+  }
 
   // Onboarding first: someone with no channel yet sends one (src/lib/onboarding/routing.ts).
   if (update.message) {
@@ -236,6 +255,17 @@ export async function POST(request: Request): Promise<Response> {
     if (parsed.success) {
       await handleOnboardingCallback(parsed.data, { db, client, logger, appBaseUrl: env.APP_BASE_URL }).catch((error: unknown) =>
         logger.error('webhook.onboarding_callback_failed', { error: describeError(error) }),
+      );
+    }
+    return ok();
+  }
+
+  // The /profile screen's buttons, checked against the presser's own channels.
+  if (query.data?.startsWith('pf:')) {
+    const parsed = profileCallbackSchema.safeParse(query);
+    if (parsed.success) {
+      await handleProfileCallback(parsed.data, profileContext()).catch((error: unknown) =>
+        logger.error('webhook.profile_callback_failed', { error: describeError(error) }),
       );
     }
     return ok();
@@ -573,6 +603,8 @@ async function handleCommandMessage(
         logger: logger.child({ fromId: message.from?.id }),
         workspaceId: workspace.id,
         workspaces: reviewerWorkspaces.map(({ id, name }) => ({ id, name })),
+        languageCode: message.from?.language_code,
+        appBaseUrl: context.appBaseUrl,
       },
       parsed,
     );

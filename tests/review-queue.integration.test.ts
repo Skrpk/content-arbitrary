@@ -1028,7 +1028,7 @@ describeIfDb('POST /api/telegram/webapp/channels — publishing without review',
 describeIfDb('POST /api/telegram/webapp/channels — the editorial profile', () => {
   it('saves it trimmed, and clears it — Radar off — with null or blank text', async () => {
     const saved = await setInterval({ workspaceId: DEFAULT_WORKSPACE_ID, editorialProfile: '  Space news.\nNo rumours.  ' });
-    expect(await saved.json()).toEqual({ id: DEFAULT_WORKSPACE_ID, editorialProfile: 'Space news.\nNo rumours.' });
+    expect(await saved.json()).toEqual({ id: DEFAULT_WORKSPACE_ID, editorialProfile: 'Space news.\nNo rumours.', editorialProfileAuto: false });
     expect((await workspaceRow()).editorialProfile).toBe('Space news.\nNo rumours.');
 
     await setInterval({ workspaceId: DEFAULT_WORKSPACE_ID, editorialProfile: '   ' });
@@ -1036,7 +1036,7 @@ describeIfDb('POST /api/telegram/webapp/channels — the editorial profile', () 
 
     await setInterval({ workspaceId: DEFAULT_WORKSPACE_ID, editorialProfile: 'Space.' });
     const cleared = await setInterval({ workspaceId: DEFAULT_WORKSPACE_ID, editorialProfile: null });
-    expect(await cleared.json()).toEqual({ id: DEFAULT_WORKSPACE_ID, editorialProfile: null });
+    expect(await cleared.json()).toEqual({ id: DEFAULT_WORKSPACE_ID, editorialProfile: null, editorialProfileAuto: false });
     expect((await workspaceRow()).editorialProfile).toBeNull();
     // Nothing else about the channel changes with it.
     expect(await workspaceRow()).toMatchObject({ reviewDigestMinutes: 60, autoPublish: false });

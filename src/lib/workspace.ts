@@ -337,6 +337,34 @@ export async function setEditorialProfile(
   return rows[0] ?? null;
 }
 
+/**
+ * Whether a channel's editorial profile may be cleared. A self-service
+ * channel's may not: without one Radar is off, and its digest — all it gets
+ * until the channel is connected — would recommend nothing (§14a).
+ */
+export function editorialProfileClearable(workspace: Pick<Workspace, 'createdVia'>): boolean {
+  return workspace.createdVia !== 'self_service';
+}
+
+/**
+ * Set the language a channel publishes in (BCP 47, already normalised — see
+ * src/lib/workspace-language.ts), or null to leave posts in their own.
+ * Scoped like the other setters; returns the updated row, or null for a
+ * channel that is not the caller's.
+ */
+export async function setWorkspaceLanguage(
+  db: Database,
+  input: { workspaceId: number; reviewerWorkspaceIds: number[]; language: string | null },
+): Promise<Workspace | null> {
+  if (!input.reviewerWorkspaceIds.includes(input.workspaceId)) return null;
+  const rows = await db
+    .update(workspaces)
+    .set({ language: input.language, updatedAt: new Date() })
+    .where(eq(workspaces.id, input.workspaceId))
+    .returning();
+  return rows[0] ?? null;
+}
+
 /** The shortest and longest queue notification intervals: one cron run, and ninety days. */
 export const REVIEW_DIGEST_MINUTES_MIN = 15;
 export const REVIEW_DIGEST_MINUTES_MAX = 90 * 24 * 60;

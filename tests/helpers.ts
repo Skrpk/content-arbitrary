@@ -1,7 +1,7 @@
 import { ne } from 'drizzle-orm';
 import { resetEnvCache, type Env, getEnv } from '@/lib/env';
 import type { Database } from '@/lib/db';
-import { DEFAULT_WORKSPACE_ID, publicationHistoryProfiles, stories, threadsAccounts, workspaces } from '@/db/schema';
+import { botPendingInputs, DEFAULT_WORKSPACE_ID, publicationHistoryProfiles, stories, threadsAccounts, workspaces } from '@/db/schema';
 import type { TelegramDestination } from '@/lib/workspace';
 import { createLogger, type Logger } from '@/lib/logger';
 
@@ -88,6 +88,8 @@ export async function ensureTestWorkspace(db: Database): Promise<void> {
   await db.delete(stories);
   // A Threads account left on workspace 1 would give every review the Threads buttons.
   await db.delete(threadsAccounts);
+  // A prompt left waiting would take the next test's message for its answer.
+  await db.delete(botPendingInputs);
   await db
     .insert(workspaces)
     .values({ id: DEFAULT_WORKSPACE_ID, name: 'default' })

@@ -38,6 +38,7 @@ const WORDS = {
     added: (name: string) => `Тепер стежу і за ${name}.`,
     add: (name: string) => `➕ Додати ${name}`,
     queue: '📋 Черга',
+    profile: '📝 Профіль каналу',
     connectButton: '⚙️ Підключити канал',
     notYours: 'Це не твій канал.',
     gone: 'Цього джерела вже немає в списку.',
@@ -57,6 +58,7 @@ const WORDS = {
     added: (name: string) => `Now following ${name} too.`,
     add: (name: string) => `➕ Add ${name}`,
     queue: '📋 Queue',
+    profile: '📝 Editorial profile',
     connectButton: '⚙️ Connect the channel',
     notYours: 'That isn’t your channel.',
     gone: 'That source is no longer on the list.',
@@ -110,6 +112,7 @@ export function followingKeyboard(
   const rows: unknown[][] = [];
   for (let start = 0; start < remove.length; start += 5) rows.push(remove.slice(start, start + 5));
   if (input.offer) rows.push([{ text: words.add(nameOf(input.offer)).slice(0, 60), callback_data: `ob:add:${input.offer.id}` }]);
+  rows.push([{ text: words.profile, callback_data: `pf:s:${input.workspaceId}` }]);
   if (input.appBaseUrl) {
     rows.push([
       { text: words.queue, web_app: { url: buildReviewQueueUrl(input.appBaseUrl, input.workspaceId) } },

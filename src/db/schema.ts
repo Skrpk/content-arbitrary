@@ -1670,3 +1670,32 @@ export const sourceSuggestions = pgTable(
 );
 
 export type SourceSuggestion = typeof sourceSuggestions.$inferSelect;
+
+/**
+ * What the bot waits for next in someone's private chat (§14a): after ✏️ the
+ * next message is their own profile, after 💬 an instruction to rewrite it,
+ * after "Інша…" a language code. One per person; a /command cancels it, and
+ * it lapses after 15 minutes so a stray message later is not taken for it.
+ */
+export const BOT_PENDING_INPUT_KINDS = ['profile_replace', 'profile_refine', 'language_custom'] as const;
+export type BotPendingInputKind = (typeof BOT_PENDING_INPUT_KINDS)[number];
+
+export const botPendingInputs = pgTable(
+  'bot_pending_inputs',
+  {
+    telegramUserId: text('telegram_user_id').primaryKey(),
+    kind: text('kind', { enum: BOT_PENDING_INPUT_KINDS }).notNull(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    /** For a rewrite: the draft awaiting ✅. */
+    payload: jsonb('payload').$type<{ draft?: string }>().notNull().default(sql`'{}'::jsonb`),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check('bot_pending_inputs_kind_check', sql`${table.kind} IN ('profile_replace', 'profile_refine', 'language_custom')`),
+  ],
+);
+
+export type BotPendingInput = typeof botPendingInputs.$inferSelect;
