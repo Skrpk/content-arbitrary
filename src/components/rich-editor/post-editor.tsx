@@ -7,6 +7,7 @@ import { uploadPresigned } from '@vercel/blob/client';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { readJson, type PanelTools } from '@/components/panel-tools';
 import { ASSISTANT_CSS, AssistantPanel } from '@/components/rich-editor/assistant-panel';
+import { EmojiButton } from '@/components/rich-editor/emoji-button';
 import { ExpandableQuote } from '@/components/rich-editor/expandable-quote';
 import { EditorMediaContext, PostMedia, type EditorMedia } from '@/components/rich-editor/post-media';
 import { threadsCount, ThreadsTab, type ThreadsVersion } from '@/components/rich-editor/threads-tab';
@@ -716,6 +717,7 @@ function Toolbar({ editor, state }: { editor: Editor | null; state: ReturnType<t
               {button.label}
             </button>
           ))}
+          {index === 0 && <EmojiButton onPick={(emoji) => run((c) => c.insertContent(emoji))} />}
         </div>
       ))}
     </div>
