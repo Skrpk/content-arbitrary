@@ -31,7 +31,12 @@ const editorDoc = {
         text('marked', [{ type: 'highlight' }, { type: 'italic' }]),
       ],
     },
-    { type: 'blockquote', content: [{ type: 'paragraph', content: [text('One')] }, { type: 'paragraph', content: [text('Two')] }] },
+    {
+      type: 'blockquote',
+      attrs: { expandable: false },
+      content: [{ type: 'paragraph', content: [text('One')] }, { type: 'paragraph', content: [text('Two')] }],
+    },
+    { type: 'blockquote', attrs: { expandable: true }, content: [{ type: 'paragraph', content: [text('Folded')] }] },
     {
       type: 'orderedList',
       attrs: { start: 1, type: null },
@@ -57,6 +62,7 @@ describe('a document from the editor', () => {
         '<figure><video src="tg://video?id=m1"></video><figcaption>Caption "quoted" &lt;b&gt;not bold&lt;/b&gt;</figcaption></figure>' +
         '<p><b>Bold</b> and <a href="https://esa.int/?a=1&amp;b=2">a link</a><br/><i><mark>marked</mark></i></p>' +
         '<blockquote>One<br/>Two</blockquote>' +
+        '<blockquote expandable>Folded</blockquote>' +
         '<ol><li>First</li></ol>' +
         '<hr/>' +
         '<img src="tg://photo?id=m0"/>' +
@@ -94,6 +100,8 @@ describe('a document from the editor', () => {
       withBlock({ type: 'paragraph', content: [text('x', [{ type: 'link', attrs: { href: 'javascript:alert(1)' } }])] }),
       withBlock({ type: 'heading', attrs: { level: 5 }, content: [text('x')] }),
       withBlock({ type: 'paragraph', content: [{ type: 'html', html: '<script>' }] }),
+      withBlock({ type: 'blockquote', attrs: { expandable: 'yes' }, content: [{ type: 'paragraph', content: [text('x')] }] }),
+      withBlock({ type: 'blockquote', attrs: { cite: 'https://x.y' }, content: [{ type: 'paragraph', content: [text('x')] }] }),
       { type: 'doc', content: [] },
     ];
     for (const doc of refused) expect(parseRichDocument(doc, { mediaCount: 0 }).ok).toBe(false);
@@ -184,9 +192,26 @@ describe('a post edited only for its words', () => {
     ).toEqual({
       mediaRefs: ['m2', 'm0'],
       html:
-        '<b>Bold</b>\nand &lt;plain&gt;\n\nNext\n\n<blockquote>Quoted\nlines</blockquote>\n\n<a href="https://esa.int/">a link</a>',
-      text: 'Bold\nand <plain>\n\nNext\n\nQuoted\nlines\n\na link',
+        '<b>Bold</b>\nand &lt;plain&gt;\n\nNext\n\n<blockquote>Quoted\n\nlines</blockquote>\n\n<a href="https://esa.int/">a link</a>',
+      text: 'Bold\nand <plain>\n\nNext\n\nQuoted\n\nlines\n\na link',
     });
+  });
+
+  it('keeps a collapsed quotation collapsed, its paragraphs an empty line apart and its line breaks as they are', () => {
+    expect(
+      plainOf([
+        {
+          type: 'blockquote',
+          attrs: { expandable: true },
+          content: [
+            { type: 'paragraph', content: [text('Remake'), { type: 'hardBreak' }, text('of a classic')] },
+            { type: 'paragraph' },
+            paragraph('Rated 8–9/10'),
+          ],
+        },
+        paragraph('After'),
+      ])?.html,
+    ).toBe('<blockquote expandable>Remake\nof a classic\n\nRated 8–9/10</blockquote>\n\nAfter');
   });
 
   it('needs a rich message for headings, lists, dividers, highlighting, or a picture placed in the text or captioned', () => {

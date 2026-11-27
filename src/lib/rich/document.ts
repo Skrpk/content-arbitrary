@@ -68,7 +68,8 @@ function kindOf(ref: string, kinds: MediaKinds): 'photo' | 'video' {
 export type RichBlock =
   | { type: 'paragraph'; content?: RichInline[] }
   | { type: 'heading'; attrs: { level: 1 | 2 | 3 }; content?: RichInline[] }
-  | { type: 'blockquote'; content: RichBlock[] }
+  /** `expandable`: Telegram shows its first lines and opens the rest on a tap. */
+  | { type: 'blockquote'; attrs?: { expandable?: boolean }; content: RichBlock[] }
   | { type: 'bulletList' | 'orderedList'; content: RichListItem[]; attrs?: Record<string, unknown> }
   | { type: 'horizontalRule' }
   | { type: 'postMedia'; attrs: { ref: string; caption?: string | null } };
@@ -87,7 +88,13 @@ const blockSchema: z.ZodType<RichBlock> = z.lazy(() =>
         content: inlineContent,
       })
       .strict(),
-    z.object({ type: z.literal('blockquote'), content: z.array(blockSchema).min(1).max(200) }).strict(),
+    z
+      .object({
+        type: z.literal('blockquote'),
+        attrs: z.object({ expandable: z.boolean().optional() }).strict().optional(),
+        content: z.array(blockSchema).min(1).max(200),
+      })
+      .strict(),
     z
       .object({
         type: z.union([z.literal('bulletList'), z.literal('orderedList')]),
@@ -233,7 +240,7 @@ function blockHtml(block: RichBlock, kinds: MediaKinds): string {
       return `<h${block.attrs.level}>${inlineHtml(block.content)}</h${block.attrs.level}>`;
     case 'blockquote':
       // Telegram's quotation holds text, line by line, not blocks.
-      return `<blockquote>${quoteLines(block.content).join('<br/>')}</blockquote>`;
+      return `${quoteOpen(block)}${quoteLines(block.content).join('<br/>')}</blockquote>`;
     case 'bulletList':
     case 'orderedList': {
       const tag = block.type === 'bulletList' ? 'ul' : 'ol';
@@ -252,6 +259,11 @@ function blockHtml(block: RichBlock, kinds: MediaKinds): string {
       return caption ? `<figure>${element}<figcaption>${escapeHtml(caption)}</figcaption></figure>` : element;
     }
   }
+}
+
+/** A quotation's opening tag: a collapsed one opens on a tap (`<blockquote expandable>`, in both kinds of post). */
+function quoteOpen(block: Extract<RichBlock, { type: 'blockquote' }>): string {
+  return block.attrs?.expandable ? '<blockquote expandable>' : '<blockquote>';
 }
 
 /** A quotation's lines: its paragraphs' text with their formatting, anything else as plain words. */
@@ -309,8 +321,8 @@ function escapeAttribute(value: string): string {
  * rich formatting along. So such a post goes out the ordinary way, laid out
  * as the editor shows it: a paragraph after an empty line, however many
  * empty paragraphs were left between, and a line break as a line break.
- * Bold, italic, underline, strikethrough, links and quotations are kept:
- * Telegram's ordinary HTML has them all.
+ * Bold, italic, underline, strikethrough, links and quotations, collapsed
+ * ones too, are kept: Telegram's ordinary HTML has them all.
  *
  * `html` is the text alone, without the channel's footer; `text` is what a
  * reader sees of it, for the length limits.
@@ -336,8 +348,8 @@ export function richDocumentAsPlainPost(doc: RichDocument): { mediaRefs: string[
       const lines = plainQuoteLines(block.content);
       if (!lines) return null;
       paragraphs.push({
-        html: `<blockquote>${lines.map((line) => line.html).join('\n')}</blockquote>`,
-        text: lines.map((line) => line.text).join('\n'),
+        html: `${quoteOpen(block)}${lines.map((line) => line.html).join('\n\n')}</blockquote>`,
+        text: lines.map((line) => line.text).join('\n\n'),
       });
       continue;
     }
@@ -351,7 +363,10 @@ export function richDocumentAsPlainPost(doc: RichDocument): { mediaRefs: string[
   };
 }
 
-/** A quotation's lines, when it holds only paragraphs without highlighting. */
+/**
+ * A quotation's paragraphs, when it holds only paragraphs without
+ * highlighting — an empty line apart, as the post's own paragraphs are.
+ */
 function plainQuoteLines(blocks: RichBlock[]): { html: string; text: string }[] | null {
   const lines: { html: string; text: string }[] = [];
   for (const block of blocks) {

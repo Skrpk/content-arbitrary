@@ -8,7 +8,7 @@ import type { RichBlock, RichDocument, RichInline } from '@/lib/rich/document';
  *
  * Only what a rich message holds: `<p>`, `<h1>`–`<h3>`, `<b>`, `<i>`, `<u>`,
  * `<s>`, `<mark>`, `<a href>`, `<br>`, `<ul>`/`<ol>` with `<li>`,
- * `<blockquote>`, `<hr>`, and the post's own pictures as
+ * `<blockquote>` (`<blockquote expandable>` when collapsed), `<hr>`, and the post's own pictures as
  * `<media ref="m0">caption</media>`. Reading it back is lenient about what a
  * model writes around that (a `<strong>`, a `<div>`, a stray line of text)
  * and keeps nothing else: whatever comes out is a document to check with
@@ -43,7 +43,7 @@ function blockHtml(block: RichBlock): string {
     case 'heading':
       return `<h${block.attrs.level}>${inlineHtml(block.content)}</h${block.attrs.level}>`;
     case 'blockquote':
-      return `<blockquote>${block.content.map(blockHtml).join('')}</blockquote>`;
+      return `<blockquote${block.attrs?.expandable ? ' expandable' : ''}>${block.content.map(blockHtml).join('')}</blockquote>`;
     case 'bulletList':
     case 'orderedList': {
       const tag = block.type === 'bulletList' ? 'ul' : 'ol';
@@ -133,7 +133,12 @@ function blocksOf(nodes: Node[]): RichBlock[] {
       }
       case 'blockquote': {
         const inner = blocksOf(element.childNodes);
-        if (inner.length > 0) blocks.push({ type: 'blockquote', content: inner });
+        if (inner.length === 0) break;
+        blocks.push(
+          element.hasAttribute('expandable')
+            ? { type: 'blockquote', attrs: { expandable: true }, content: inner }
+            : { type: 'blockquote', content: inner },
+        );
         break;
       }
       case 'ul':

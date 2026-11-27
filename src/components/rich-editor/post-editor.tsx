@@ -7,6 +7,7 @@ import { uploadPresigned } from '@vercel/blob/client';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { readJson, type PanelTools } from '@/components/panel-tools';
 import { ASSISTANT_CSS, AssistantPanel } from '@/components/rich-editor/assistant-panel';
+import { ExpandableQuote } from '@/components/rich-editor/expandable-quote';
 import { EditorMediaContext, PostMedia, type EditorMedia } from '@/components/rich-editor/post-media';
 import { threadsCount, ThreadsTab, type ThreadsVersion } from '@/components/rich-editor/threads-tab';
 import { richDocumentAsPlainPost, richDocumentPlainText, type RichDocument } from '@/lib/rich/document';
@@ -132,6 +133,7 @@ function LoadedEditor({
         },
       }),
       Highlight,
+      ExpandableQuote,
       PostMedia,
     ],
     content: data.doc as object,
@@ -607,7 +609,8 @@ function toolbarState(editor: Editor) {
     h3: editor.isActive('heading', { level: 3 }),
     bulletList: editor.isActive('bulletList'),
     orderedList: editor.isActive('orderedList'),
-    blockquote: editor.isActive('blockquote'),
+    blockquote: editor.isActive('blockquote', { expandable: false }),
+    expandableQuote: editor.isActive('blockquote', { expandable: true }),
     canUndo: editor.can().undo(),
     canRedo: editor.can().redo(),
     mediaRefs: refs,
@@ -633,12 +636,20 @@ function Toolbar({ editor, state }: { editor: Editor | null; state: ReturnType<t
     else window.alert('A link must start with http:// or https://');
   };
 
+  // A quotation, open or collapsed: the button of the kind it is takes the quotation away,
+  // the other one turns it into that kind.
+  const setQuote = (expandable: boolean) => {
+    if (editor.isActive('blockquote', { expandable })) run((c) => c.toggleBlockquote());
+    else if (editor.isActive('blockquote')) run((c) => c.updateAttributes('blockquote', { expandable }));
+    else run((c) => c.wrapIn('blockquote', { expandable }));
+  };
+
   const buttons: { label: string; title: string; active?: boolean; disabled?: boolean; onClick: () => void; style?: object }[][] = [
     [
       { label: 'B', title: 'Bold (⌘B)', active: state.bold, onClick: () => run((c) => c.toggleBold()), style: { fontWeight: 700 } },
       { label: 'I', title: 'Italic (⌘I)', active: state.italic, onClick: () => run((c) => c.toggleItalic()), style: { fontStyle: 'italic' } },
       { label: 'U', title: 'Underline (⌘U)', active: state.underline, onClick: () => run((c) => c.toggleUnderline()), style: { textDecoration: 'underline' } },
-      { label: 'S', title: 'Strikethrough', active: state.strike, onClick: () => run((c) => c.toggleStrike()), style: { textDecoration: 'line-through' } },
+      { label: 'S', title: 'Strikethrough (⇧⌘S)', active: state.strike, onClick: () => run((c) => c.toggleStrike()), style: { textDecoration: 'line-through' } },
       { label: '▬', title: 'Highlight', active: state.highlight, onClick: () => run((c) => c.toggleHighlight()) },
       { label: '🔗', title: 'Link', active: state.link, onClick: setLink },
     ],
@@ -650,7 +661,13 @@ function Toolbar({ editor, state }: { editor: Editor | null; state: ReturnType<t
     [
       { label: '• List', title: 'Bulleted list', active: state.bulletList, onClick: () => run((c) => c.toggleBulletList()) },
       { label: '1. List', title: 'Numbered list', active: state.orderedList, onClick: () => run((c) => c.toggleOrderedList()) },
-      { label: '❝ Quote', title: 'Quotation', active: state.blockquote, onClick: () => run((c) => c.toggleBlockquote()) },
+      { label: '❝ Quote', title: 'Quotation', active: state.blockquote, onClick: () => setQuote(false) },
+      {
+        label: '❝ Collapsed',
+        title: 'Collapsed quotation: Telegram shows its first lines, and the rest on a tap',
+        active: state.expandableQuote,
+        onClick: () => setQuote(true),
+      },
       { label: '— Divider', title: 'Divider', onClick: () => run((c) => c.setHorizontalRule()) },
     ],
     [
@@ -733,6 +750,9 @@ const EDITOR_CSS = `
 .rich-editor-content h3 { font-size: 1.1rem; margin: 0.8rem 0 0.2rem; }
 .rich-editor-content blockquote { margin: 0.6rem 0; padding: 0.3rem 0.8rem; border-left: 3px solid var(--tg-theme-button-color); background: var(--tg-theme-secondary-bg-color); border-radius: 0 0.4rem 0.4rem 0; }
 .rich-editor-content blockquote p { margin: 0; }
+.rich-editor-content blockquote p + p { margin-top: 0.6rem; }
+.rich-editor-content blockquote[data-expandable] { position: relative; padding-right: 1.6rem; }
+.rich-editor-content blockquote[data-expandable]::after { content: '⌄'; position: absolute; right: 0.55rem; bottom: 0.25rem; color: var(--tg-theme-button-color); font-size: 0.95rem; }
 .rich-editor-content ul, .rich-editor-content ol { padding-left: 1.4rem; }
 .rich-editor-content li p { margin: 0.15rem 0; }
 .rich-editor-content hr { border: none; border-top: 1px solid var(--tg-theme-hint-color); margin: 1rem 0; }

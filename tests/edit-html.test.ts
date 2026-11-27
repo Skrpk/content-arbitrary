@@ -25,6 +25,14 @@ const doc: RichDocument = {
       ],
     },
     { type: 'blockquote', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Quoted' }] }] },
+    {
+      type: 'blockquote',
+      attrs: { expandable: true },
+      content: [
+        { type: 'paragraph', content: [{ type: 'text', text: 'Long' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: 'review' }] },
+      ],
+    },
     { type: 'horizontalRule' },
     { type: 'postMedia', attrs: { ref: 'm1', caption: null } },
     // The editor's empty last paragraph is not shown.
@@ -41,6 +49,7 @@ describe('the editing HTML', () => {
       '<p>Curiosity saw <b><i>blue</i></b> light<br><a href="https://nasa.gov/a?b=1&amp;c=2">NASA</a></p>',
       '<ul><li><p>one &lt;two&gt;</p></li><li><p><mark>three</mark></p></li></ul>',
       '<blockquote><p>Quoted</p></blockquote>',
+      '<blockquote expandable><p>Long</p><p>review</p></blockquote>',
       '<hr>',
       '<media ref="m1"></media>',
     ]);

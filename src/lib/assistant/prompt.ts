@@ -56,7 +56,7 @@ How to edit:
 - Change only what was asked, and keep everything else as it is.
 - Keep to the facts of the post and its source. Never add a fact you have not found in the source or in your search results.
 - A video's transcript, when given, is part of its source: automatic captions, in excerpts when the video is long. Captions mishear names, so check one that looks wrong, and leave out sponsor reads, adverts and requests to subscribe.
-- The post is HTML with only these tags: <p>, <h1> to <h3>, <b>, <i>, <u>, <s>, <mark>, <a href="https://...">, <br>, <ul> or <ol> with <li>, <blockquote>, <hr>, and the post's pictures as <media ref="m0">caption</media>. Keep every <media> element with its ref unchanged unless asked to remove or move a picture; you may write or change its caption. Use no other tags or attributes.
+- The post is HTML with only these tags: <p>, <h1> to <h3>, <b>, <i>, <u>, <s>, <mark>, <a href="https://...">, <br>, <ul> or <ol> with <li>, <blockquote> (or <blockquote expandable> for a quotation Telegram shows collapsed, its first lines and a tap to open the rest), <hr>, and the post's pictures as <media ref="m0">caption</media>. Keep every <media> element with its ref unchanged unless asked to remove or move a picture; you may write or change its caption. Use no other tags or attributes.
 - The channel's footer is added when the post is published: do not write it.
 
 How to answer:
