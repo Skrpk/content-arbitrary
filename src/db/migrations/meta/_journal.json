@@ -351,6 +351,13 @@
       "when": 1795739534906,
       "tag": "0049_channel_connection",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1795740827716,
+      "tag": "0050_onboarding_sessions",
+      "breakpoints": true
     }
   ]
 }

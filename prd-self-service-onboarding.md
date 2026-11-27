@@ -160,6 +160,8 @@ For a user with no workspace and no active session:
 > Надішли мені публічний Telegram-канал, для якого ти робиш контент. Я проаналізую, що він публікує, сам знайду джерела й надсилатиму тобі новини, які варто взяти в роботу.
 > Формат: `@channelname` або `https://t.me/channelname`
 
+**Alpha gate (built in step 3):** onboarding answers only Telegram user ids listed in `ONBOARDING_ALLOWLIST` (comma-separated). Unset, nobody gets it, and strangers see `strangerGreeting` as before. Step 7 adds the caps and the waitlist.
+
 Accepted: `@channel`, `t.me/channel`, `https://t.me/channel`, `https://t.me/channel/123`, `https://t.me/s/channel`. Copy is in Ukrainian when `language_code` starts with `uk`, otherwise English. This replaces `strangerGreeting` in private chats.
 
 ### 5a. Message routing (new)
@@ -239,7 +241,7 @@ Migration for existing workspaces: `channel_verified_at = now()`, `created_via =
 ```
 onboarding_sessions
   id                serial pk
-  user_id           → users
+  user_id           → users, null until §7 (set null if the user goes)
   telegram_user_id  text
   chat_id           text                -- where progress goes
   workspace_id      → workspaces, null until §7
@@ -254,14 +256,16 @@ onboarding_sessions
   status_message_id bigint              -- the progress message, edited in place
   error_code, error_message text
   started_at, updated_at, completed_at
-  UNIQUE (user_id) WHERE status NOT IN ('active','failed')
+  language          'uk' | 'en'          -- the bot's copy, from the Telegram app
+  channel_title     text
+  UNIQUE (telegram_user_id) WHERE status NOT IN ('active','failed')
 ```
 
 Runner:
 
 - `runOnboardingStep(sessionId)` takes the lease (compare-and-set on `locked_until`), runs **one** step, commits the next status, and releases the lease.
-- The webhook kicks it with `after()`. `POST /api/onboarding/run` (cron-authorised, `maxDuration = 800`) runs a step and chains the next.
-- The every-minute cron sweeps sessions with an expired lease or a due `next_attempt_at`.
+- The webhook kicks only the first step (reading history, a few seconds) with `after()`, since a webhook may run 60 s at most.
+- `GET /api/cron/onboarding` (every minute, cron-authorised, `maxDuration = 800`) runs every due step within its budget: the profiling, retries after a backoff, and any step whose lease expired. It is its own cron, so a slow profiling never delays scheduled publishing. (Built in step 3: there is no separate `/api/onboarding/run`.)
 - Transient errors (`ChannelPageError.transient`, 429 with `retryAfterMs`, LLM timeouts) back off via `next_attempt_at`. After `ONBOARDING_MAX_ATTEMPTS` (5) the session fails with a message (§27).
 
 Expected timing:
@@ -328,7 +332,10 @@ Exclude the post's own `t.me/<channel>/<id>`, t.me UI links, `tg://` and `mailto
 One LLM call (`initial-profile.ts`) over the publication profile returns:
 
 - `editorialProfile`: at most 2,000 characters; describes what the channel publishes; no invented dislikes; an absent topic is not a rejection. Stored with `editorial_profile_source = 'auto'` (**new column**, `'auto' | 'editor'`). Saving in Settings sets `'editor'`.
-- `languageCode`: BCP 47, written to `workspaces.language` if it passes `workspaces_language_check`.
+- `languageCode`: BCP 47, written to `workspaces.language` if it passes `workspaces_language_check` and no language is set yet.
+- `topics`: 3–4 main topics in the channel's language, for the progress message (the publication profile's own are in English).
+
+A person's profile is never overwritten: only an empty one or one with `editorial_profile_source = 'auto'` is. That covers onboarding a channel whose workspace the person already belongs to (an operator's), which reuses that workspace (§7).
 
 ## 14a. Editing the editorial profile in the bot (D8)
 

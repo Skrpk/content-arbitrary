@@ -327,9 +327,11 @@ export async function setEditorialProfile(
   input: { workspaceId: number; reviewerWorkspaceIds: number[]; editorialProfile: string | null },
 ): Promise<Workspace | null> {
   if (!input.reviewerWorkspaceIds.includes(input.workspaceId)) return null;
+  const editorialProfile = normaliseEditorialProfile(input.editorialProfile);
   const rows = await db
     .update(workspaces)
-    .set({ editorialProfile: normaliseEditorialProfile(input.editorialProfile), updatedAt: new Date() })
+    // A person's words from now on: onboarding never overwrites them.
+    .set({ editorialProfile, editorialProfileSource: editorialProfile === null ? null : 'editor', updatedAt: new Date() })
     .where(eq(workspaces.id, input.workspaceId))
     .returning();
   return rows[0] ?? null;

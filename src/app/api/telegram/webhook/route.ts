@@ -22,6 +22,7 @@ import {
 } from '@/lib/sync/approval';
 import { publishDecidedPost } from '@/lib/sync/publish';
 import { CHANNEL_NOT_CONNECTED_MESSAGE, connectOnBotPromotion } from '@/lib/publishing/channel';
+import { handleOnboardingMessage } from '@/lib/onboarding/routing';
 import { publishedLine, publishedNotice } from '@/lib/publish/targets';
 import { hasThreadsAccount } from '@/lib/threads/accounts';
 import { publishToThreadsSoon } from '@/lib/threads/kick';
@@ -106,7 +107,15 @@ const callbackQuerySchema = z.object({
 
 const messageSchema = z.object({
   message_id: z.number(),
-  from: z.object({ id: z.number(), username: z.string().optional(), language_code: z.string().optional() }).optional(),
+  from: z
+    .object({
+      id: z.number(),
+      username: z.string().optional(),
+      language_code: z.string().optional(),
+      first_name: z.string().optional(),
+      last_name: z.string().optional(),
+    })
+    .optional(),
   chat: z.object({ id: z.number(), type: z.string().optional() }),
   text: z.string().optional(),
 });
@@ -179,6 +188,16 @@ export async function POST(request: Request): Promise<Response> {
 
   const client = new TelegramClient({ logger });
   const db = getDb();
+
+  // Onboarding first: someone with no channel yet sends one (src/lib/onboarding/routing.ts).
+  if (update.message) {
+    const onboarded = await handleOnboardingMessage(update.message, { db, env, client, logger }).catch((error: unknown) => {
+      // Never a retried update: Telegram would send the channel again.
+      logger.error('webhook.onboarding_failed', { error: describeError(error) });
+      return true;
+    });
+    if (onboarded) return ok();
+  }
 
   // Slash commands manage the source list. Same tenant lookup as the buttons.
   if (update.message) {

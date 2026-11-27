@@ -340,6 +340,21 @@ const schema = z
     /** Assistant requests one reviewer may make in 24 hours: a ceiling on what it can cost. */
     ASSISTANT_DAILY_LIMIT: intInRange(0, 10_000, 100),
 
+    /**
+     * Who may onboard a channel in the bot themselves: Telegram user ids,
+     * comma-separated. Unset or empty, nobody — the bot answers strangers as
+     * before. A gate while onboarding is in alpha (prd-self-service-onboarding.md).
+     */
+    ONBOARDING_ALLOWLIST: z
+      .string()
+      .optional()
+      .transform((value) =>
+        (value ?? '')
+          .split(',')
+          .map((id) => id.trim())
+          .filter((id) => /^\d{1,15}$/.test(id)),
+      ),
+
     CRON_SECRET: z.string().min(16, 'CRON_SECRET must be at least 16 characters'),
     ADMIN_SECRET: z.string().min(16).optional().or(z.literal('').transform(() => undefined)),
 

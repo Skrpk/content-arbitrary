@@ -99,6 +99,7 @@ export async function ensureTestWorkspace(db: Database): Promise<void> {
         telegramChatId: null,
         telegramAdminChatId: null,
         editorialProfile: null,
+        editorialProfileSource: null,
         language: null,
         postFooter: null,
         autoPublish: false,
