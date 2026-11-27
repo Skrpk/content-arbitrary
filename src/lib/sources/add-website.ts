@@ -3,8 +3,9 @@ import type { Database } from '@/lib/db';
 import { describeError } from '@/lib/errors';
 import type { Logger } from '@/lib/logger';
 import { addSource } from '@/lib/sources/repository';
+import type { ResolvedSource } from '@/lib/sources/resolve';
 import type { WebsiteFetchOptions } from '@/lib/website/http';
-import { readSitemapTree } from '@/lib/website/sitemap';
+import { readSitemapTree, type SitemapTree } from '@/lib/website/sitemap';
 import { normalizeWebsiteUrl, safeUrlForLog, siteName } from '@/lib/website/url';
 
 /**
@@ -42,29 +43,43 @@ export const LARGE_SITEMAP_URLS = 10_000;
 /** Long enough to read an index's sitemaps, short enough for a request. */
 const ADD_TIME_BUDGET_MS = 20_000;
 
-export async function addWebsiteSource(
-  db: Database,
-  input: { url: string; workspaceId: number; websiteFetch?: WebsiteFetchOptions; logger?: Logger; now?: () => number },
-): Promise<AddWebsiteResult> {
+export type ResolvedWebsite =
+  | { ok: true; source: ResolvedSource; host: string; tree: SitemapTree }
+  | { ok: false; reason: string };
+
+/** The sitemap, read once within the sync's bounds, as the source it would be — nothing stored. */
+export async function resolveWebsiteSource(input: {
+  url: string;
+  websiteFetch?: WebsiteFetchOptions;
+  logger?: Logger;
+  now?: () => number;
+  /** How long reading the sitemap may take; ADD_TIME_BUDGET_MS by default. */
+  budgetMs?: number;
+}): Promise<ResolvedWebsite> {
   const checked = normalizeWebsiteUrl(input.url);
   if (!checked.ok) return { ok: false, reason: checked.reason };
   const now = input.now ?? Date.now;
 
   let tree;
   try {
-    tree = await readSitemapTree(checked.url, { ...input.websiteFetch, deadline: now() + ADD_TIME_BUDGET_MS, now });
+    tree = await readSitemapTree(checked.url, { ...input.websiteFetch, deadline: now() + (input.budgetMs ?? ADD_TIME_BUDGET_MS), now });
   } catch (error) {
     input.logger?.warn('website.add_failed', { ...safeUrlForLog(checked.url), error: describeError(error) });
     return { ok: false, reason: `${NOT_A_SITEMAP} (${error instanceof Error ? error.message : 'unreadable'})` };
   }
-
   const host = siteName(checked.url);
-  const result = await addSource(db, {
-    platform: 'website',
-    externalId: checked.url,
-    username: host,
-    workspaceId: input.workspaceId,
-  });
+  return { ok: true, source: { platform: 'website', externalId: checked.url, username: host }, host, tree };
+}
+
+export async function addWebsiteSource(
+  db: Database,
+  input: { url: string; workspaceId: number; websiteFetch?: WebsiteFetchOptions; logger?: Logger; now?: () => number },
+): Promise<AddWebsiteResult> {
+  const resolved = await resolveWebsiteSource(input);
+  if (!resolved.ok) return resolved;
+  const { host, tree } = resolved;
+
+  const result = await addSource(db, { ...resolved.source, workspaceId: input.workspaceId });
 
   const warning =
     tree.pages.length >= LARGE_SITEMAP_URLS || tree.truncated

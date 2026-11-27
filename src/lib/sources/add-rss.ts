@@ -6,6 +6,7 @@ import { fetchFeed, type FetchFeedOptions } from '@/lib/rss/client';
 import { parseFeed } from '@/lib/rss/parser';
 import { normalizeFeedUrl } from '@/lib/rss/url';
 import { addSource } from '@/lib/sources/repository';
+import type { ResolvedSource } from '@/lib/sources/resolve';
 
 /**
  * Add an RSS / Atom feed as a source — the one path for /addrss and the
@@ -22,31 +23,36 @@ export type AddRssResult =
 
 export const NOT_A_FEED = 'This URL does not appear to be a valid RSS or Atom feed.';
 
-export async function addRssSource(
-  db: Database,
-  input: { url: string; workspaceId: number; feedFetch?: FetchFeedOptions; logger?: Logger },
-): Promise<AddRssResult> {
+export type ResolvedRss =
+  | { ok: true; source: ResolvedSource; title: string; entries: number }
+  | { ok: false; reason: string };
+
+/** The feed, read and parsed, as the source it would be — nothing stored. */
+export async function resolveRssSource(input: { url: string; feedFetch?: FetchFeedOptions; logger?: Logger }): Promise<ResolvedRss> {
   const checked = normalizeFeedUrl(input.url);
   if (!checked.ok) return { ok: false, reason: checked.reason };
 
-  let title: string;
-  let entries: number;
   try {
     const fetched = await fetchFeed(checked.url, input.feedFetch);
     const feed = parseFeed(fetched.xml, fetched.finalUrl);
-    title = feed.title ?? new URL(checked.url).hostname;
-    entries = feed.entries.length;
+    const title = feed.title ?? new URL(checked.url).hostname;
+    return { ok: true, source: { platform: 'rss', externalId: checked.url, username: title }, title, entries: feed.entries.length };
   } catch (error) {
     input.logger?.warn('rss.add_failed', { feedHost: new URL(checked.url).hostname, error: describeError(error) });
     return { ok: false, reason: `${NOT_A_FEED} (${error instanceof Error ? error.message : 'unreadable'})` };
   }
+}
 
-  const result = await addSource(db, {
-    platform: 'rss',
-    externalId: checked.url,
-    username: title,
-    workspaceId: input.workspaceId,
-  });
+export async function addRssSource(
+  db: Database,
+  input: { url: string; workspaceId: number; feedFetch?: FetchFeedOptions; logger?: Logger },
+): Promise<AddRssResult> {
+  const resolved = await resolveRssSource(input);
+  if (!resolved.ok) return resolved;
+  const { title, entries } = resolved;
+  const checked = { url: resolved.source.externalId };
+
+  const result = await addSource(db, { ...resolved.source, workspaceId: input.workspaceId });
 
   input.logger?.info('rss.source_added', {
     workspaceId: input.workspaceId,

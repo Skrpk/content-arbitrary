@@ -30,6 +30,7 @@
     "radar:context": "tsx scripts/radar-context.ts",
     "history:import": "tsx scripts/import-history.ts",
     "history:crawl": "tsx scripts/history-crawl.ts",
+    "onboarding:discover": "tsx scripts/onboarding-discover.ts",
     "reviewer": "tsx scripts/add-reviewer.ts",
     "review-workspace": "tsx scripts/review-workspace.ts",
     "history:profile": "tsx scripts/history-profile.ts",

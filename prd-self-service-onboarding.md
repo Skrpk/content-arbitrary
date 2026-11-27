@@ -391,7 +391,9 @@ Three signals:
 - at least 2 mentions or forwards;
 - skip links in ad posts (`#реклама`, `#ad`, `#промо`, `партнерськ`, `sponsored`);
 - blocklist: donations and payments (`send.monobank.ua`, `patreon`, `buymeacoffee`, `donatello`, `privat24`), shops and affiliates (`aliexpress`, `rozetka`, `amazon`, `prom.ua`), shorteners (`bit.ly`, `t.ly`, `goo.gl`; not followed in v1), app stores, `forms.gle`, Google Docs and Drive;
-- never the channel itself or its own website.
+- never the channel itself or its own website. Its own website is a site **named like the channel** (`pravda.com.ua` for @ukrpravda_news) **and** linked from at least 25% of its posts. Either alone is not enough: a curator's main source is linked a lot (IGN for @playstationua), and a channel may be named after what it covers (blog.playstation.com). Its own YouTube channel (same name) is dropped after resolving.
+- one outlet once: a Telegram channel and a site of the same name (@epravda and epravda.com.ua) are not both picked.
+- `#реклама` and the like are matched with a Unicode-aware boundary (JavaScript's `\b` knows only Latin letters).
 
 If C fails, continue with A and B. Never block onboarding.
 
@@ -403,7 +405,7 @@ Telegram, RSS/Atom, website (sitemap), YouTube. Not X, not Threads.
 
 `addWebsiteSource()` stays unchanged. A new `discoverSiteFeed(homepageUrl)` tries, in order:
 
-1. **RSS/Atom**: `<link rel="alternate" type="application/(rss|atom)+xml">` on the homepage, then `/feed`, `/rss`, `/feed.xml`, `/rss.xml`, `/atom.xml`. A feed makes the candidate platform **`rss`**.
+1. **RSS/Atom**: `<link rel="alternate" type="application/(rss|atom)+xml">` on the homepage, on the site's own host first, then `/feed`, `/rss`, `/feed.xml`, `/rss.xml`, `/atom.xml`, then feeds the homepage announces on other hosts. A feed makes the candidate platform **`rss`**. Known limit: a site that redirects by the visitor's country (www.ign.com → cz.ign.com here, de.ign.com from Vercel's fra1) gives that edition's feed.
 2. A **news sitemap** from `robots.txt` (URL contains `news`).
 3. `robots.txt` `Sitemap:`, `/sitemap.xml`, `/sitemap_index.xml`, `/wp-sitemap.xml`, validated with `readSitemapTree`. A non-news sitemap at or above `LARGE_SITEMAP_URLS`, or truncated, is skipped.
 4. Nothing valid: drop the candidate.
@@ -675,7 +677,7 @@ Order (each step shippable and tested on its own):
 1. Schema + publishing gate + popup + connecting the channel (§25, §25a). Closes the hole before anyone can self-serve, and is useful on its own.
 2. Parser extensions + `storeParsedPublicationHistory` + crawl (§9–§12), runnable from a script.
 3. Sessions, runner, routing, provisioning (§5a, §7, §8) up to "profile done", + initial profile/language (§14).
-4. Resolve/persist split, site-feed discovery, link signals, web discovery, ranking (§15–§19).
+4. Resolve/persist split, site-feed discovery, link signals, web discovery, ranking (§15–§19). **Built**: `src/lib/onboarding/{candidates,link-signals,site-feed,source-discovery,discover-sources}.ts`; `npm run onboarding:discover -- --workspace N --channel @name [--no-search]` prints what would be connected. The web search uses `ASSISTANT_MODEL`.
 5. Auto-activation + the "Стежу за" message with ✕/➕ (§20–§23).
 6. `/profile` in the bot: replace, refine, language (§14a); the language field in Settings (§33).
 7. Limits, waitlist, analytics (§28–§29).

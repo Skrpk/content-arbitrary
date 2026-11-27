@@ -23,3 +23,14 @@ export const ONBOARDING_STEP_LEASE_MS = 15 * 60_000;
 /** A new channel's digest: once a day, at this hour, in its owner's zone (§24). */
 export const DIGEST_MINUTES_DEFAULT = 24 * 60;
 export const DIGEST_HOUR_DEFAULT = 9;
+
+/** Sources connected on their own after onboarding (§19), and kept in reserve for ➕. */
+export const SOURCES_AUTO_ACTIVATED = 5;
+export const SOURCES_RESERVE_MAX = 10;
+/** Candidates checked at most, a few at a time, each and all within a time limit (§18). */
+export const DISCOVERY_MAX_CANDIDATES = 25;
+export const DISCOVERY_CONCURRENCY = 6;
+export const DISCOVERY_CANDIDATE_TIMEOUT_MS = 10_000;
+export const DISCOVERY_VALIDATION_BUDGET_MS = 60_000;
+/** The web search's own limit. */
+export const DISCOVERY_SEARCH_TIMEOUT_MS = 150_000;

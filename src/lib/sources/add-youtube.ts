@@ -3,6 +3,7 @@ import type { Database } from '@/lib/db';
 import { describeError } from '@/lib/errors';
 import type { Logger } from '@/lib/logger';
 import { addSource } from '@/lib/sources/repository';
+import type { ResolvedSource } from '@/lib/sources/resolve';
 import { normalizeYouTubeChannel } from '@/lib/youtube/channel';
 import type { YouTubeClient } from '@/lib/youtube/client';
 
@@ -24,10 +25,16 @@ export type AddYouTubeResult =
 
 export const YOUTUBE_NOT_CONFIGURED = 'YouTube sources are not set up here: YOUTUBE_API_KEY is missing.';
 
-export async function addYouTubeSource(
-  db: Database,
-  input: { channel: string; workspaceId: number; youtube: YouTubeClient | null; logger?: Logger },
-): Promise<AddYouTubeResult> {
+export type ResolvedYouTube =
+  | { ok: true; source: ResolvedSource; title: string; handle: string | null }
+  | { ok: false; reason: string };
+
+/** The channel, looked up once, as the source it would be — nothing stored. */
+export async function resolveYouTubeSource(input: {
+  channel: string;
+  youtube: YouTubeClient | null;
+  logger?: Logger;
+}): Promise<ResolvedYouTube> {
   const checked = normalizeYouTubeChannel(input.channel);
   if (!checked.ok) {
     return {
@@ -50,13 +57,18 @@ export async function addYouTubeSource(
     return { ok: false, reason: `Could not look the channel up on YouTube: ${error instanceof Error ? error.message : 'unreachable'}` };
   }
   if (!channel) return { ok: false, reason: 'There is no YouTube channel by that name.' };
+  return { ok: true, source: { platform: 'youtube', externalId: channel.id, username: channel.title }, title: channel.title, handle: channel.handle };
+}
 
-  const result = await addSource(db, {
-    platform: 'youtube',
-    externalId: channel.id,
-    username: channel.title,
-    workspaceId: input.workspaceId,
-  });
+export async function addYouTubeSource(
+  db: Database,
+  input: { channel: string; workspaceId: number; youtube: YouTubeClient | null; logger?: Logger },
+): Promise<AddYouTubeResult> {
+  const resolved = await resolveYouTubeSource(input);
+  if (!resolved.ok) return resolved;
+  const channel = { id: resolved.source.externalId, title: resolved.title, handle: resolved.handle };
+
+  const result = await addSource(db, { ...resolved.source, workspaceId: input.workspaceId });
 
   input.logger?.info('youtube.source_resolved', {
     workspaceId: input.workspaceId,

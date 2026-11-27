@@ -3,6 +3,7 @@ import type { Database } from '@/lib/db';
 import { ChannelPageError, describeError } from '@/lib/errors';
 import type { Logger } from '@/lib/logger';
 import { addSource } from '@/lib/sources/repository';
+import type { ResolvedSource } from '@/lib/sources/resolve';
 import { fetchChannelPage, type FetchChannelOptions } from '@/lib/telegram-channel/client';
 import { normalizeChannelUsername } from '@/lib/telegram-channel/username';
 
@@ -24,10 +25,14 @@ export const NOT_A_PUBLIC_CHANNEL =
   'That is not a public Telegram channel. Private channels, groups, people and bots cannot be followed — ' +
   'only channels with a public @username.';
 
-export async function addTelegramSource(
-  db: Database,
-  input: { channel: string; workspaceId: number; channelFetch?: FetchChannelOptions; logger?: Logger },
-): Promise<AddTelegramResult> {
+export type ResolvedTelegram = { ok: true; source: ResolvedSource; title: string } | { ok: false; reason: string };
+
+/** The public channel, its page read once, as the source it would be — nothing stored. */
+export async function resolveTelegramSource(input: {
+  channel: string;
+  channelFetch?: FetchChannelOptions;
+  logger?: Logger;
+}): Promise<ResolvedTelegram> {
   const checked = normalizeChannelUsername(input.channel);
   if (!checked.ok) {
     return {
@@ -59,12 +64,19 @@ export async function addTelegramSource(
     };
   }
 
-  const result = await addSource(db, {
-    platform: 'telegram',
-    externalId: username,
-    username,
-    workspaceId: input.workspaceId,
-  });
+  return { ok: true, source: { platform: 'telegram', externalId: username, username }, title };
+}
+
+export async function addTelegramSource(
+  db: Database,
+  input: { channel: string; workspaceId: number; channelFetch?: FetchChannelOptions; logger?: Logger },
+): Promise<AddTelegramResult> {
+  const resolved = await resolveTelegramSource(input);
+  if (!resolved.ok) return resolved;
+  const { title } = resolved;
+  const username = resolved.source.externalId;
+
+  const result = await addSource(db, { ...resolved.source, workspaceId: input.workspaceId });
 
   input.logger?.info('telegram_channel.source_added', {
     workspaceId: input.workspaceId,
