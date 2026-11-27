@@ -97,7 +97,7 @@ Settings (§25a), and a language field in Settings (§33).
 | D11 | Preview | No preview channel anywhere. Send to preview sends the post, exactly as it would go out, to the pressing reviewer's own chat with the bot. **Shipped** (commit e1247a3, migration 0047, live since 2026-11-26) |
 | D12 | Connecting the channel | **In v1**, from Settings: add the bot as an admin that can post, press Check. The bot must be able to post and the user must be the channel's creator or an admin who can post. The channel is the one onboarded (`telegram_chat_id`) |
 
-**Spike before §6:** confirm that Bot API `getChat("@username")` returns `id`, `type` and `title` for a public channel the bot is **not** in. Fallback if it doesn't: validate and take the title from the t.me page, and key history by `tg:<username>` (§10).
+**Spike before §6: done (2026-11-27).** Bot API `getChat("@durov")` returned `-1001006503122`, type `channel` and the title, with the bot not in the channel. So §6 validates with `getChat` and history is keyed by `-100<id>`. `tg:<username>` stays only as the fallback when `getChat` fails.
 
 ---
 
@@ -277,8 +277,8 @@ Expected timing:
 
 - Target **100** usable posts (`usableForProfile`), the channel's latest; inspect at most **200** messages; stop at either, or when there is no older page. (D9: a recent picture of the channel, faster and cheaper. Link and forward signals in §15 come from these same 100 posts; web discovery makes up for the thinner signal.)
 - Fewer than 30 usable posts: continue, with a note that recommendations may be less precise.
-- Paging: `fetchChannelPage(username, { before })`. The cursor lives in `progress`, so a retry resumes rather than restarts.
-- Honour `retryAfterMs`. A 429 reschedules the step; the crawl never restarts.
+- Paging: `fetchChannelPage(username, { before })`, about 20 posts a page, 300 ms apart. A real channel takes 5 pages and about 2 s.
+- A 429 with `Retry-After` up to 30 s is waited out in place. A longer one fails the step as transient, and the runner retries it later. A retry reads the channel again from the newest post, which costs a few seconds. Storing is an upsert by message id, so a retry never duplicates items. (Built in step 2: `src/lib/onboarding/telegram-history.ts`, `npm run history:crawl`.)
 
 ## 10. History storage
 
@@ -623,7 +623,7 @@ Quality signals: digest → queue open rate; share of recommended stories that g
 9. Without a connected channel: Approve → Publish now and Schedule open the popup and send nothing; Open Settings lands on the Publishing channel block; Send to preview delivers the post to the user's bot chat.
 10. **No path publishes to an unconnected channel**: approve, schedule, scheduler, webhook approve and auto-publish all refuse (409 `channel_not_connected`) for `channel_verified_at = null`. Tested, including a channel where the bot already is an admin for another workspace.
 11. Check in Settings connects only when the bot can post **and** the user is the creator or a posting admin; each failure has its own message. Adding the bot as admin connects it via `my_chat_member` and tells the owner. After connecting, Publish and Schedule work with no other change.
-12. A crash or 429 mid-crawl resumes from the cursor via the sweeper; no duplicate items.
+12. A crash or a long 429 mid-crawl is retried by the sweeper; a short 429 is waited out; no duplicate items.
 13. Two runner calls for one session: only one runs the step.
 14. Operator workspaces behave exactly as before (migration defaults), and existing `add-*` tests pass unchanged.
 15. `/profile` shows the profile. ✏️ replaces it with the next message, 💬 rewrites it from an instruction and saves only on ✅, 🌐 sets the language. Every save sets `editorial_profile_source = 'editor'`, and the next scored post uses the new profile. A self-service workspace's profile cannot be cleared from the bot, Settings, or the API.

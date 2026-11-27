@@ -39,6 +39,18 @@ export interface ChannelPagePost {
   unsupported: string[];
   /** Forwarded from another chat: someone else's post, as a repost on X is. */
   forwarded: boolean;
+  /**
+   * The public channel it was forwarded from, when the page links to it; a
+   * forward from a person, or a chat that hides itself, has none.
+   */
+  forwardedFrom?: { username: string; messageId?: number };
+  /**
+   * Where the post links to: links in its own text, and its link card's.
+   * Read for what a channel draws on (src/lib/onboarding); live sync does not
+   * use them. Never this post's own link, Telegram's own pages, or anything
+   * but http(s).
+   */
+  outboundLinks?: { url: string; label?: string }[];
   views: number | null;
 }
 
@@ -79,6 +91,10 @@ const postSchema = z.object({
   ),
   unsupported: z.array(z.string()),
   forwarded: z.boolean(),
+  forwardedFrom: z
+    .object({ username: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{2,31}$/), messageId: z.number().int().positive().optional() })
+    .optional(),
+  outboundLinks: z.array(z.object({ url: z.string().url(), label: z.string().optional() })).optional(),
   views: z.number().int().nonnegative().nullable(),
 });
 
@@ -163,6 +179,9 @@ function readPost(message: HTMLElement): ChannelPagePost | null {
     if (message.querySelectorAll(`.${className}`).some(own)) unsupported.push(what);
   }
 
+  const forwardedFrom = forwardOrigin(message);
+  const outboundLinks = linksOf(message, textElement ?? null, channel);
+
   return {
     channel,
     messageId,
@@ -172,8 +191,71 @@ function readPost(message: HTMLElement): ChannelPagePost | null {
     media,
     unsupported,
     forwarded: message.querySelector('.tgme_widget_message_forwarded_from') !== null,
+    ...(forwardedFrom ? { forwardedFrom } : {}),
+    ...(outboundLinks.length > 0 ? { outboundLinks } : {}),
     views: parseCount(message.querySelector('.tgme_widget_message_views')?.text ?? ''),
   };
+}
+
+/** Where a forward came from, when the page links to a public channel's post (or the channel). */
+function forwardOrigin(message: HTMLElement): ChannelPagePost['forwardedFrom'] | null {
+  const href = message.querySelector('.tgme_widget_message_forwarded_from a[href]')?.getAttribute('href') ?? '';
+  const match = /^https?:\/\/t\.me\/([A-Za-z][A-Za-z0-9_]{2,31})(?:\/(\d{1,12}))?\/?(?:\?.*)?$/.exec(href);
+  if (!match || match[1]!.toLowerCase() === 's') return null;
+  return { username: match[1]!, ...(match[2] ? { messageId: Number(match[2]) } : {}) };
+}
+
+/** Paths on t.me that are Telegram's own pages, not a channel. */
+const TELEGRAM_PAGES = new Set(['s', 'c', 'share', 'addstickers', 'addemoji', 'addtheme', 'joinchat', 'proxy', 'socks', 'login', 'iv', 'setlanguage', 'boost', 'giftcode', 'invoice']);
+
+/**
+ * The post's outbound links, each once: `<a href>` in its own text, then its
+ * link card. Kept as written — no redirect is followed — except a wrapper that
+ * names its target in the query (`l.facebook.com/l.php?u=…`), which is
+ * unwrapped. A link to another channel or post on t.me is kept: it says what
+ * the channel draws on.
+ */
+function linksOf(message: HTMLElement, text: HTMLElement | null, channel: string): { url: string; label?: string }[] {
+  const found: { url: string; label?: string }[] = [];
+  const seen = new Set<string>();
+  const add = (href: string | undefined, label: string | undefined) => {
+    const url = outboundUrl(href ?? '', channel);
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    const cleanLabel = clean(label ?? '');
+    found.push({ url, ...(cleanLabel && cleanLabel !== url ? { label: cleanLabel.slice(0, 200) } : {}) });
+  };
+  for (const anchor of text?.querySelectorAll('a[href]') ?? []) add(anchor.getAttribute('href'), anchor.text);
+  const card = message.querySelector('a.tgme_widget_message_link_preview[href]');
+  if (card) add(card.getAttribute('href'), card.querySelector('.link_preview_title')?.text ?? card.querySelector('.link_preview_site_name')?.text);
+  return found;
+}
+
+function outboundUrl(href: string, channel: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(href.trim());
+  } catch {
+    // Relative: a hashtag search (`?q=%23tag`) and the like — the page's own.
+    return null;
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+
+  const host = url.hostname.toLowerCase();
+  if ((host === 'l.facebook.com' || host === 'lm.facebook.com') && url.pathname === '/l.php') {
+    const target = url.searchParams.get('u');
+    return target ? outboundUrl(target, channel) : null;
+  }
+
+  if (host === 't.me' || host === 'telegram.me' || host === 'www.t.me') {
+    const [first] = url.pathname.split('/').filter(Boolean);
+    if (!first || TELEGRAM_PAGES.has(first.toLowerCase()) || first.startsWith('+')) return null;
+    // The channel itself, or any of its own posts: not somewhere it draws on.
+    if (first.toLowerCase() === channel.toLowerCase()) return null;
+  }
+  if (host === 'telegram.org' || host.endsWith('.telegram.org')) return null;
+  url.hash = '';
+  return url.toString();
 }
 
 /**
