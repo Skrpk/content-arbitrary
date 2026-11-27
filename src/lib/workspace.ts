@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray, isNotNull, or, sql as rawSql } from 'drizzle-orm';
 import type { Database } from '@/lib/db';
+import { channelConnected } from '@/lib/publishing/channel';
 import type { Env } from '@/lib/env';
 import type { Logger } from '@/lib/logger';
 import {
@@ -60,6 +61,12 @@ export interface TelegramDestination {
    * tenant reposts everything, so nothing is sent for review. See reviewsPosts.
    */
   autoPublish?: boolean;
+  /**
+   * Zmistik may post to `chatId` (src/lib/publishing/channel.ts). False for a
+   * channel onboarded in the bot and not connected yet: its posts are
+   * reviewed, and publishing them is refused.
+   */
+  channelConnected: boolean;
 }
 
 /**
@@ -243,19 +250,22 @@ export function destinationFor(
       adminChatId: workspace.telegramAdminChatId,
       disableNotification: env.TELEGRAM_DISABLE_NOTIFICATION,
       queueForReview: usesReviewQueue(workspace, env),
-      ...(workspace.autoPublish ? { autoPublish: true } : {}),
+      ...(workspace.autoPublish && channelConnected(workspace) ? { autoPublish: true } : {}),
+      channelConnected: channelConnected(workspace),
     },
   };
 }
 
 /**
  * Whether a tenant's posts go to review before the channel: REQUIRE_APPROVAL,
- * unless the tenant publishes everything as it comes (auto_publish).
+ * unless the tenant publishes everything as it comes (auto_publish). Always,
+ * for a channel not connected yet: nothing may go straight to it.
  */
 export function reviewsPosts(
-  workspace: Partial<Pick<Workspace, 'autoPublish'>>,
+  workspace: Partial<Pick<Workspace, 'autoPublish' | 'channelVerifiedAt'>>,
   env: Pick<Env, 'REQUIRE_APPROVAL'>,
 ): boolean {
+  if (workspace.channelVerifiedAt === null) return true;
   return env.REQUIRE_APPROVAL && !workspace.autoPublish;
 }
 
@@ -265,7 +275,7 @@ export function reviewsPosts(
  * no APP_BASE_URL there is no page to open, and posts go to the chat as before.
  */
 export function usesReviewQueue(
-  workspace: Pick<Workspace, 'reviewDigestMinutes'> & Partial<Pick<Workspace, 'autoPublish'>>,
+  workspace: Pick<Workspace, 'reviewDigestMinutes'> & Partial<Pick<Workspace, 'autoPublish' | 'channelVerifiedAt'>>,
   env: Pick<Env, 'REQUIRE_APPROVAL' | 'APP_BASE_URL'>,
 ): boolean {
   return reviewsPosts(workspace, env) && Boolean(env.APP_BASE_URL) && workspace.reviewDigestMinutes !== null;
@@ -317,9 +327,39 @@ export async function setEditorialProfile(
   input: { workspaceId: number; reviewerWorkspaceIds: number[]; editorialProfile: string | null },
 ): Promise<Workspace | null> {
   if (!input.reviewerWorkspaceIds.includes(input.workspaceId)) return null;
+  const editorialProfile = normaliseEditorialProfile(input.editorialProfile);
   const rows = await db
     .update(workspaces)
-    .set({ editorialProfile: normaliseEditorialProfile(input.editorialProfile), updatedAt: new Date() })
+    // A person's words from now on: onboarding never overwrites them.
+    .set({ editorialProfile, editorialProfileSource: editorialProfile === null ? null : 'editor', updatedAt: new Date() })
+    .where(eq(workspaces.id, input.workspaceId))
+    .returning();
+  return rows[0] ?? null;
+}
+
+/**
+ * Whether a channel's editorial profile may be cleared. A self-service
+ * channel's may not: without one Radar is off, and its digest — all it gets
+ * until the channel is connected — would recommend nothing (§14a).
+ */
+export function editorialProfileClearable(workspace: Pick<Workspace, 'createdVia'>): boolean {
+  return workspace.createdVia !== 'self_service';
+}
+
+/**
+ * Set the language a channel publishes in (BCP 47, already normalised — see
+ * src/lib/workspace-language.ts), or null to leave posts in their own.
+ * Scoped like the other setters; returns the updated row, or null for a
+ * channel that is not the caller's.
+ */
+export async function setWorkspaceLanguage(
+  db: Database,
+  input: { workspaceId: number; reviewerWorkspaceIds: number[]; language: string | null },
+): Promise<Workspace | null> {
+  if (!input.reviewerWorkspaceIds.includes(input.workspaceId)) return null;
+  const rows = await db
+    .update(workspaces)
+    .set({ language: input.language, updatedAt: new Date() })
     .where(eq(workspaces.id, input.workspaceId))
     .returning();
   return rows[0] ?? null;

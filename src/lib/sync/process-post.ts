@@ -651,8 +651,13 @@ function sourceLineInPost(env: Env, review: boolean): boolean {
 /**
  * Whether this post goes to review before the channel: REQUIRE_APPROVAL,
  * unless its tenant publishes without review (see reviewsPosts in workspace).
+ * Always, while the channel is not connected: nothing goes straight to it.
  */
-function reviewsPost(env: Pick<Env, 'REQUIRE_APPROVAL'>, destination: Pick<TelegramDestination, 'autoPublish'>): boolean {
+function reviewsPost(
+  env: Pick<Env, 'REQUIRE_APPROVAL'>,
+  destination: Pick<TelegramDestination, 'autoPublish' | 'channelConnected'>,
+): boolean {
+  if (!destination.channelConnected) return true;
   return env.REQUIRE_APPROVAL && !destination.autoPublish;
 }
 

@@ -3,6 +3,7 @@ import type { NormalizedMedia } from '../types';
 import type { RichDocument } from '../lib/rich/document';
 import {
   bigint,
+  bigserial,
   boolean,
   check,
   customType,
@@ -19,6 +20,13 @@ import {
   timestamp,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
+
+export const WORKSPACE_ORIGINS = ['operator', 'self_service'] as const;
+export type WorkspaceOrigin = (typeof WORKSPACE_ORIGINS)[number];
+
+/** Who wrote a channel's editorial profile: onboarding, from its history, or a person. */
+export const EDITORIAL_PROFILE_SOURCES = ['auto', 'editor'] as const;
+export type EditorialProfileSource = (typeof EDITORIAL_PROFILE_SOURCES)[number];
 
 /**
  * One tenant: a destination channel and the person who reviews for it. The
@@ -52,6 +60,13 @@ export const workspaces = pgTable('workspaces', {
    * EDITORIAL_PROFILE_MAX_LENGTH characters (src/lib/radar/editorial-profile.ts).
    */
   editorialProfile: text('editorial_profile'),
+  /**
+   * Who wrote `editorial_profile`: `auto` — onboarding, from the channel's
+   * history, and replaced when onboarding runs again — or `editor`, a person,
+   * whose words onboarding never overwrites. Null with no profile, or one
+   * from before this was recorded (a person's).
+   */
+  editorialProfileSource: text('editorial_profile_source', { enum: EDITORIAL_PROFILE_SOURCES }),
   /**
    * The language the channel publishes in, as a BCP 47 code (`uk`, `de`,
    * `pt-BR`). Set, and each post's text is rewritten in it, in the channel's
@@ -109,9 +124,26 @@ export const workspaces = pgTable('workspaces', {
    * tenant without it works as if Threads did not exist, whatever is stored.
    */
   threadsEnabled: boolean('threads_enabled').notNull().default(false),
+  /**
+   * When it was confirmed that Zmistik may post to `telegram_chat_id`: the
+   * bot is an admin there that can post, and so is the person who connected
+   * it. Null — a channel someone onboarded themselves and has not connected
+   * yet — and nothing is published to it, however it is approved: the posts
+   * are reviewed and previewed only (src/lib/publishing/channel.ts). A
+   * workspace an operator creates is trusted from the start, hence the
+   * default; self-service onboarding sets null explicitly.
+   */
+  channelVerifiedAt: timestamp('channel_verified_at', { withTimezone: true }).defaultNow(),
+  /** Who made it: an operator, or its owner through onboarding in the bot. */
+  createdVia: text('created_via', { enum: WORKSPACE_ORIGINS }).notNull().default('operator'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
+  check(
+    'workspaces_editorial_profile_source_check',
+    sql`${table.editorialProfileSource} IS NULL OR ${table.editorialProfileSource} IN ('auto', 'editor')`,
+  ),
+  check('workspaces_created_via_check', sql`${table.createdVia} IN ('operator', 'self_service')`),
   check('workspaces_language_check', sql`${table.language} IS NULL OR ${table.language} ~ '^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$'`),
   check(
     'workspaces_editorial_profile_check',
@@ -1524,3 +1556,204 @@ export const postUploads = pgTable(
     check('post_uploads_kind_check', sql`${table.kind} IN ('photo', 'video')`),
   ],
 );
+
+/**
+ * Onboarding in the bot: someone sends their public channel, and Zmistik
+ * reads its history and works out what it publishes, a step at a time
+ * (src/lib/onboarding/runner.ts). One row per attempt; a person has at most
+ * one in progress.
+ */
+export const ONBOARDING_STATUSES = [
+  'awaiting_channel',
+  'analyzing_history',
+  'profiling',
+  'discovering_sources',
+  'activating_sources',
+  'active',
+  'failed',
+] as const;
+export type OnboardingStatus = (typeof ONBOARDING_STATUSES)[number];
+
+export const onboardingSessions = pgTable(
+  'onboarding_sessions',
+  {
+    id: serial('id').primaryKey(),
+    /** The user, once provisioning has made them one (§7); null while only their channel is awaited. */
+    userId: integer('user_id').references(() => users.id, { onDelete: 'set null' }),
+    telegramUserId: text('telegram_user_id').notNull(),
+    /** Their private chat with the bot, where progress goes. */
+    chatId: text('chat_id').notNull(),
+    /** The copy's language: `uk` or `en`, from their Telegram app. */
+    language: text('language').notNull().default('en'),
+    workspaceId: integer('workspace_id').references(() => workspaces.id, { onDelete: 'set null' }),
+    channelUsername: text('channel_username'),
+    /** The channel's Bot API id, `-100…`. */
+    channelChatId: text('channel_chat_id'),
+    channelTitle: text('channel_title'),
+    status: text('status', { enum: ONBOARDING_STATUSES }).notNull().default('awaiting_channel'),
+    /** Tries of the current step. */
+    attempts: integer('attempts').notNull().default(0),
+    /** Not before this: a retry's backoff. Null runs as soon as it is picked up. */
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }),
+    /** Held by a runner until then; an expired lease is anyone's. */
+    lockedUntil: timestamp('locked_until', { withTimezone: true }),
+    /** What a step found, for the next ones and the messages: history counts, topics. */
+    progress: jsonb('progress').$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+    /** The progress message, edited in place as the steps go. */
+    statusMessageId: bigint('status_message_id', { mode: 'number' }),
+    errorCode: text('error_code'),
+    errorMessage: text('error_message'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex('onboarding_sessions_one_open_key')
+      .on(table.telegramUserId)
+      .where(sql`${table.status} NOT IN ('active', 'failed')`),
+    index('onboarding_sessions_runnable_idx').on(table.status, table.nextAttemptAt),
+    check(
+      'onboarding_sessions_status_check',
+      sql`${table.status} IN ('awaiting_channel', 'analyzing_history', 'profiling', 'discovering_sources', 'activating_sources', 'active', 'failed')`,
+    ),
+    check('onboarding_sessions_language_check', sql`${table.language} IN ('uk', 'en')`),
+  ],
+);
+
+export type OnboardingSession = typeof onboardingSessions.$inferSelect;
+
+/**
+ * The sources onboarding found for a channel (§20): the ones it connected,
+ * the ones kept in reserve to offer when one is removed, and what became of
+ * each — kept after onboarding, to see which kinds of find people keep.
+ */
+export const SOURCE_SUGGESTION_ORIGINS = ['history_link', 'history_forward', 'discovery', 'manual'] as const;
+export const SOURCE_SUGGESTION_STATES = ['picked', 'active', 'reserve', 'removed', 'failed'] as const;
+export type SourceSuggestionState = (typeof SOURCE_SUGGESTION_STATES)[number];
+
+export const sourceSuggestions = pgTable(
+  'source_suggestions',
+  {
+    id: serial('id').primaryKey(),
+    sessionId: integer('session_id').references(() => onboardingSessions.id, { onDelete: 'set null' }),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    /** The source as it would be stored: `sources.platform`, `external_id`, `username`. */
+    platform: sourcePlatformEnum('platform').notNull(),
+    externalId: text('external_id').notNull(),
+    displayName: text('display_name').notNull(),
+    /** What it was found as: a channel's username, a site's home page. */
+    target: text('target').notNull(),
+    origin: text('origin', { enum: SOURCE_SUGGESTION_ORIGINS }).notNull(),
+    links: integer('links').notNull().default(0),
+    forwards: integer('forwards').notNull().default(0),
+    /** The search's one line on why it fits. */
+    reason: text('reason'),
+    kind: text('kind'),
+    organization: text('organization'),
+    /** For a website: followed by its feed, a news sitemap, or a sitemap. */
+    via: text('via'),
+    score: integer('score').notNull().default(0),
+    /** Its place: the picked first, best first, then the reserve. */
+    rank: integer('rank').notNull(),
+    state: text('state', { enum: SOURCE_SUGGESTION_STATES }).notNull(),
+    activatedSourceId: integer('activated_source_id').references(() => sources.id, { onDelete: 'set null' }),
+    activationError: text('activation_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('source_suggestions_workspace_idx').on(table.workspaceId, table.state, table.rank),
+    check('source_suggestions_origin_check', sql`${table.origin} IN ('history_link', 'history_forward', 'discovery', 'manual')`),
+    check('source_suggestions_state_check', sql`${table.state} IN ('picked', 'active', 'reserve', 'removed', 'failed')`),
+  ],
+);
+
+export type SourceSuggestion = typeof sourceSuggestions.$inferSelect;
+
+/**
+ * What the bot waits for next in someone's private chat (§14a): after ✏️ the
+ * next message is their own profile, after 💬 an instruction to rewrite it,
+ * after "Інша…" a language code. One per person; a /command cancels it, and
+ * it lapses after 15 minutes so a stray message later is not taken for it.
+ */
+export const BOT_PENDING_INPUT_KINDS = ['profile_replace', 'profile_refine', 'language_custom'] as const;
+export type BotPendingInputKind = (typeof BOT_PENDING_INPUT_KINDS)[number];
+
+export const botPendingInputs = pgTable(
+  'bot_pending_inputs',
+  {
+    telegramUserId: text('telegram_user_id').primaryKey(),
+    kind: text('kind', { enum: BOT_PENDING_INPUT_KINDS }).notNull(),
+    workspaceId: integer('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    /** For a rewrite: the draft awaiting ✅. */
+    payload: jsonb('payload').$type<{ draft?: string }>().notNull().default(sql`'{}'::jsonb`),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check('bot_pending_inputs_kind_check', sql`${table.kind} IN ('profile_replace', 'profile_refine', 'language_custom')`),
+  ],
+);
+
+export type BotPendingInput = typeof botPendingInputs.$inferSelect;
+
+/**
+ * What people do in the product, for the onboarding funnel and its quality
+ * signals (prd-self-service-onboarding.md §29–§30). Written by `track`, which
+ * never fails what it records; names are `area.what`, props small and free of
+ * people's own words.
+ */
+export const productEvents = pgTable(
+  'product_events',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+    name: text('name').notNull(),
+    userId: integer('user_id').references(() => users.id, { onDelete: 'set null' }),
+    /** For someone with no user yet: a waitlisted /start. */
+    telegramUserId: text('telegram_user_id'),
+    workspaceId: integer('workspace_id').references(() => workspaces.id, { onDelete: 'set null' }),
+    sessionId: integer('session_id').references(() => onboardingSessions.id, { onDelete: 'set null' }),
+    props: jsonb('props').$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  },
+  (table) => [
+    index('product_events_name_idx').on(table.name, table.occurredAt),
+    index('product_events_workspace_idx').on(table.workspaceId, table.occurredAt),
+  ],
+);
+
+export type ProductEvent = typeof productEvents.$inferSelect;
+
+/**
+ * People who asked to onboard a channel while they could not (§27, D5): not
+ * on the alpha's allowlist, or past a cap. `admitted_at` lets one in past the
+ * allowlist (`npm run onboarding:waitlist -- --admit <id>`), never past a cap.
+ */
+export const ONBOARDING_WAITLIST_REASONS = ['not_listed', 'workspaces_cap', 'runs_cap'] as const;
+
+export const onboardingWaitlist = pgTable(
+  'onboarding_waitlist',
+  {
+    telegramUserId: text('telegram_user_id').primaryKey(),
+    /** Their private chat with the bot, to tell them when they are let in. */
+    chatId: text('chat_id').notNull(),
+    language: text('language').notNull().default('en'),
+    username: text('username'),
+    name: text('name'),
+    reason: text('reason', { enum: ONBOARDING_WAITLIST_REASONS }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    /** The last time they asked. */
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    admittedAt: timestamp('admitted_at', { withTimezone: true }),
+  },
+  (table) => [
+    check('onboarding_waitlist_reason_check', sql`${table.reason} IN ('not_listed', 'workspaces_cap', 'runs_cap')`),
+    check('onboarding_waitlist_language_check', sql`${table.language} IN ('uk', 'en')`),
+  ],
+);
+
+export type OnboardingWaitlistEntry = typeof onboardingWaitlist.$inferSelect;

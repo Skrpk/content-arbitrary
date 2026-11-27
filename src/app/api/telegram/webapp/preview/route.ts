@@ -1,3 +1,4 @@
+import { track } from '@/lib/analytics/track';
 import { z } from 'zod';
 import { isPublishablePayload } from '@/db/schema';
 import { telegramIdOfUser } from '@/lib/accounts/users';
@@ -72,6 +73,7 @@ export async function POST(request: Request): Promise<Response> {
       logger,
     });
     logger.info('webapp.previewed', { messages: result.messages.length });
+    await track(auth.db, 'post.previewed', { userId: auth.user.id, workspaceId: workspace.id }, logger);
     return json({ ok: true });
   } catch (error) {
     const message = describeError(error);

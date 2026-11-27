@@ -1,3 +1,4 @@
+import { track } from '@/lib/analytics/track';
 import { sourceLabelOfPost } from '@/lib/sources/display';
 import { z } from 'zod';
 import { describeError } from '@/lib/errors';
@@ -110,6 +111,7 @@ export async function POST(request: Request): Promise<Response> {
     reason: 'other',
     noteLength: note.length,
   });
+  await track(auth.db, 'post.rejected', { userId: auth.user.id, workspaceId: result.row.workspaceId, props: { reason: 'other', via: 'note' } }, auth.logger);
 
   // The decision is recorded; replacing the buttons in the chat is best effort.
   await settleAllReviewMessages(

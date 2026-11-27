@@ -12,10 +12,14 @@ export interface FakeMessage {
   photos?: string[];
   video?: { src: string | null; thumb?: string; duration?: string };
   forwarded?: boolean;
+  /** Where the forward links to; null for a forward from someone hidden (a span, no link). */
+  forwardedFromHref?: string | null;
   poll?: boolean;
   /** A reply preview, quoting another post with a picture of its own. */
   replyTo?: number;
   linkPreview?: boolean;
+  /** The link card's target, when not the default story. */
+  previewHref?: string;
   views?: string;
   date?: string;
 }
@@ -61,7 +65,7 @@ export function channelMessage(message: FakeMessage): string {
   const text = message.text === undefined ? '' : `<div class="tgme_widget_message_text js-message_text" dir="auto">${message.text}</div>`;
 
   const preview = message.linkPreview
-    ? '<a class="tgme_widget_message_link_preview" href="https://example.org/story">' +
+    ? `<a class="tgme_widget_message_link_preview" href="${message.previewHref ?? 'https://example.org/story'}">` +
       `<i class="link_preview_image" style="background-image:url('${CDN}/preview.jpg')"></i>` +
       '<div class="link_preview_title">A linked story</div></a>'
     : '';
@@ -76,7 +80,9 @@ export function channelMessage(message: FakeMessage): string {
     '<div class="tgme_widget_message_bubble">' +
     `<div class="tgme_widget_message_author"><a class="tgme_widget_message_owner_name" href="https://t.me/${channel}"><span dir="auto">Space News</span></a></div>` +
     (message.forwarded
-      ? '<div class="tgme_widget_message_forwarded_from">Forwarded from&nbsp;<a class="tgme_widget_message_forwarded_from_name" href="https://t.me/other/1"><span>Other</span></a></div>'
+      ? message.forwardedFromHref === null
+        ? '<div class="tgme_widget_message_forwarded_from">Forwarded from&nbsp;<span class="tgme_widget_message_forwarded_from_name">Someone</span></div>'
+        : `<div class="tgme_widget_message_forwarded_from">Forwarded from&nbsp;<a class="tgme_widget_message_forwarded_from_name" href="${message.forwardedFromHref ?? 'https://t.me/other/1'}"><span>Other</span></a></div>`
       : '') +
     reply +
     `<div class="media_supported_cont">${media}${video}${poll}${text}</div>` +

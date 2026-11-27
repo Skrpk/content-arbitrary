@@ -22,6 +22,7 @@ import { formatScheduleTime } from '@/lib/sync/approval';
 import { listScheduledPosts } from '@/lib/sync/repository';
 import { countWaitingByWorkspace } from '@/lib/review/queue';
 import type { InlineKeyboardMarkup } from '@/lib/telegram/send-media';
+import { profileCommandReply } from '@/lib/profile/bot-profile';
 
 /**
  * Slash commands for managing the source list from the bot's private chat.
@@ -128,6 +129,10 @@ export interface CommandContext {
   threads?: ThreadsReading | null;
   /** How /addthreads reaches Threads; injected by tests. */
   threadsFetch?: typeof fetch;
+  /** Their Telegram app's language, for /profile's copy. */
+  languageCode?: string;
+  /** Where the Mini Apps live, for /profile's ⚙️ button. */
+  appBaseUrl?: string;
 }
 
 /**
@@ -209,6 +214,7 @@ export const BOT_COMMANDS: { command: string; description: string }[] = [
   { command: 'addyoutube', description: 'Start watching a YouTube channel’s new videos: /addyoutube @handle' },
   { command: 'addwebsite', description: 'Start watching a website’s new articles: /addwebsite <sitemap URL>' },
   { command: 'scheduled', description: 'Posts waiting to be published at a set time' },
+  { command: 'profile', description: 'The channel’s editorial profile, which Radar scores posts against' },
   { command: 'help', description: 'What the bot can do' },
 ];
 
@@ -237,6 +243,7 @@ const HELP_LINES = [
   '',
   '/review — the review queue: posts waiting for a decision, best Radar score first',
   '/scheduled — posts waiting to be published at a set time',
+  '/profile — the channel’s editorial profile, which Radar scores posts against: rewrite it, refine it, or set the language posts go out in',
   '',
   'How often new posts are announced — or each sent to the chat on its own — is under ⚙️ Settings.',
   '',
@@ -683,6 +690,15 @@ export async function dispatchCommand(
       return handleReview(context);
     case 'scheduled':
       return { text: await handleScheduled(context) };
+    case 'profile': {
+      const reply = await profileCommandReply({
+        db: context.db,
+        workspaceIds: channels.map((channel) => channel.id),
+        languageCode: context.languageCode,
+        settingsUrl: context.appBaseUrl ? buildSettingsUrl(context.appBaseUrl) : undefined,
+      });
+      return reply ? { text: reply.text, replyMarkup: reply.replyMarkup } : null;
+    }
     case 'sourcestats':
       return {
         text:

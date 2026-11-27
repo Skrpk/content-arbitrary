@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { describeError } from '@/lib/errors';
+import { channelConnected } from '@/lib/publishing/channel';
+import { editorialProfileClearable } from '@/lib/workspace';
 import { deleteSource, listSources, updateSourceSettings } from '@/lib/sources/repository';
 import { RADAR_THRESHOLD_MAX, RADAR_THRESHOLD_MIN } from '@/lib/radar/threshold';
 import { authorizeReviewer, json } from '@/lib/telegram/webapp-request';
@@ -52,7 +54,11 @@ export async function GET(request: Request): Promise<Response> {
       reviewDigestHour: workspace.reviewDigestHour,
       reviewDigestTimezone: workspace.reviewDigestTimezone,
       autoPublish: workspace.autoPublish,
+      channelConnected: channelConnected(workspace),
       editorialProfile: workspace.editorialProfile,
+      editorialProfileAuto: workspace.editorialProfile !== null && workspace.editorialProfileSource === 'auto',
+      profileClearable: editorialProfileClearable(workspace),
+      language: workspace.language,
       sources: (await listSources(auth.db, workspace.id)).map(sourceView),
     })),
   );

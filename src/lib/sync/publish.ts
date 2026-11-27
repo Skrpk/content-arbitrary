@@ -8,6 +8,7 @@ import type { TelegramDestination } from '@/lib/workspace';
 import { publishApprovedPayload, type PublishResult } from '@/lib/sync/approval';
 import { markPublished, markPublishedElsewhere } from '@/lib/sync/repository';
 import { normalizeTargets, type PublishTarget } from '@/lib/publish/targets';
+import { ChannelNotConnectedError } from '@/lib/publishing/channel';
 import { queueThreadsDelivery, threadsContentFor } from '@/lib/threads/deliveries';
 import { mediaRefsOf, richDocumentAsPlainPost, richDocumentToHtml, type RichDocument } from '@/lib/rich/document';
 import { escapeHtml, truncateForDisplay } from '@/lib/telegram/format-caption';
@@ -66,6 +67,8 @@ export async function publishDecidedPost(input: {
    */
   targets?: PublishTarget[];
 }): Promise<PublishResult & { targets: PublishTarget[] }> {
+  // Every way a post is published comes through here; none may reach a channel not connected.
+  if (!input.destination.channelConnected) throw new ChannelNotConnectedError(input.destination.workspaceId);
   const targets = normalizeTargets(input.targets ?? input.row.publishTargets);
   // Taken before Telegram has it: publishing there drops the payload this reads.
   const threads = targets.includes('threads')

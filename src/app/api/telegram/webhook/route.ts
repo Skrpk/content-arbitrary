@@ -1,3 +1,4 @@
+import { track } from '@/lib/analytics/track';
 import { threadsReading } from '@/lib/threads/reader';
 import { loadRadarNote } from '@/lib/radar/review-note';
 import { sourceLabelOfPost } from '@/lib/sources/display';
@@ -21,12 +22,17 @@ import {
   reviewLinks,
 } from '@/lib/sync/approval';
 import { publishDecidedPost } from '@/lib/sync/publish';
+import { CHANNEL_NOT_CONNECTED_MESSAGE, connectOnBotPromotion } from '@/lib/publishing/channel';
+import { handleOnboardingMessage } from '@/lib/onboarding/routing';
+import { handleOnboardingCallback, onboardingCallbackSchema } from '@/lib/onboarding/following';
+import { handlePendingInputMessage, handleProfileCallback, profileCallbackSchema, type ProfileContext } from '@/lib/profile/bot-profile';
+import { createRadarProvider } from '@/lib/radar/providers';
 import { publishedLine, publishedNotice } from '@/lib/publish/targets';
 import { hasThreadsAccount } from '@/lib/threads/accounts';
 import { publishToThreadsSoon } from '@/lib/threads/kick';
 import { reviewQueueButton } from '@/lib/review/queue';
 import { YouTubeClient } from '@/lib/youtube/client';
-import { reviewLinkFor } from '@/lib/accounts/users';
+import { reviewLinkFor, telegramIdsOfMembers } from '@/lib/accounts/users';
 import {
   reviewCopiesOf,
   settleAllReviewMessages,
@@ -93,7 +99,7 @@ export const maxDuration = 60;
 
 const callbackQuerySchema = z.object({
   id: z.string(),
-  from: z.object({ id: z.number(), username: z.string().optional() }),
+  from: z.object({ id: z.number(), username: z.string().optional(), language_code: z.string().optional() }),
   data: z.string().optional(),
   message: z
     .object({
@@ -105,15 +111,31 @@ const callbackQuerySchema = z.object({
 
 const messageSchema = z.object({
   message_id: z.number(),
-  from: z.object({ id: z.number(), username: z.string().optional(), language_code: z.string().optional() }).optional(),
+  from: z
+    .object({
+      id: z.number(),
+      username: z.string().optional(),
+      language_code: z.string().optional(),
+      first_name: z.string().optional(),
+      last_name: z.string().optional(),
+    })
+    .optional(),
   chat: z.object({ id: z.number(), type: z.string().optional() }),
   text: z.string().optional(),
+});
+
+/** The bot's own rights in a chat changed — made an admin of a channel, say. */
+const myChatMemberSchema = z.object({
+  chat: z.object({ id: z.number(), type: z.string().optional() }),
+  from: z.object({ id: z.number() }),
+  new_chat_member: z.object({ status: z.string(), can_post_messages: z.boolean().optional() }),
 });
 
 const updateSchema = z.object({
   update_id: z.number().optional(),
   callback_query: callbackQuerySchema.optional(),
   message: messageSchema.optional(),
+  my_chat_member: myChatMemberSchema.optional(),
 });
 
 function secretMatches(presented: string | null, expected: string): boolean {
@@ -170,6 +192,33 @@ export async function POST(request: Request): Promise<Response> {
 
   const client = new TelegramClient({ logger });
   const db = getDb();
+  const profileContext = (): ProfileContext => ({
+    db,
+    client,
+    logger,
+    settingsUrl: env.APP_BASE_URL ? buildSettingsUrl(env.APP_BASE_URL) : undefined,
+    provider: createRadarProvider(env),
+  });
+
+  // A message the bot asked for — a new profile, an instruction, a language (src/lib/profile/bot-profile.ts).
+  // Before onboarding: it exists only because they pressed a button in the last 15 minutes.
+  if (update.message) {
+    const answered = await handlePendingInputMessage(update.message, profileContext()).catch((error: unknown) => {
+      logger.error('webhook.pending_input_failed', { error: describeError(error) });
+      return true;
+    });
+    if (answered) return ok();
+  }
+
+  // Onboarding first: someone with no channel yet sends one (src/lib/onboarding/routing.ts).
+  if (update.message) {
+    const onboarded = await handleOnboardingMessage(update.message, { db, env, client, logger }).catch((error: unknown) => {
+      // Never a retried update: Telegram would send the channel again.
+      logger.error('webhook.onboarding_failed', { error: describeError(error) });
+      return true;
+    });
+    if (onboarded) return ok();
+  }
 
   // Slash commands manage the source list. Same tenant lookup as the buttons.
   if (update.message) {
@@ -183,8 +232,45 @@ export async function POST(request: Request): Promise<Response> {
     return ok();
   }
 
+  // Made an admin of a channel someone onboarded: connect it for them, if they did it.
+  if (update.my_chat_member) {
+    await connectOnBotPromotion({
+      db,
+      client,
+      change: update.my_chat_member,
+      reviewersOf: async (workspace) => [
+        ...(workspace.telegramAdminChatId ? [workspace.telegramAdminChatId] : []),
+        ...(await telegramIdsOfMembers(db, workspace.id)),
+      ],
+      logger,
+    });
+    return ok();
+  }
+
   const query = update.callback_query;
   if (!query) return ok();
+
+  // ✕ and ➕ under onboarding's "Стежу за" message: checked against the suggestion's own workspace.
+  if (query.data?.startsWith('ob:')) {
+    const parsed = onboardingCallbackSchema.safeParse(query);
+    if (parsed.success) {
+      await handleOnboardingCallback(parsed.data, { db, client, logger, appBaseUrl: env.APP_BASE_URL }).catch((error: unknown) =>
+        logger.error('webhook.onboarding_callback_failed', { error: describeError(error) }),
+      );
+    }
+    return ok();
+  }
+
+  // The /profile screen's buttons, checked against the presser's own channels.
+  if (query.data?.startsWith('pf:')) {
+    const parsed = profileCallbackSchema.safeParse(query);
+    if (parsed.success) {
+      await handleProfileCallback(parsed.data, profileContext()).catch((error: unknown) =>
+        logger.error('webhook.profile_callback_failed', { error: describeError(error) }),
+      );
+    }
+    return ok();
+  }
 
   // Anyone can be forwarded the message; only a reviewer may act on it, and
   // only on the posts of channels they review.
@@ -306,6 +392,7 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     postLogger.info('webhook.rejected', { externalId: result.row.externalId, reason: parsed.reason });
+    await track(db, 'post.rejected', { telegramUserId: query.from.id, workspaceId: workspace.id, props: { reason: parsed.reason, via: 'chat' } }, postLogger);
     await client.answerCallbackQuery(query.id, 'Rejected — not published.').catch(() => {});
     await settleAllReviewMessages(
       client,
@@ -357,6 +444,13 @@ export async function POST(request: Request): Promise<Response> {
    * match.
    */
   const fromSchedule = parsed.action === 'publish_now';
+  if (!resolved.destination.channelConnected) {
+    postLogger.info('webhook.channel_not_connected', {});
+    await client
+      .answerCallbackQuery(query.id, CHANNEL_NOT_CONNECTED_MESSAGE, { showAlert: true })
+      .catch(() => {});
+    return ok();
+  }
   // Chosen with the button; a scheduled post goes where it was scheduled for.
   const targets = targetsOfApproval(parsed.action);
   if (targets?.includes('threads') && !(await hasThreadsAccount(db, workspace.id))) {
@@ -418,6 +512,9 @@ export async function POST(request: Request): Promise<Response> {
       externalId: claim.row.externalId,
       telegramMessageIds: result.messages.map((message) => message.messageId),
     });
+    if (!fromSchedule) {
+      await track(db, 'post.approved', { telegramUserId: query.from.id, workspaceId: workspace.id, props: { action: 'publish', targets: result.targets, via: 'chat' } }, postLogger);
+    }
 
     await client.answerCallbackQuery(query.id, publishedNotice(result.targets)).catch(() => {});
     await settleAllReviewMessages(
@@ -511,6 +608,8 @@ async function handleCommandMessage(
         logger: logger.child({ fromId: message.from?.id }),
         workspaceId: workspace.id,
         workspaces: reviewerWorkspaces.map(({ id, name }) => ({ id, name })),
+        languageCode: message.from?.language_code,
+        appBaseUrl: context.appBaseUrl,
       },
       parsed,
     );
@@ -521,6 +620,7 @@ async function handleCommandMessage(
           appBaseUrl: context.appBaseUrl,
           webAppUrl: context.webAppUrl,
           target: await reviewLinkFor(db, message.from?.id ?? null),
+          from: 'command',
         })
       : null;
     const markup = replyMarkupFor(reply, context.appBaseUrl, queueButton);

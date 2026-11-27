@@ -9,6 +9,7 @@ import {
   type SourcePlatform,
   type Workspace,
 } from '@/db/schema';
+import { track } from '@/lib/analytics/track';
 import type { Database } from '@/lib/db';
 import type { Env } from '@/lib/env';
 import { describeError } from '@/lib/errors';
@@ -56,11 +57,16 @@ export const REVIEW_QUEUE_PAGE_LIMIT = 300;
 export const REVIEW_DIGEST_SLACK_MS = 3 * 60 * 1000;
 
 /** Absolute URL of the review queue page, opened on one channel, and at one post's card, when given. */
-export function buildReviewQueueUrl(baseUrl: string, workspaceId?: number, postId?: number): string {
+/** Where a queue link was pressed: the digest, onboarding's "Стежу за" message, or /review. */
+export const QUEUE_OPENED_FROM = ['digest', 'sources', 'command'] as const;
+export type QueueOpenedFrom = (typeof QUEUE_OPENED_FROM)[number];
+
+export function buildReviewQueueUrl(baseUrl: string, workspaceId?: number, postId?: number, from?: QueueOpenedFrom): string {
   const base = `${baseUrl.replace(/\/+$/, '')}/queue`;
   const query = [
     ...(workspaceId === undefined ? [] : [`workspace=${workspaceId}`]),
     ...(postId === undefined ? [] : [`post=${postId}`]),
+    ...(from === undefined ? [] : [`from=${from}`]),
   ];
   return query.length === 0 ? base : `${base}?${query.join('&')}`;
 }
@@ -79,13 +85,15 @@ export function reviewQueueButton(input: {
   /** Opens the queue at this post's card. */
   postId?: number;
   text?: string;
+  /** Which message the button is on, for the funnel's `queue.opened` (§29). */
+  from?: QueueOpenedFrom;
 }): InlineKeyboardButton | null {
   const text = input.text ?? '📋 Open review queue';
   if (input.target === 'website' && input.webAppUrl) {
-    return { text, url: buildReviewQueueUrl(input.webAppUrl, input.workspaceId, input.postId) };
+    return { text, url: buildReviewQueueUrl(input.webAppUrl, input.workspaceId, input.postId, input.from) };
   }
   if (input.appBaseUrl) {
-    return { text, web_app: { url: buildReviewQueueUrl(input.appBaseUrl, input.workspaceId, input.postId) } };
+    return { text, web_app: { url: buildReviewQueueUrl(input.appBaseUrl, input.workspaceId, input.postId, input.from) } };
   }
   return null;
 }
@@ -411,6 +419,7 @@ export async function sendReviewDigest(input: {
           webAppUrl: input.env.WEB_APP_URL,
           target,
           workspaceId: workspace.id,
+          from: 'digest',
           ...extra,
         })!;
       const storyButtons = digest.top.map((story, index) => link({ postId: story.postId, text: String(index + 1) }));
@@ -463,6 +472,12 @@ export async function sendReviewDigest(input: {
       recommended: digest.recommended,
       shown: digest.top.map((story) => story.postId),
     });
+    await track(
+      db,
+      'digest.sent',
+      { workspaceId: workspace.id, props: { recommended: digest.recommended, shown: digest.top.length, fresh, waiting, selfService: workspace.createdVia === 'self_service' } },
+      logger,
+    );
     return { sent: true, fresh, waiting, recommended: digest.recommended, shown: digest.top.length };
   } catch (error) {
     logger.error('review_digest.failed', { workspaceId: workspace.id, error: describeError(error) });

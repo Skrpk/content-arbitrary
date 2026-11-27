@@ -361,8 +361,9 @@ export class TelegramClient {
       {
         url,
         secret_token: secretToken,
-        // Button presses and the slash commands that manage the source list.
-        allowed_updates: ['callback_query', 'message'],
+        // Button presses, the slash commands that manage the source list, and
+        // the bot's own admin rights changing in a channel (connecting it).
+        allowed_updates: ['callback_query', 'message', 'my_chat_member'],
         drop_pending_updates: true,
       },
       z.boolean(),

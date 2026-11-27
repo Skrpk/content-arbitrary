@@ -188,7 +188,11 @@ describeIfDb('GET /api/telegram/webapp/sources', () => {
           reviewDigestHour: null,
           reviewDigestTimezone: null,
           autoPublish: false,
+          channelConnected: true,
           editorialProfile: null,
+          editorialProfileAuto: false,
+          profileClearable: true,
+          language: null,
           sources: [
             {
               id: mine.id,

@@ -1,9 +1,14 @@
 import { z } from 'zod';
 import { describeError } from '@/lib/errors';
+import { CHANNEL_NOT_CONNECTED, CHANNEL_NOT_CONNECTED_MESSAGE, channelConnected } from '@/lib/publishing/channel';
 import { isKnownTimeZone } from '@/lib/sync/approval';
 import { authorizeReviewer, json } from '@/lib/telegram/webapp-request';
 import { EDITORIAL_PROFILE_MAX_LENGTH, editorialProfileLength } from '@/lib/radar/editorial-profile';
+import { normaliseEditorialProfile } from '@/lib/radar/editorial-profile';
+import { normaliseLanguageCode } from '@/lib/workspace-language';
 import {
+  editorialProfileClearable,
+  setWorkspaceLanguage,
   REVIEW_DIGEST_MINUTES_MAX,
   REVIEW_DIGEST_MINUTES_MIN,
   setAutoPublish,
@@ -47,6 +52,8 @@ const updateSchema = z
       })
       .nullable()
       .optional(),
+    /** The language posts go out in (BCP 47), or null to leave them in their own. */
+    language: z.string().max(35).nullable().optional(),
     /** For a day or more: the hour, 0–23, in `timezone`; null for whenever it is due; absent to keep it. */
     reviewDigestHour: z.number().int().min(0).max(23).nullable().optional(),
     /** The browser's IANA zone, which the hour is in. */
@@ -58,8 +65,9 @@ const updateSchema = z
   })
   .refine(
     (body) =>
-      [body.reviewDigestMinutes, body.autoPublish, body.editorialProfile].filter((value) => value !== undefined).length === 1,
-    { message: 'change one of reviewDigestMinutes, autoPublish or editorialProfile' },
+      [body.reviewDigestMinutes, body.autoPublish, body.editorialProfile, body.language].filter((value) => value !== undefined)
+        .length === 1,
+    { message: 'change one of reviewDigestMinutes, autoPublish, editorialProfile or language' },
   )
   .refine((body) => body.reviewDigestHour === undefined || body.reviewDigestMinutes !== undefined, {
     message: 'an hour goes with reviewDigestMinutes',
@@ -84,7 +92,23 @@ export async function POST(request: Request): Promise<Response> {
 
   const reviewerWorkspaceIds = auth.workspaces.map((workspace) => workspace.id);
 
+  if (body.language !== undefined) {
+    const language = body.language === null || body.language.trim() === '' ? null : normaliseLanguageCode(body.language);
+    if (body.language !== null && body.language.trim() !== '' && language === null) {
+      return json({ error: 'Unknown language code. Use one like uk, en, de or pt-BR.' }, 422);
+    }
+    const updated = await setWorkspaceLanguage(auth.db, { workspaceId: body.workspaceId, reviewerWorkspaceIds, language });
+    if (!updated) return json({ error: 'No such channel.' }, 404);
+    auth.logger.info('webapp.language_changed', { workspaceId: updated.id, language: updated.language });
+    return json({ id: updated.id, language: updated.language });
+  }
+
   if (body.editorialProfile !== undefined) {
+    const workspace = auth.workspaces.find((candidate) => candidate.id === body.workspaceId);
+    // A self-service channel lives on its digest, and with no profile the digest recommends nothing.
+    if (workspace && !editorialProfileClearable(workspace) && normaliseEditorialProfile(body.editorialProfile) === null) {
+      return json({ error: 'This channel’s profile cannot be cleared: Radar needs it to pick the digest’s stories.' }, 422);
+    }
     const updated = await setEditorialProfile(auth.db, {
       workspaceId: body.workspaceId,
       reviewerWorkspaceIds,
@@ -96,7 +120,18 @@ export async function POST(request: Request): Promise<Response> {
       workspaceId: updated.id,
       length: updated.editorialProfile === null ? null : editorialProfileLength(updated.editorialProfile),
     });
-    return json({ id: updated.id, editorialProfile: updated.editorialProfile });
+    return json({
+      id: updated.id,
+      editorialProfile: updated.editorialProfile,
+      editorialProfileAuto: updated.editorialProfile !== null && updated.editorialProfileSource === 'auto',
+    });
+  }
+
+  if (body.autoPublish === true) {
+    const workspace = auth.workspaces.find((candidate) => candidate.id === body.workspaceId);
+    if (workspace && !channelConnected(workspace)) {
+      return json({ error: CHANNEL_NOT_CONNECTED_MESSAGE, code: CHANNEL_NOT_CONNECTED }, 409);
+    }
   }
 
   if (body.autoPublish !== undefined) {

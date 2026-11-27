@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { PlatformBadge } from '@/app/(app)/platform-badge';
-import { readJson, type PanelTools } from '@/components/panel-tools';
+import { isRefusal, readJson, type PanelTools } from '@/components/panel-tools';
+import { CHANNEL_NOT_CONNECTED, publishingChannelPath } from '@/lib/publishing/codes';
 import { DEFAULT_PUBLISH_TARGETS, PUBLISH_TARGETS, publishedLine, type PublishTarget } from '@/lib/publish/targets';
 import { PublishTargetsChoice } from '@/components/publish-targets-choice';
 import { fromQueue, theme } from '@/lib/telegram/webapp-client';
@@ -60,6 +61,8 @@ interface Channel {
   name: string;
   /** It has a Threads account: Approve asks where to. */
   threads?: boolean;
+  /** Its channel is connected: Publish and Schedule go to it. False opens the set-up popup instead. */
+  canPublish?: boolean;
   waiting: number;
   items: QueueItem[];
 }
@@ -330,7 +333,38 @@ export function ReviewQueue({
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
   /** Approve: the card it is for — when, where, and Send to preview are chosen in the dialog. */
   const [approving, setApproving] = useState<QueueItem | null>(null);
+  /** The channel to connect before anything is published, while its popup is open. */
+  const [needsChannel, setNeedsChannel] = useState<string | null>(null);
   const website = surface === 'website';
+
+  /** A funnel event (§29) the page alone sees; lost quietly when it cannot be sent. */
+  const report = useCallback(
+    (name: 'queue.opened' | 'publish.blocked' | 'publish.popup_settings', workspaceId: number | null, props: Record<string, string> = {}) => {
+      void request('/api/telegram/webapp/events', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name, ...(workspaceId === null ? {} : { workspaceId }), props }),
+      }).catch(() => {});
+    },
+    [request],
+  );
+  /** The popup for a channel Zmistik may not post to yet, after Publish or Schedule. */
+  const needChannel = useCallback(
+    (target: { id: number; name: string } | undefined, action: 'publish' | 'schedule') => {
+      setNeedsChannel(target?.name ?? '');
+      report('publish.blocked', target?.id ?? null, { action });
+    },
+    [report],
+  );
+
+  // Opened from a bot message: which one, for the funnel. Once per page load, even when React runs effects twice.
+  const openReported = useRef(false);
+  useEffect(() => {
+    if (openReported.current) return;
+    openReported.current = true;
+    const from = new URLSearchParams(window.location.search).get('from');
+    if (from === 'digest' || from === 'sources' || from === 'command') report('queue.opened', initialWorkspaceId ?? null, { from });
+  }, [report, initialWorkspaceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -420,10 +454,18 @@ export function ReviewQueue({
         });
       } catch (error: unknown) {
         setCard(card.id, { kind: 'open' });
+        // Not connected after all (a page loaded before the server said so): the popup, not an error.
+        if (isRefusal(error, CHANNEL_NOT_CONNECTED)) {
+          needChannel(
+            data?.channels.find((candidate) => candidate.items.some((item) => item.id === card.id)),
+            'publish',
+          );
+          return;
+        }
         setError(card.id, error instanceof Error ? error.message : 'Something went wrong.');
       }
     },
-    [data, request, setCard, setError, shown],
+    [data, needChannel, request, setCard, setError, shown],
   );
 
   const channel = data?.channels.find((candidate) => candidate.id === channelId) ?? null;
@@ -485,17 +527,18 @@ export function ReviewQueue({
   );
   const schedule = useCallback(
     (card: QueueItem) => {
-      if (website) setCard(card.id, { kind: 'scheduling' });
+      if (channel?.canPublish === false) needChannel(channel, 'schedule');
+      else if (website) setCard(card.id, { kind: 'scheduling' });
       else if (channel) window.location.assign(fromQueue(`/review/schedule?post=${shown(card).item.id}`, channel.id));
     },
-    [channel, setCard, shown, website],
+    [channel, needChannel, setCard, shown, website],
   );
 
   // The website's keyboard: j / k to move, a to approve, r then 1–6 to reject,
   // e to edit, s to schedule, o for the original, Esc to step back.
   const open = items.filter((item) => cards[item.id]?.kind !== 'done');
   const active = website ? activeCard(items, cards, focused) : null;
-  const latest = { open, active, cards, data, approve, decide, edit, schedule, openLink, setCard, dialogOpen: approving !== null };
+  const latest = { open, active, cards, data, approve, decide, edit, schedule, openLink, setCard, dialogOpen: approving !== null || needsChannel !== null };
   const keyboard = useRef(latest);
   useEffect(() => {
     keyboard.current = latest;
@@ -892,6 +935,8 @@ export function ReviewQueue({
           postId={shown(approving).item.id}
           channelName={channel.name}
           threads={channel.threads ?? false}
+          canPublish={channel.canPublish !== false}
+          onNeedChannel={(action) => needChannel(channel, action)}
           others={shown(approving).others.map((post) => post.id)}
           threadsText={shown(approving).item.threads ?? null}
           request={request}
@@ -916,7 +961,95 @@ export function ReviewQueue({
           }}
         />
       ) : null}
+      {needsChannel !== null ? (
+        <ChannelSetupDialog
+          channelName={needsChannel}
+          settingsUrl={publishingChannelPath(website ? '/console/settings' : '/settings')}
+          onClose={() => setNeedsChannel(null)}
+          onOpenSettings={() => report('publish.popup_settings', channel?.id ?? null)}
+        />
+      ) : null}
     </>
+  );
+}
+
+/**
+ * Publish or Schedule pressed for a channel Zmistik may not post to yet: what
+ * to do about it, and the way to Settings, where the channel is connected.
+ * Nothing was sent; the post stays in the queue, and Send to preview still
+ * works for posting it by hand.
+ */
+function ChannelSetupDialog({
+  channelName,
+  settingsUrl,
+  onClose,
+  onOpenSettings,
+}: {
+  channelName: string;
+  settingsUrl: string;
+  onClose: () => void;
+  onOpenSettings: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        // Only this popup: the Approve dialog under it stays open.
+        event.stopImmediatePropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKey, { capture: true });
+    return () => window.removeEventListener('keydown', onKey, { capture: true });
+  }, [onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="channel-setup-title"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 60,
+        background: 'rgba(0, 0, 0, 0.45)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '1rem',
+      }}
+    >
+      <div style={{ background: theme.bg, color: theme.text, borderRadius: '0.8rem', padding: '1rem 1.1rem', width: '100%', maxWidth: '22rem' }}>
+        <div id="channel-setup-title" style={{ fontWeight: 600, marginBottom: '0.4rem' }}>
+          Set up the channel your posts go to
+        </div>
+        <p style={{ margin: '0 0 0.75rem', fontSize: '0.9rem' }}>
+          Zmistik can publish and schedule posts once it can post to {channelName || 'your channel'}. It takes a minute: add
+          the bot to the channel as an admin, then press Check.
+        </p>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button
+            type="button"
+            autoFocus
+            onClick={() => {
+              onOpenSettings();
+              window.location.assign(settingsUrl);
+            }}
+            style={{ ...button, flex: 1, background: theme.button, color: theme.buttonText }}
+          >
+            Open Settings
+          </button>
+          <button type="button" onClick={onClose} style={{ ...button, flex: 1, background: theme.secondaryBg, color: theme.text }}>
+            Not now
+          </button>
+        </div>
+        <p style={{ color: theme.hint, fontSize: '0.8rem', margin: '0.6rem 0 0' }}>
+          Or send yourself a preview and post it by hand.
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -1284,6 +1417,8 @@ function ApproveDialog({
   postId,
   channelName,
   threads,
+  canPublish,
+  onNeedChannel,
   others,
   threadsText,
   request,
@@ -1296,6 +1431,9 @@ function ApproveDialog({
   postId: number;
   channelName: string;
   threads: boolean;
+  /** Zmistik may post to the channel; when not, Publish and Schedule open the set-up popup. */
+  canPublish: boolean;
+  onNeedChannel: (action: 'publish' | 'schedule') => void;
   /** The rest of its story's card, rejected as already covered once it goes. */
   others: number[];
   threadsText: QueueItem['threads'] | null;
@@ -1340,6 +1478,7 @@ function ApproveDialog({
   };
 
   const submit = async () => {
+    if (!canPublish) return onNeedChannel(schedule ? 'schedule' : 'publish');
     if (!schedule) return onPublish(targets);
     const at = new Date(when);
     if (Number.isNaN(at.getTime())) return setError('Pick a date and time.');
@@ -1362,8 +1501,9 @@ function ApproveDialog({
       announceScheduledChanged();
       onScheduled(body.display, body.alsoRejected?.length ?? 0);
     } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : 'Could not schedule.');
       setSaving(false);
+      if (isRefusal(reason, CHANNEL_NOT_CONNECTED)) return onNeedChannel('schedule');
+      setError(reason instanceof Error ? reason.message : 'Could not schedule.');
     }
   };
 
